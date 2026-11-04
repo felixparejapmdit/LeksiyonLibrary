@@ -1,4 +1,4 @@
-import { api, ApiError } from './api';
+import { api, ApiError, type Lesson } from './api';
 import { loadPdfjs, openPdf, renderToCanvas } from './pdf';
 import { getState, refreshAll, selectLesson, setState, toast, type UploadItem } from './store';
 
@@ -39,6 +39,29 @@ function releaseWorkerSoon() {
 
 function patch(id: number, p: Partial<UploadItem>) {
   setState({ uploads: getState().uploads.map((u) => (u.id === id ? { ...u, ...p } : u)) });
+}
+
+/** A folder can hold anything, so only its PDFs are taken. */
+export function enqueueFolder(files: Iterable<File>) {
+  const all = [...files];
+  const pdfs = all.filter((f) => /\.pdf$/i.test(f.name));
+  const others = all.length - pdfs.length;
+  if (pdfs.length === 0) {
+    toast('That folder has no PDF files.', 'error');
+    return;
+  }
+  toast(`Adding ${pdfs.length} PDF ${pdfs.length === 1 ? 'file' : 'files'}${others ? `, skipping ${others} other ${others === 1 ? 'file' : 'files'}` : ''}`);
+  enqueueFiles(pdfs);
+}
+
+/** What was missing after reading a lesson, so it can be checked by hand. */
+function needsAttention(lesson: Lesson, verseCount: number) {
+  const missing = [
+    ...(verseCount === 0 ? ['no verses'] : []),
+    ...(!lesson.issue && lesson.objectives.length === 0 ? ['no issue or objectives'] : []),
+    ...(!lesson.lesson_date && !lesson.date_label ? ['no date'] : []),
+  ];
+  return missing.length ? `Check this lesson: ${missing.join(', ')} found.` : undefined;
 }
 
 export function enqueueFiles(files: Iterable<File>) {
@@ -145,7 +168,7 @@ async function ingest(id: number, file: File) {
     await refreshAll();
     if (firstLesson) selectLesson(lesson.id);
     const found = verse_count === 1 ? '1 verse' : `${verse_count} verses`;
-    patch(id, { status: 'done', progress: 1, message: `Added "${lesson.title}" with ${found}` });
+    patch(id, { status: 'done', progress: 1, message: `Added "${lesson.title}" with ${found}`, attention: needsAttention(lesson, verse_count) });
     toast(`Added "${lesson.title}" (${found})`);
   } catch (e) {
     const message = e instanceof ApiError ? e.message : 'This PDF could not be processed.';

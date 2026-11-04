@@ -142,6 +142,8 @@ export const test = base.extend<{ errors: string[]; guard: void; app: Page }>({
         });
       });
       await page.addInitScript(instrumentation);
+      // Tests that are about the backup reminder turn it back on themselves.
+      await page.addInitScript(() => localStorage.setItem('lv.backupSnooze', String(Date.now() + 1e10)));
       page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
       page.on('console', (m) => {
         if (m.type() === 'error' && !m.text().startsWith('Failed to load resource')) errors.push(`console: ${m.text()}`);

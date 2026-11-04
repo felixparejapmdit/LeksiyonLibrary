@@ -186,7 +186,7 @@ impl Vault {
         } else {
             Connection::open_in_memory().map_err(|e| e.to_string())?
         };
-        conn.execute_batch(db::SCHEMA).map_err(|e| e.to_string())?;
+        db::init(&conn).map_err(|e| e.to_string())?;
         self.save_db(&conn)?;
         self.encrypt_legacy_pdfs()?;
         for name in [LEGACY_DB, "lesson-vault.sqlite3-wal", "lesson-vault.sqlite3-shm"] {

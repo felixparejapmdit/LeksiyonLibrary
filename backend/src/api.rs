@@ -1,4 +1,4 @@
-use crate::{ai, backup, parser, AppState};
+use crate::{ai, backup, export, parser, semantic, AppState};
 use axum::{
     body::Body,
     extract::{DefaultBodyLimit, FromRequestParts, Multipart, Path, Query, State},
@@ -13,11 +13,14 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{collections::HashMap, sync::Arc};
 
-type S = Arc<AppState>;
+pub(crate) type S = Arc<AppState>;
 
 pub struct ApiError(StatusCode, String);
 
 impl ApiError {
+    pub(crate) fn message(&self) -> &str {
+        &self.1
+    }
     fn bad(msg: impl Into<String>) -> Self {
         Self(StatusCode::BAD_REQUEST, msg.into())
     }
@@ -46,7 +49,7 @@ impl From<rusqlite::Error> for ApiError {
 type ApiResult<T> = Result<T, ApiError>;
 
 /// Runs database work off the async runtime so requests never stall the server.
-async fn with_db<T: Send + 'static>(
+pub(crate) async fn with_db<T: Send + 'static>(
     state: &S,
     f: impl FnOnce(&mut Connection) -> ApiResult<T> + Send + 'static,
 ) -> ApiResult<T> {
@@ -252,6 +255,8 @@ async fn upload_lesson(State(s): State<S>, u: User, mut mp: Multipart) -> ApiRes
     .await;
     if result.is_err() {
         s.vault.remove_pdf(&id);
+    } else {
+        semantic::kick(s.clone());
     }
     result.map(Json)
 }
@@ -582,6 +587,7 @@ async fn correct_verse(State(s): State<S>, u: User, Path(id): Path<String>, Json
         one_verse(c, &u.id, &id)
     })
     .await?;
+    semantic::kick(s.clone());
     Ok(Json(row))
 }
 
@@ -612,23 +618,41 @@ struct SuggestBody {
     count: Option<usize>,
 }
 
+fn contexts_for(c: &Connection, user_id: &str) -> rusqlite::Result<serde_json::Map<String, Value>> {
+    let mut st = c.prepare("SELECT canonical_key, speaker, context, reviewed_at FROM verse_context WHERE user_id=?1")?;
+    let rows = st.query_map([user_id], |r| {
+        Ok((r.get::<_, String>(0)?, json!({ "speaker": r.get::<_, String>(1)?, "context": r.get::<_, String>(2)?, "reviewed": r.get::<_, Option<String>>(3)?.is_some() })))
+    })?;
+    rows.collect()
+}
+
 async fn ai_suggest(State(s): State<S>, u: User, Json(b): Json<SuggestBody>) -> ApiResult<Json<Value>> {
     if b.issue.trim().is_empty() && b.objective.trim().is_empty() {
         return Err(ApiError::bad("Enter an issue or an objective first."));
     }
+    let query = if b.count.is_some() && !b.objective.trim().is_empty() { b.objective.clone() } else { format!("{} {}", b.issue, b.objective) };
+    let vector = semantic::embed_query(&s, &query).await;
+    semantic::kick(s.clone());
     let model = s.config.ollama_model.clone();
+    let embed_model = s.config.embed_model.clone();
     let res = with_db(&s, move |c| {
-        let suggestions = match b.count {
-            Some(n) => ai::retrieve_for_objective(c, &u.id, &b.issue, &b.objective, n.clamp(3, 5))?,
-            None => ai::retrieve(c, &u.id, &b.issue, &b.objective, 8)?,
+        let limit = b.count.map_or(8, |n| n.clamp(3, 5));
+        let keyword = match b.count {
+            Some(_) => ai::retrieve_for_objective(c, &u.id, &b.issue, &b.objective, limit)?,
+            None => ai::retrieve(c, &u.id, &b.issue, &b.objective, limit)?,
         };
+        let related = match &vector {
+            Some(v) => semantic::rank(c, &u.id, &embed_model, v, limit)?,
+            None => vec![],
+        };
+        let suggestions = ai::merge_meaning(c, &u.id, keyword, &related, limit)?;
         let id = new_id();
         let ids: Vec<&String> = suggestions.iter().flat_map(|x| x.verse_ids.iter()).collect();
         c.execute(
             "INSERT INTO ai_prompts_log VALUES (?1,?2,?3,?4,?5,?6,?7)",
             params![id, u.id, b.issue, b.objective, json!(ids).to_string(), model, now()],
         )?;
-        Ok(json!({ "log_id": id, "suggestions": suggestions }))
+        Ok(json!({ "log_id": id, "suggestions": suggestions, "meaning": vector.is_some() }))
     })
     .await?;
     Ok(Json(res))
@@ -675,7 +699,7 @@ async fn ai_notes(State(s): State<S>, u: User, Json(b): Json<NotesBody>) -> ApiR
         Ok(r) => {
             // Kept, so a saved lecture still shows it and it need not be written again.
             let (context, model) = (r.context.clone(), r.model.clone());
-            with_db(&s, move |c| {
+            let stored = with_db(&s, move |c| {
                 let tx = c.transaction()?;
                 for (key, v) in &context {
                     tx.execute(
@@ -683,15 +707,18 @@ async fn ai_notes(State(s): State<S>, u: User, Json(b): Json<NotesBody>) -> ApiR
                          ON CONFLICT (user_id, canonical_key) DO UPDATE SET
                            speaker = CASE WHEN excluded.speaker <> '' THEN excluded.speaker ELSE speaker END,
                            context = CASE WHEN excluded.context <> '' THEN excluded.context ELSE context END,
-                           model = excluded.model, updated_at = excluded.updated_at",
+                           model = excluded.model, updated_at = excluded.updated_at
+                         WHERE verse_context.reviewed_at IS NULL",
                         params![owner, key, v.speaker, v.context, model, now()],
                     )?;
                 }
                 tx.commit()?;
-                Ok(())
+                Ok(contexts_for(c, &owner)?)
             })
-            .await?;
-            Ok(Json(json!({ "available": true, "notes": r.notes, "context": r.context, "model": r.model })))
+            .await
+            .map(|saved| (saved, r.notes, r.model));
+            let (saved, notes, used) = stored?;
+            Ok(Json(json!({ "available": true, "notes": notes, "context": saved, "model": used })))
         }
         Err(e) => {
             eprintln!("AI notes unavailable: {e}");
@@ -702,12 +729,121 @@ async fn ai_notes(State(s): State<S>, u: User, Json(b): Json<NotesBody>) -> ApiR
 
 async fn list_verse_context(State(s): State<S>, u: User) -> ApiResult<Json<Value>> {
     let rows = with_db(&s, move |c| {
-        let mut st = c.prepare("SELECT canonical_key, speaker, context FROM verse_context WHERE user_id=?1")?;
-        let rows = st.query_map([&u.id], |r| Ok((r.get::<_, String>(0)?, json!({ "speaker": r.get::<_, String>(1)?, "context": r.get::<_, String>(2)? }))))?;
-        Ok(rows.collect::<Result<serde_json::Map<_, _>, _>>()?)
+        Ok(contexts_for(c, &u.id)?)
     })
     .await?;
     Ok(Json(Value::Object(rows)))
+}
+
+#[derive(Deserialize)]
+struct ContextBody {
+    canonical_key: String,
+    speaker: String,
+    context: String,
+}
+
+/// The user's own wording replaces the AI's and is marked reviewed, so later AI runs leave
+/// it alone. Clearing both fields removes it, letting the AI suggest again.
+async fn save_verse_context(State(s): State<S>, u: User, Json(b): Json<ContextBody>) -> ApiResult<Json<Value>> {
+    let (speaker, context) = (b.speaker.trim().to_string(), b.context.trim().to_string());
+    if speaker.chars().count() > 200 || context.chars().count() > 2000 {
+        return Err(ApiError::bad("That text is too long."));
+    }
+    let rows = with_db(&s, move |c| {
+        let known: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM verses WHERE user_id=?1 AND canonical_key=?2)", params![u.id, b.canonical_key], |r| r.get(0))?;
+        if !known {
+            return Err(ApiError::not_found());
+        }
+        if speaker.is_empty() && context.is_empty() {
+            c.execute("DELETE FROM verse_context WHERE user_id=?1 AND canonical_key=?2", params![u.id, b.canonical_key])?;
+        } else {
+            c.execute(
+                "INSERT INTO verse_context (user_id, canonical_key, speaker, context, model, updated_at, reviewed_at) VALUES (?1,?2,?3,?4,'',?5,?5)
+                 ON CONFLICT (user_id, canonical_key) DO UPDATE SET speaker=excluded.speaker, context=excluded.context, updated_at=excluded.updated_at, reviewed_at=excluded.reviewed_at",
+                params![u.id, b.canonical_key, speaker, context, now()],
+            )?;
+        }
+        Ok(contexts_for(c, &u.id)?)
+    })
+    .await?;
+    Ok(Json(Value::Object(rows)))
+}
+
+#[derive(Deserialize)]
+struct MeaningQuery {
+    q: String,
+}
+
+/// Verses related in meaning, or `available: false` when the model cannot answer.
+async fn search_meaning(State(s): State<S>, u: User, Query(q): Query<MeaningQuery>) -> ApiResult<Json<Value>> {
+    semantic::kick(s.clone());
+    let Some(vector) = semantic::embed_query(&s, &q.q).await else {
+        return Ok(Json(json!({ "available": false, "keys": [] })));
+    };
+    let model = s.config.embed_model.clone();
+    let keys = with_db(&s, move |c| Ok(semantic::rank(c, &u.id, &model, &vector, 20)?)).await?;
+    Ok(Json(json!({ "available": true, "keys": keys.into_iter().map(|k| k.0).collect::<Vec<_>>() })))
+}
+
+// ---------- Teaching history ----------
+
+fn teachings_for(c: &Connection, user_id: &str) -> rusqlite::Result<Vec<Value>> {
+    let mut st = c.prepare("SELECT id, lesson_id, taught_on, place, notes FROM teachings WHERE user_id=?1 ORDER BY taught_on DESC, created_at DESC")?;
+    let rows = st.query_map([user_id], |r| {
+        Ok(json!({ "id": r.get::<_, String>(0)?, "lesson_id": r.get::<_, String>(1)?, "taught_on": r.get::<_, String>(2)?, "place": r.get::<_, String>(3)?, "notes": r.get::<_, String>(4)? }))
+    })?;
+    rows.collect()
+}
+
+async fn list_teachings(State(s): State<S>, u: User) -> ApiResult<Json<Value>> {
+    let rows = with_db(&s, move |c| Ok(teachings_for(c, &u.id)?)).await?;
+    Ok(Json(json!(rows)))
+}
+
+#[derive(Deserialize)]
+struct TeachingBody {
+    lesson_id: String,
+    taught_on: String,
+    place: String,
+    notes: String,
+}
+
+async fn add_teaching(State(s): State<S>, u: User, Json(b): Json<TeachingBody>) -> ApiResult<Json<Value>> {
+    if chrono::NaiveDate::parse_from_str(b.taught_on.trim(), "%Y-%m-%d").is_err() {
+        return Err(ApiError::bad("Date must be YYYY-MM-DD."));
+    }
+    let rows = with_db(&s, move |c| {
+        let owned: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM lessons WHERE id=?1 AND user_id=?2)", params![b.lesson_id, u.id], |r| r.get(0))?;
+        if !owned {
+            return Err(ApiError::not_found());
+        }
+        c.execute(
+            "INSERT INTO teachings (id,user_id,lesson_id,taught_on,place,notes,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            params![new_id(), u.id, b.lesson_id, b.taught_on.trim(), b.place.trim(), b.notes.trim(), now()],
+        )?;
+        Ok(teachings_for(c, &u.id)?)
+    })
+    .await?;
+    Ok(Json(json!(rows)))
+}
+
+async fn delete_teaching(State(s): State<S>, u: User, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    let rows = with_db(&s, move |c| {
+        if c.execute("DELETE FROM teachings WHERE id=?1 AND user_id=?2", params![id, u.id])? == 0 {
+            return Err(ApiError::not_found());
+        }
+        Ok(teachings_for(c, &u.id)?)
+    })
+    .await?;
+    Ok(Json(json!(rows)))
+}
+
+async fn status(State(s): State<S>, _u: User) -> ApiResult<Json<Value>> {
+    let last: Option<String> = with_db(&s, |c| {
+        Ok(c.query_row("SELECT value FROM app_settings WHERE key='last_backup_at'", [], |r| r.get(0)).optional()?)
+    })
+    .await?;
+    Ok(Json(json!({ "last_backup_at": last })))
 }
 
 async fn ai_status(State(s): State<S>, _u: User) -> Json<Value> {
@@ -718,10 +854,13 @@ async fn ai_status(State(s): State<S>, _u: User) -> Json<Value> {
     match resp {
         Ok(r) if r.status().is_success() => {
             let body: Value = r.json().await.unwrap_or(json!({}));
-            let installed = body["models"].as_array().is_some_and(|m| m.iter().any(|x| x["name"] == model.as_str()));
-            Json(json!({ "available": installed, "reachable": true, "model": model }))
+            let names: Vec<&str> = body["models"].as_array().map(|m| m.iter().filter_map(|x| x["name"].as_str()).collect()).unwrap_or_default();
+            let installed = names.contains(&model.as_str());
+            let embed = &s.config.embed_model;
+            let meaning = names.iter().any(|n| n == embed || n.strip_suffix(":latest") == Some(embed.as_str()));
+            Json(json!({ "available": installed, "reachable": true, "model": model, "meaning": meaning }))
         }
-        _ => Json(json!({ "available": false, "reachable": false, "model": model })),
+        _ => Json(json!({ "available": false, "reachable": false, "model": model, "meaning": false })),
     }
 }
 
@@ -732,11 +871,12 @@ fn lectures_for(c: &Connection, user_id: &str) -> rusqlite::Result<Vec<Value>> {
     let rows: Vec<(String, String, String, String, String, String)> = st
         .query_map([user_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))?
         .collect::<Result<_, _>>()?;
-    let mut vs = c.prepare("SELECT verse_id FROM lecture_verses WHERE lecture_id=?1 ORDER BY ordinal")?;
+    let mut vs = c.prepare("SELECT verse_id, objective FROM lecture_verses WHERE lecture_id=?1 ORDER BY ordinal")?;
     let mut out = Vec::new();
     for (id, title, issue, objective, created_at, updated_at) in rows {
-        let verse_ids: Vec<String> = vs.query_map([&id], |r| r.get(0))?.collect::<Result<_, _>>()?;
-        out.push(json!({ "id": id, "title": title, "issue": issue, "objective": objective, "created_at": created_at, "updated_at": updated_at, "verse_ids": verse_ids }));
+        let verses: Vec<(String, String)> = vs.query_map([&id], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?;
+        let (verse_ids, verse_objectives): (Vec<String>, Vec<String>) = verses.into_iter().unzip();
+        out.push(json!({ "id": id, "title": title, "issue": issue, "objective": objective, "created_at": created_at, "updated_at": updated_at, "verse_ids": verse_ids, "verse_objectives": verse_objectives }));
     }
     Ok(out)
 }
@@ -753,6 +893,9 @@ struct LectureBody {
     issue: String,
     objective: String,
     verse_ids: Vec<String>,
+    /// The objective each verse was chosen for, in the same order. Empty when ungrouped.
+    #[serde(default)]
+    verse_objectives: Vec<String>,
 }
 
 async fn save_lecture(State(s): State<S>, u: User, Json(b): Json<LectureBody>) -> ApiResult<Json<Value>> {
@@ -785,13 +928,67 @@ async fn save_lecture(State(s): State<S>, u: User, Json(b): Json<LectureBody>) -
             if !owned {
                 return Err(ApiError::bad("A selected verse no longer exists."));
             }
-            tx.execute("INSERT INTO lecture_verses VALUES (?1,?2,?3,?4,?5)", params![new_id(), u.id, id, vid, i as i64])?;
+            let objective = b.verse_objectives.get(i).map_or("", |o| o.trim());
+            tx.execute(
+                "INSERT INTO lecture_verses (id,user_id,lecture_id,verse_id,ordinal,objective) VALUES (?1,?2,?3,?4,?5,?6)",
+                params![new_id(), u.id, id, vid, i as i64, objective],
+            )?;
         }
         tx.commit()?;
         lectures_for(c, &u.id)?.into_iter().find(|l| l["id"] == id.as_str()).ok_or_else(ApiError::not_found)
     })
     .await?;
     Ok(Json(row))
+}
+
+#[derive(Deserialize)]
+struct ExportBody {
+    title: String,
+    issue: String,
+    objective: String,
+    verse_ids: Vec<String>,
+    #[serde(default)]
+    verse_objectives: Vec<String>,
+}
+
+/// Verse text and context are read from the database here, so an export can only ever
+/// contain what the vault holds.
+async fn export_lecture(State(s): State<S>, u: User, Json(b): Json<ExportBody>) -> ApiResult<Response> {
+    if b.title.trim().is_empty() {
+        return Err(ApiError::bad("Give the lecture a title."));
+    }
+    let title = b.title.trim().to_string();
+    let (doc_title, issue, objective) = (title.clone(), b.issue, b.objective);
+    let items = with_db(&s, move |c| {
+        let mut items = Vec::new();
+        for (i, id) in b.verse_ids.iter().enumerate() {
+            let row = c
+                .query_row(
+                    "SELECT v.ref_printed, v.version, v.text, COALESCE(x.speaker,''), COALESCE(x.context,''), x.reviewed_at IS NOT NULL
+                     FROM verses v LEFT JOIN verse_context x ON x.user_id = v.user_id AND x.canonical_key = v.canonical_key
+                     WHERE v.id=?1 AND v.user_id=?2",
+                    params![id, u.id],
+                    |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, String>(4)?, r.get::<_, bool>(5)?)),
+                )
+                .optional()?;
+            let Some((reference, version, text, speaker, context, reviewed)) = row else {
+                return Err(ApiError::bad("A selected verse no longer exists."));
+            };
+            items.push(export::Item { objective: b.verse_objectives.get(i).map_or(String::new(), |o| o.trim().to_string()), reference, version, text, speaker, context, reviewed });
+        }
+        Ok(items)
+    })
+    .await?;
+    let bytes = export::docx(&doc_title, &issue, &objective, &items).map_err(|e| {
+        eprintln!("export failed: {e}");
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Export failed.".into())
+    })?;
+    let safe: String = title.chars().map(|c| if c.is_ascii_alphanumeric() || " -_".contains(c) { c } else { '_' }).collect();
+    Response::builder()
+        .header(header::CONTENT_TYPE, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        .header(header::CONTENT_DISPOSITION, format!("attachment; filename=\"{safe}.docx\""))
+        .body(Body::from(bytes))
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Export failed.".into()))
 }
 
 async fn delete_lecture(State(s): State<S>, u: User, Path(id): Path<String>) -> ApiResult<Json<Value>> {
@@ -818,10 +1015,12 @@ async fn post_backup(State(s): State<S>, u: User, Json(b): Json<BackupBody>) -> 
     }
     let state = s.clone();
     let archive = with_db(&s, move |c| {
-        backup::create(c, &state.vault, &u.id).map_err(|e| {
+        let archive = backup::create(c, &state.vault, &u.id).map_err(|e| {
             eprintln!("backup failed: {e}");
             ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Backup failed.".into())
-        })
+        })?;
+        c.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('last_backup_at', ?1)", [now()])?;
+        Ok(archive)
     })
     .await?;
     let bytes = tokio::task::spawn_blocking(move || backup::encrypt(&archive, &b.passphrase))
@@ -854,6 +1053,7 @@ async fn post_restore(State(s): State<S>, u: User, mut mp: Multipart) -> ApiResu
         .map_err(ApiError::bad)?;
     let state = s.clone();
     let count = with_db(&s, move |c| backup::restore(c, &state.vault, &u.id, &archive).map_err(ApiError::bad)).await?;
+    semantic::kick(s.clone());
     Ok(Json(json!({ "ok": true, "lessons": count })))
 }
 
@@ -904,12 +1104,17 @@ pub fn router(state: S) -> Router {
         .route("/lessons/{id}", axum::routing::patch(patch_lesson).delete(delete_lesson))
         .route("/lessons/{id}/file", get(lesson_file))
         .route("/search", get(search))
+        .route("/search/meaning", get(search_meaning))
+        .route("/status", get(status))
+        .route("/teachings", get(list_teachings).post(add_teaching))
+        .route("/teachings/{id}", axum::routing::delete(delete_teaching))
+        .route("/lectures/export", post(export_lecture))
         .route("/folders", get(list_folders).post(create_folder))
         .route("/folders/{id}", axum::routing::delete(delete_folder))
         .route("/verses", get(list_verses))
         .route("/verses/{id}", axum::routing::patch(correct_verse))
         .route("/verses/{id}/verify", post(verify_verse))
-        .route("/verse-context", get(list_verse_context))
+        .route("/verse-context", get(list_verse_context).post(save_verse_context))
         .route("/ai/status", get(ai_status))
         .route("/ai/suggest", post(ai_suggest))
         .route("/ai/notes", post(ai_notes))

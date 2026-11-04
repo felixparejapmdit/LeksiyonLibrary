@@ -290,3 +290,14 @@ SQLCipher was the usual choice but needs OpenSSL build tools. A sealed snapshot 
 **Repository.** Real lesson text in test code was removed, and sample-based tests now read it from a private folder (`LV_SAMPLES`). Those tests cannot run from a fresh clone.
 
 **Verified on the real vault:** counts, verse hashes and PDF bytes were identical after migration and after a restart. A scan of every file in the data folder found no readable lesson text. A passphrase backup rebuilt everything in a new empty vault, and a wrong passphrase was refused. Rust 37 of 37, Playwright 108 of 108.
+
+### 13. Features added after review (5 November 2026)
+
+Added at the project owner's choice: a verse review queue, editable AI context, objective groups in saved lectures, Word export, presentation mode, backup reminders, search by meaning, teaching history and folder import.
+
+**Search by meaning replaces the largest gap named in section 5.** It uses local embeddings stored in the encrypted database. The first model tried, `paraphrase-multilingual`, worked in English but not Tagalog: a question about cooking scored as high as a real question, so it would have shown unrelated verses as related. `bge-m3` separated them in both languages on the sample verses: the best match for related questions scored at least 0.60, and unrelated questions at most 0.41. The threshold is 0.50. This was 13 questions on a 20-verse library, so a larger library may need it revisited. Among themed verses, lower-ranked results can be weakly related.
+
+**Bug found while testing:** narrowing the window rebuilt the page and lost an unsaved lecture. Printing could trigger the same thing. The page now keeps its state at every width.
+
+**Limits:** the Word file and any printout are plain files. The PDF route is the browser's print dialog, not a generated file. Presentation mode has been tested in a browser, not on a projector.
+

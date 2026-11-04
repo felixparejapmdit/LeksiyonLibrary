@@ -1,5 +1,5 @@
 import { memo, useMemo, useState } from 'react';
-import { Archive, BookMarked, ChevronDown, ChevronRight, Folder, FolderPlus, MapPin, Sparkles, Trash2 } from 'lucide-react';
+import { Archive, BookMarked, CalendarDays, ChevronDown, ChevronRight, Folder, FolderPlus, ListChecks, MapPin, Sparkles, Trash2 } from 'lucide-react';
 import { api } from '../api';
 import { useProgressive } from './Layout';
 import {
@@ -115,6 +115,13 @@ export function Sidebar() {
         </button>
         <button className={rowClass(route === '/lecture')} data-testid="side-lecture" onClick={() => navigate('/lecture')}>
           <Sparkles size={15} className="flex-none" /> Lecture Maker
+        </button>
+        <button className={rowClass(route === '/review')} data-testid="side-review" onClick={() => navigate('/review')}>
+          <ListChecks size={15} className="flex-none" /> Review Verses
+          <Count n={verses.filter((v) => v.status === 'unverified').length} testId="side-review-count" />
+        </button>
+        <button className={rowClass(route === '/history')} data-testid="side-history" onClick={() => navigate('/history')}>
+          <CalendarDays size={15} className="flex-none" /> Teaching History
         </button>
       </div>
       <div className="scroll-stable min-h-0 flex-1 px-2 pb-3">

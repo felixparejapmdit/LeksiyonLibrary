@@ -43,7 +43,24 @@ Files you export, such as a downloaded PDF or a copied lecture, are not encrypte
 
 Write one objective per line and choose 3, 4 or 5 verses per objective. Verses come only from your library, shown exactly as stored. If fewer match, the app says so instead of adding unrelated verses.
 
-With the local AI running, each verse also shows who is speaking and its context. This is the model's reading, not scripture, and can be wrong, so it is labelled for review. Install the model with `ollama pull llama3.2:3b`. Without it, verses and the lesson that cites them still show.
+With the local AI running, each verse also shows who is speaking and its context. This is the model's reading, not scripture, and can be wrong, so it is labelled until you review or correct it. Your wording is then kept, and later AI runs leave it alone. It never changes the verse.
+
+Saved lectures keep each verse under its objective. From the workspace you can copy, print or save as PDF, download a Word file, or present full screen, one reference at a time in both languages (arrow keys to move, Esc to leave). Word files and printouts are not encrypted.
+
+## Other tools
+
+- **Review Verses:** steps through unverified verses beside the page they came from. Verifying locks a verse permanently.
+- **Find by meaning:** finds verses related to a question even when they share no words, in Tagalog or English. Available in the Lecture Maker, Bibles Library and Search. It suggests from your library only, and falls back to matching words if the model is off.
+- **Teaching History:** records when and where you gave each lesson, and warns before you repeat one.
+- **Select a folder:** when uploading, adds every PDF in a folder, skips other files, and flags lessons to check.
+- **Backup reminder:** appears if you have lessons and no backup in the last 14 days.
+
+## Local AI (optional)
+
+    ollama pull llama3.2:3b
+    ollama pull bge-m3
+
+`llama3.2:3b` writes notes and context. `bge-m3` powers Find by meaning. Everything else works without them. If you change `LV_OLLAMA_EMBED_MODEL`, the similarity threshold in `backend/src/semantic.rs` needs measuring again.
 
 ## Test
 
@@ -55,4 +72,4 @@ Tests use their own ports (47329, 47321) and a throwaway database. See `project_
 
 The real sample lessons are sensitive, so they and any text from them are kept out of this repository. Set `LV_SAMPLES` to a private folder with `samples.json` and `fixtures/` (default: `../LeksiyonLibrary-private`). Without it, the two Rust tests that use samples skip themselves, and the Playwright suite cannot start.
 
-Test traces and screenshots are off because they would show lesson pages. Set `LV_DEBUG_ARTIFACTS=1` to turn them on, and delete `e2e/test-results` afterwards.
+Test traces and screenshots are off because they would show lesson pages. Set `LV_DEBUG_ARTIFACTS=1` to turn them on. A failed test also writes a text snapshot of the page, so delete `e2e/test-results` after a failed run.

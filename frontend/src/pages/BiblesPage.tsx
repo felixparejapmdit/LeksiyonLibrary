@@ -1,5 +1,5 @@
 import { memo, useMemo, useState } from 'react';
-import { BadgeCheck, Check, Copy, FileSearch, Lock, PencilLine, Search, ShieldAlert } from 'lucide-react';
+import { BadgeCheck, Check, Copy, FileSearch, ListChecks, Lock, Loader2, PencilLine, Search, ShieldAlert, Sparkles, X } from 'lucide-react';
 import { api, type Verse } from '../api';
 import { VerseCorrectionDialog } from '../components/Overlays';
 import { Highlight } from '../components/LessonList';
@@ -106,6 +106,20 @@ export function BiblesPage() {
   const [query, setLocalQuery] = useState('');
   const [language, setLanguage] = useState<'all' | 'en' | 'tl'>('all');
   const [status, setStatus] = useState<'all' | 'verified' | 'unverified'>('all');
+  const [meaningKeys, setMeaningKeys] = useState<string[] | null>(null);
+  const [meaningBusy, setMeaningBusy] = useState(false);
+
+  const findByMeaning = async () => {
+    setMeaningBusy(true);
+    try {
+      const res = await api.searchMeaning(query);
+      if (res.available) setMeaningKeys(res.keys);
+      else toast('Search by meaning needs the local AI model. Searching by words still works.', 'error');
+    } catch (e) {
+      toast(errorText(e), 'error');
+    }
+    setMeaningBusy(false);
+  };
 
   const stats = useMemo(() => ({ verified: verses.filter((v) => v.status === 'verified').length, total: verses.length }), [verses]);
 
@@ -114,11 +128,13 @@ export function BiblesPage() {
     const filtered = verses.filter((v) => {
       if (language !== 'all' && v.language !== language) return false;
       if (status !== 'all' && v.status !== status) return false;
+      if (meaningKeys) return meaningKeys.includes(v.canonical_key);
       if (q && !`${v.ref_en} ${v.ref_tl} ${v.ref_printed} ${v.version} ${v.text}`.toLowerCase().includes(q)) return false;
       return true;
     });
+    if (meaningKeys) return verseGroups(filtered).sort((a, b) => meaningKeys.indexOf(a.key) - meaningKeys.indexOf(b.key));
     return verseGroups(filtered).sort((a, b) => a.book - b.book || a.items[0].ref_en.localeCompare(b.items[0].ref_en, undefined, { numeric: true }));
-  }, [verses, query, language, status]);
+  }, [verses, query, language, status, meaningKeys]);
 
   const shownGroups = useProgressive(groups, 30);
 
@@ -133,8 +149,11 @@ export function BiblesPage() {
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <div className="relative min-w-52 flex-1">
             <Search size={15} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted" />
-            <input className="field !pl-9" placeholder="Search references or wording" aria-label="Search verses" data-testid="bibles-search" value={query} onChange={(e) => setLocalQuery(e.target.value)} />
+            <input className="field !pl-9" placeholder="Search references or wording" aria-label="Search verses" data-testid="bibles-search" value={query} onChange={(e) => { setLocalQuery(e.target.value); setMeaningKeys(null); }} />
           </div>
+          <button className="btn" data-testid="bibles-meaning" disabled={!query.trim() || meaningBusy} onClick={findByMeaning}>
+            {meaningBusy ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />} Find by meaning
+          </button>
           <select className="field !w-auto" aria-label="Filter by language" data-testid="bibles-language" value={language} onChange={(e) => setLanguage(e.target.value as typeof language)}>
             <option value="all">All languages</option>
             <option value="tl">Tagalog</option>
@@ -145,10 +164,19 @@ export function BiblesPage() {
             <option value="unverified">Unverified</option>
             <option value="verified">Verified</option>
           </select>
+          <button className="btn" data-testid="bibles-review" onClick={() => navigate('/review')}>
+            <ListChecks size={14} /> Review verses
+          </button>
         </div>
+        {meaningKeys && (
+          <p className="m-0 mb-3 flex items-center gap-2 text-[13px] text-muted" data-testid="bibles-meaning-note">
+            Verses related in meaning to "{query}", closest first. These are suggestions from the local AI.
+            <button className="icon-btn" aria-label="Clear search by meaning" data-testid="bibles-meaning-clear" onClick={() => setMeaningKeys(null)}><X size={14} /></button>
+          </p>
+        )}
         {groups.length === 0 ? (
           <p className="py-14 text-center text-[13px] text-muted" data-testid="bibles-empty">
-            {verses.length === 0 ? 'No verses yet. Upload a lesson and its verses will be collected here.' : 'No verses match these filters.'}
+            {verses.length === 0 ? 'No verses yet. Upload a lesson and its verses will be collected here.' : meaningKeys ? 'No verses are close in meaning.' : 'No verses match these filters.'}
           </p>
         ) : (
           <ul className="m-0 list-none space-y-4 p-0" data-testid="bibles-groups">

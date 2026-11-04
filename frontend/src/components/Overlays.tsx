@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { CheckCircle2, CircleAlert, FileUp, Loader2, UploadCloud, X } from 'lucide-react';
-import { api, type Category, type Language } from '../api';
-import { enqueueFiles } from '../ingest';
+import { BellRing, CheckCircle2, CircleAlert, FileUp, FolderUp, Loader2, UploadCloud, X } from 'lucide-react';
+import { api, saveFile, type Category, type Language } from '../api';
+import { enqueueFiles, enqueueFolder } from '../ingest';
 import { errorText, refreshAll, setState, toast, useStore } from '../store';
 
 function Modal({ title, subtitle, onClose, children, testId, wide }: { title: string; subtitle?: string; onClose: () => void; children: React.ReactNode; testId: string; wide?: boolean }) {
@@ -59,8 +59,13 @@ export function UploadDialog() {
   const open = useStore((s) => s.uploadOpen);
   const uploads = useStore((s) => s.uploads);
   const inputRef = useRef<HTMLInputElement>(null);
+  const folderRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   if (!open) return null;
+  const finished = uploads.every((u) => u.status === 'done' || u.status === 'error');
+  const added = uploads.filter((u) => u.status === 'done').length;
+  const toCheck = uploads.filter((u) => u.attention).length;
+  const failed = uploads.filter((u) => u.status === 'error').length;
   return (
     <Modal title="Ingest & Archive Lesson PDF" subtitle="Reads scanned and digital PDFs, then indexes the lesson and its verses." onClose={closeUpload} testId="upload-dialog">
       <div className="scroll-stable min-h-0 p-4">
@@ -94,10 +99,35 @@ export function UploadDialog() {
               e.target.value = '';
             }}
           />
-          <button className="btn btn-primary" data-testid="upload-browse" onClick={() => inputRef.current?.click()}>
-            <FileUp size={14} /> Select PDF files
-          </button>
+          <input
+            ref={(el) => {
+              folderRef.current = el;
+              el?.setAttribute('webkitdirectory', '');
+            }}
+            type="file"
+            multiple
+            className="hidden"
+            data-testid="folder-input"
+            aria-label="Folder of PDF files to upload"
+            onChange={(e) => {
+              if (e.target.files) enqueueFolder(e.target.files);
+              e.target.value = '';
+            }}
+          />
+          <div className="flex flex-wrap justify-center gap-1.5">
+            <button className="btn btn-primary" data-testid="upload-browse" onClick={() => inputRef.current?.click()}>
+              <FileUp size={14} /> Select PDF files
+            </button>
+            <button className="btn" data-testid="upload-folder" onClick={() => folderRef.current?.click()}>
+              <FolderUp size={14} /> Select a folder
+            </button>
+          </div>
         </div>
+        {uploads.length > 1 && finished && (
+          <p className="m-0 mt-3 rounded-lg border border-line p-2.5 text-[13px]" data-testid="upload-summary">
+            {added} added{toCheck ? `, ${toCheck} to check` : ''}{failed ? `, ${failed} could not be added` : ''}.
+          </p>
+        )}
         {uploads.length > 0 && (
           <ul className="m-0 mt-3 list-none space-y-2 p-0" data-testid="upload-list">
             {uploads.map((u) => (
@@ -109,6 +139,7 @@ export function UploadDialog() {
                   <span className="min-w-0 flex-1 truncate font-medium">{u.name}</span>
                 </div>
                 <p className="m-0 mt-1 text-xs text-muted" data-testid="upload-message">{u.message}</p>
+                {u.attention && <p className="m-0 mt-0.5 text-xs text-warn" data-testid="upload-attention">{u.attention}</p>}
                 {u.status === 'working' && (
                   <div className="mt-1.5 h-1 overflow-hidden rounded bg-raised" role="progressbar" aria-valuenow={Math.round(u.progress * 100)} aria-valuemin={0} aria-valuemax={100} aria-label={`Processing ${u.name}`}>
                     <div className="h-full origin-left bg-accent2" style={{ transform: `scaleX(${u.progress})`, transition: 'transform 200ms linear' }} />
@@ -213,12 +244,8 @@ export function BackupDialog() {
           setBusy(true);
           try {
             const { blob, name } = await api.backup(passphrase);
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = name;
-            link.click();
-            setTimeout(() => URL.revokeObjectURL(url), 10_000);
+            saveFile(blob, name);
+            setState({ lastBackupAt: new Date().toISOString() });
             closeBackup();
             toast('Encrypted backup downloaded');
           } catch (err) {
@@ -246,6 +273,173 @@ export function BackupDialog() {
         <div className="flex justify-end gap-2 border-t border-line px-4 py-3">
           <button type="button" className="btn" data-testid="backup-cancel" onClick={closeBackup}>Cancel</button>
           <button className="btn btn-primary" data-testid="backup-save" disabled={busy || tooShort || mismatch}>{busy ? 'Encrypting' : 'Download backup'}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+const REMIND_AFTER_DAYS = 14;
+const SNOOZE_DAYS = 3;
+const DAY_MS = 86_400_000;
+
+function snoozedUntil() {
+  try {
+    return Number(localStorage.getItem('lv.backupSnooze')) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** A backup is the only way to recover the vault if this PC fails, so it asks to be kept current. */
+export function BackupReminder() {
+  const lessons = useStore((s) => s.lessons.length);
+  const last = useStore((s) => s.lastBackupAt);
+  const [snooze, setSnooze] = useState(snoozedUntil);
+  const age = last ? Math.floor((Date.now() - new Date(last).getTime()) / DAY_MS) : null;
+  if (lessons === 0 || (age !== null && age < REMIND_AFTER_DAYS) || Date.now() < snooze) return null;
+  return (
+    <div className="no-print flex flex-none flex-wrap items-center gap-2 border-b border-line bg-raised px-3 py-1.5 text-[13px]" role="status" data-testid="backup-reminder">
+      <BellRing size={14} className="flex-none text-warn" />
+      <span className="min-w-0 flex-1" data-testid="backup-reminder-text">
+        {age === null ? 'You have not made a backup yet.' : `Your last backup was ${age} days ago.`} If this PC fails, a backup is the only way to get your lessons back.
+      </span>
+      <button className="btn !min-h-7 max-lg:!min-h-11" data-testid="backup-reminder-now" onClick={() => setState({ backupOpen: true })}>Back up now</button>
+      <button
+        className="btn !min-h-7 max-lg:!min-h-11"
+        data-testid="backup-reminder-later"
+        onClick={() => {
+          const until = Date.now() + SNOOZE_DAYS * DAY_MS;
+          try {
+            localStorage.setItem('lv.backupSnooze', String(until));
+          } catch {
+            /* private mode: it still hides for this session */
+          }
+          setSnooze(until);
+        }}
+      >
+        Remind me later
+      </button>
+    </div>
+  );
+}
+
+const closeContext = () => setState({ editingContextKey: null });
+
+/** The user's wording replaces the AI's, and later AI runs leave it alone. */
+export function ContextDialog() {
+  const key = useStore((s) => s.editingContextKey);
+  return key ? <ContextForm key={key} verseKey={key} /> : null;
+}
+
+// Keyed by verse, so its fields start filled in rather than being filled just after opening.
+function ContextForm({ verseKey: key }: { verseKey: string }) {
+  const current = useStore((s) => s.contexts[key]);
+  const reference = useStore((s) => s.verses.find((v) => v.canonical_key === key)?.ref_en ?? '');
+  const [speaker, setSpeaker] = useState(current?.speaker ?? '');
+  const [context, setContext] = useState(current?.context ?? '');
+  const [busy, setBusy] = useState(false);
+  return (
+    <Modal title="Speaker and context" subtitle={reference} onClose={closeContext} testId="context-dialog">
+      <form
+        className="contents"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setBusy(true);
+          try {
+            setState({ contexts: await api.saveVerseContext(key, speaker, context) });
+            closeContext();
+            toast(speaker.trim() || context.trim() ? 'Saved as reviewed' : 'Context removed');
+          } catch (err) {
+            setBusy(false);
+            toast(errorText(err), 'error');
+          }
+        }}
+      >
+        <div className="space-y-3 p-4">
+          {current && !current.reviewed && <p className="m-0 text-xs text-warn" data-testid="context-ai-note">This was written by the AI and can be wrong. Check it, correct it if needed, then save.</p>}
+          <label className="block text-xs text-muted">
+            Who is speaking
+            <input className="field mt-1" maxLength={200} data-testid="context-speaker" value={speaker} onChange={(e) => setSpeaker(e.target.value)} />
+          </label>
+          <label className="block text-xs text-muted">
+            Context: who is being addressed, and what is happening
+            <textarea className="field mt-1 min-h-24" maxLength={2000} data-testid="context-text" value={context} onChange={(e) => setContext(e.target.value)} />
+          </label>
+          <p className="m-0 text-xs text-muted">This never changes the verse itself. Clear both fields to remove it.</p>
+        </div>
+        <div className="flex justify-end gap-2 border-t border-line px-4 py-3">
+          <button type="button" className="btn" data-testid="context-cancel" onClick={closeContext}>Cancel</button>
+          <button className="btn btn-primary" data-testid="context-save" disabled={busy}>{busy ? 'Saving' : 'Save as reviewed'}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+const closeTeaching = () => setState({ teachingDialog: null });
+const today = () => new Date().toLocaleDateString('en-CA');
+
+export function TeachingDialog() {
+  const dialog = useStore((s) => s.teachingDialog);
+  const lessons = useStore((s) => s.lessons);
+  const teachings = useStore((s) => s.teachings);
+  const [lessonId, setLessonId] = useState('');
+  const [day, setDay] = useState('');
+  const [place, setPlace] = useState('');
+  const [notes, setNotes] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    setLessonId(dialog?.lessonId ?? '');
+    setDay(today());
+    setPlace('');
+    setNotes('');
+    setBusy(false);
+  }, [dialog]);
+  if (!dialog) return null;
+  const prior = teachings.find((t) => t.lesson_id === lessonId);
+  return (
+    <Modal title="Record a teaching" onClose={closeTeaching} testId="teaching-dialog">
+      <form
+        className="contents"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setBusy(true);
+          try {
+            setState({ teachings: await api.addTeaching({ lesson_id: lessonId, taught_on: day, place, notes }) });
+            closeTeaching();
+            toast('Teaching recorded');
+          } catch (err) {
+            setBusy(false);
+            toast(errorText(err), 'error');
+          }
+        }}
+      >
+        <div className="space-y-3 p-4">
+          <label className="block text-xs text-muted">
+            Lesson
+            <select className="field mt-1" required data-testid="teaching-lesson" value={lessonId} onChange={(e) => setLessonId(e.target.value)}>
+              <option value="">Choose a lesson</option>
+              {lessons.map((l) => <option key={l.id} value={l.id}>{l.language === 'tl' ? 'TL' : 'EN'}: {l.title}</option>)}
+            </select>
+          </label>
+          {prior && <p className="m-0 text-xs text-warn" data-testid="teaching-prior">Last taught on {prior.taught_on}{prior.place ? ` at ${prior.place}` : ''}.</p>}
+          <label className="block text-xs text-muted">
+            Date
+            <input className="field mt-1" type="date" required data-testid="teaching-date" value={day} onChange={(e) => setDay(e.target.value)} />
+          </label>
+          <label className="block text-xs text-muted">
+            Where
+            <input className="field mt-1" data-testid="teaching-place" value={place} onChange={(e) => setPlace(e.target.value)} />
+          </label>
+          <label className="block text-xs text-muted">
+            Notes
+            <textarea className="field mt-1 min-h-16" data-testid="teaching-notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
+          </label>
+        </div>
+        <div className="flex justify-end gap-2 border-t border-line px-4 py-3">
+          <button type="button" className="btn" data-testid="teaching-cancel" onClick={closeTeaching}>Cancel</button>
+          <button className="btn btn-primary" data-testid="teaching-save" disabled={busy || !lessonId}>{busy ? 'Saving' : 'Save'}</button>
         </div>
       </form>
     </Modal>

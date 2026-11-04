@@ -7,7 +7,9 @@ import { SearchPage } from './pages/SearchPage';
 import { Header } from './components/Header';
 import { BottomNav } from './components/BottomNav';
 import { DesktopFrame } from './components/Layout';
-import { BackupDialog, ConfirmDialog, EditLessonDialog, ToastRegion, UploadDialog } from './components/Overlays';
+import { BackupDialog, BackupReminder, ConfirmDialog, ContextDialog, EditLessonDialog, TeachingDialog, ToastRegion, UploadDialog } from './components/Overlays';
+import { ReviewPage } from './pages/ReviewPage';
+import { HistoryPage } from './pages/HistoryPage';
 
 function Page() {
   const route = useRoute();
@@ -20,6 +22,10 @@ function Page() {
       return <SettingsPage />;
     case '/search':
       return <SearchPage />;
+    case '/review':
+      return <ReviewPage />;
+    case '/history':
+      return <HistoryPage />;
     default:
       return <VaultPage />;
   }
@@ -43,6 +49,7 @@ export default function App() {
   return (
     <div className="flex h-dvh flex-col overflow-hidden" data-testid="app-shell">
       <Header />
+      <BackupReminder />
       <main className="min-h-0 flex-1 overflow-hidden" data-testid="app-main">
         <DesktopFrame>
           <Page />
@@ -53,6 +60,8 @@ export default function App() {
       <EditLessonDialog />
       <ConfirmDialog />
       <BackupDialog />
+      <ContextDialog />
+      <TeachingDialog />
       <ToastRegion />
     </div>
   );

@@ -9,7 +9,8 @@ export function SettingsPage() {
   const lessons = useStore((s) => s.lessons.length);
   const verses = useStore((s) => s.verses);
   const restoreRef = useRef<HTMLInputElement>(null);
-  const [ai, setAi] = useState<{ available: boolean; reachable: boolean; model: string } | null>(null);
+  const [ai, setAi] = useState<{ available: boolean; reachable: boolean; model: string; meaning: boolean } | null>(null);
+  const lastBackup = useStore((s) => s.lastBackupAt);
 
   useEffect(() => {
     let alive = true;
@@ -42,6 +43,9 @@ export function SettingsPage() {
           <p className="m-0 mb-2 text-[13px] text-muted" data-testid="settings-encryption">
             Your lessons are encrypted on this PC and can only be opened by this Windows account. If this PC fails, an encrypted backup is the only way to get them back.
           </p>
+          <p className="m-0 mb-2 text-[13px] text-muted" data-testid="settings-last-backup">
+            {lastBackup ? `Last backup: ${new Date(lastBackup).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}.` : 'No backup made yet.'}
+          </p>
           <RestoreInput inputRef={restoreRef} />
           <div className="flex flex-wrap gap-1.5">
             <button className="btn" data-testid="settings-backup" onClick={() => setState({ backupOpen: true })}><Download size={14} /> Download encrypted backup</button>
@@ -54,6 +58,7 @@ export function SettingsPage() {
           <p className="m-0 min-h-5 text-[13px] text-muted" data-testid="settings-ai">
             {ai === null ? 'Checking' : ai.available ? `Connected to local model ${ai.model}.` : ai.reachable ? `Local AI is running, but model ${ai.model} is not installed.` : 'Local AI is offline. Verse matching still works without it.'}
           </p>
+          {ai?.reachable && <p className="m-0 mt-1 text-[13px] text-muted" data-testid="settings-meaning">{ai.meaning ? 'Search by meaning is on.' : 'Search by meaning needs its model. Run: ollama pull bge-m3'}</p>}
         </section>
       </div>
     </div>

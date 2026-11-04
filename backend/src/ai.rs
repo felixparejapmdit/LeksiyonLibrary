@@ -55,6 +55,8 @@ pub struct Suggestion {
     pub score: f64,
     pub matched_terms: Vec<String>,
     pub verse_ids: Vec<String>,
+    /// Found because it means something similar, not because it shares words.
+    pub meaning: bool,
 }
 
 pub fn retrieve(conn: &Connection, user_id: &str, issue: &str, objective: &str, limit: usize) -> rusqlite::Result<Vec<Suggestion>> {
@@ -97,25 +99,53 @@ pub fn retrieve(conn: &Connection, user_id: &str, issue: &str, objective: &str, 
     ranked.truncate(limit);
 
     let mut out = Vec::new();
-    let mut stmt = conn.prepare(
-        "SELECT id, ref_en, ref_tl, text FROM verses WHERE user_id = ?1 AND canonical_key = ?2 ORDER BY language DESC, seq",
-    )?;
     for (key, score) in ranked {
-        let rows: Vec<(String, String, String, String)> = stmt
-            .query_map(params![user_id, key], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
-            .collect::<Result<_, _>>()?;
-        if rows.is_empty() {
-            continue;
+        if let Some(s) = build_suggestion(conn, user_id, &key, score, &terms, false)? {
+            out.push(s);
         }
-        let haystack = rows.iter().map(|r| r.3.to_lowercase()).collect::<Vec<_>>().join(" ");
-        out.push(Suggestion {
-            canonical_key: key,
-            ref_en: rows[0].1.clone(),
-            ref_tl: rows[0].2.clone(),
-            score: (score * 100.0).round() / 100.0,
-            matched_terms: terms.iter().filter(|t| haystack.contains(t.as_str())).cloned().collect(),
-            verse_ids: rows.iter().map(|r| r.0.clone()).collect(),
-        });
+    }
+    Ok(out)
+}
+
+fn build_suggestion(conn: &Connection, user_id: &str, key: &str, score: f64, terms: &[String], meaning: bool) -> rusqlite::Result<Option<Suggestion>> {
+    let mut stmt = conn.prepare_cached("SELECT id, ref_en, ref_tl, text FROM verses WHERE user_id = ?1 AND canonical_key = ?2 ORDER BY language DESC, seq")?;
+    let rows: Vec<(String, String, String, String)> = stmt
+        .query_map(params![user_id, key], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+        .collect::<Result<_, _>>()?;
+    let Some(first) = rows.first() else { return Ok(None) };
+    let haystack = rows.iter().map(|r| r.3.to_lowercase()).collect::<Vec<_>>().join(" ");
+    Ok(Some(Suggestion {
+        canonical_key: key.to_string(),
+        ref_en: first.1.clone(),
+        ref_tl: first.2.clone(),
+        score: (score * 100.0).round() / 100.0,
+        matched_terms: terms.iter().filter(|t| haystack.contains(t.as_str())).cloned().collect(),
+        verse_ids: rows.iter().map(|r| r.0.clone()).collect(),
+        meaning,
+    }))
+}
+
+/// Combines keyword and meaning results, ranking well in either list counting for more
+/// than the raw scores, which are not comparable with each other.
+pub fn merge_meaning(conn: &Connection, user_id: &str, keyword: Vec<Suggestion>, meaning: &[(String, f32)], limit: usize) -> rusqlite::Result<Vec<Suggestion>> {
+    const DAMPING: f64 = 60.0;
+    let mut fused: HashMap<String, f64> = HashMap::new();
+    for (i, s) in keyword.iter().enumerate() {
+        *fused.entry(s.canonical_key.clone()).or_default() += 1.0 / (DAMPING + i as f64 + 1.0);
+    }
+    for (i, (key, _)) in meaning.iter().enumerate() {
+        *fused.entry(key.clone()).or_default() += 1.0 / (DAMPING + i as f64 + 1.0);
+    }
+    let mut order: Vec<(String, f64)> = fused.into_iter().collect();
+    order.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal).then(a.0.cmp(&b.0)));
+    order.truncate(limit);
+    let mut by_key: HashMap<String, Suggestion> = keyword.into_iter().map(|s| (s.canonical_key.clone(), s)).collect();
+    let mut out = Vec::new();
+    for (key, score) in order {
+        match by_key.remove(&key) {
+            Some(s) => out.push(s),
+            None => out.extend(build_suggestion(conn, user_id, &key, score, &[], true)?),
+        }
     }
     Ok(out)
 }
@@ -335,6 +365,20 @@ mod tests {
         assert_eq!(keys.len(), 3);
         assert!(keys[..2].contains(&"1.1:1") && keys[..2].contains(&"1.1:2"));
         assert_eq!(keys[2], "1.1:0");
+    }
+
+    #[test]
+    fn meaning_results_join_keyword_results_and_are_marked() {
+        let c = library();
+        let keyword = retrieve(&c, "u", "", "election", 5).unwrap();
+        assert!(keyword.iter().all(|s| !s.meaning));
+        let merged = merge_meaning(&c, "u", keyword.clone(), &[("1.1:3".to_string(), 0.9), (keyword[0].canonical_key.clone(), 0.8)], 5).unwrap();
+        assert_eq!(merged[0].canonical_key, keyword[0].canonical_key, "found both ways ranks first");
+        let added = merged.iter().find(|s| s.canonical_key == "1.1:3").unwrap();
+        assert!(added.meaning && added.matched_terms.is_empty());
+        assert!(!merged[0].meaning);
+        assert!(merge_meaning(&c, "u", vec![], &[("1.1:3".to_string(), 0.9)], 5).unwrap().len() == 1);
+        assert_eq!(merge_meaning(&c, "u", keyword, &[("1.1:3".to_string(), 0.9)], 1).unwrap().len(), 1);
     }
 
     #[test]

@@ -93,14 +93,15 @@ export function ResizeHandle({ variable, storageKey, edge, min, max, label, test
 export function DesktopFrame({ children }: { children: React.ReactNode }) {
   const desktop = useIsDesktop();
   const sidebarOpen = useStore((s) => s.sidebarOpen);
-  if (!desktop) return <>{children}</>;
+  // The same structure at every width: the page must not be rebuilt when the window
+  // narrows or a print layout begins, or an unsaved lecture would be lost.
   return (
     <div
       data-frame-root
       className="flex h-full"
       style={{ '--sidebar-w': `${readWidth('lv.sidebarW', 260)}px`, '--viewer-w': `${readWidth('lv.viewerW', 560)}px` } as React.CSSProperties}
     >
-      {sidebarOpen && (
+      {desktop && sidebarOpen && (
         <>
           <div className="min-w-0 flex-none" style={{ width: 'var(--sidebar-w)' }}>
             <Sidebar />

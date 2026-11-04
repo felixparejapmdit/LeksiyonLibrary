@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import { ArrowLeft, ChevronLeft, ChevronRight, ExternalLink, FileText, Languages, Maximize, Pencil, RotateCw, ZoomIn, ZoomOut } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, CalendarPlus, ExternalLink, FileText, Languages, Maximize, Pencil, RotateCw, ZoomIn, ZoomOut } from 'lucide-react';
 import { lessonFileUrl, type Lesson } from '../api';
 import { cachedPage, lessonDocument, rememberPage, renderToCanvas } from '../pdf';
 import { selectLesson, setState, useStore } from '../store';
@@ -22,6 +22,8 @@ function LessonSummary({ lesson }: { lesson: Lesson }) {
   const [open, setOpen] = useState(storedOpen);
   const tagalog = lesson.language === 'tl';
   const empty = !lesson.issue && lesson.objectives.length === 0;
+  const allTeachings = useStore((s) => s.teachings);
+  const taught = allTeachings.filter((t) => t.lesson_id === lesson.id);
   return (
     <details
       className="no-print flex-none border-b border-line bg-panel text-[13px]"
@@ -61,9 +63,19 @@ function LessonSummary({ lesson }: { lesson: Lesson }) {
             )}
           </>
         )}
-        <button className="btn !min-h-8 max-lg:!min-h-11" data-testid="lesson-summary-edit" onClick={() => setState({ editingLessonId: lesson.id })}>
-          <Pencil size={13} /> {empty ? 'Add' : 'Edit'}
-        </button>
+        {taught.length > 0 && (
+          <p className="m-0 mb-2 text-xs text-muted" data-testid="lesson-summary-taught">
+            {tagalog ? 'Naituro' : 'Taught'} {taught.length} {taught.length === 1 ? (tagalog ? 'beses' : 'time') : (tagalog ? 'beses' : 'times')}, {tagalog ? 'huli noong' : 'last on'} {taught[0].taught_on}{taught[0].place ? ` · ${taught[0].place}` : ''}
+          </p>
+        )}
+        <div className="flex flex-wrap gap-1.5">
+          <button className="btn !min-h-8 max-lg:!min-h-11" data-testid="lesson-summary-edit" onClick={() => setState({ editingLessonId: lesson.id })}>
+            <Pencil size={13} /> {empty ? 'Add' : 'Edit'}
+          </button>
+          <button className="btn !min-h-8 max-lg:!min-h-11" data-testid="lesson-log-teaching" onClick={() => setState({ teachingDialog: { lessonId: lesson.id } })}>
+            <CalendarPlus size={13} /> Record a teaching
+          </button>
+        </div>
       </div>
     </details>
   );

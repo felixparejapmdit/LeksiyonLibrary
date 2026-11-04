@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { api, ApiError, type Category, type Folder, type Lecture, type Lesson, type Verse, type VerseContext } from './api';
+import { api, ApiError, type Category, type Folder, type Lecture, type Lesson, type Teaching, type Verse, type VerseContext } from './api';
 
 export type SortMode = 'newest' | 'oldest' | 'title';
 
@@ -22,6 +22,7 @@ export interface UploadItem {
   name: string;
   status: 'queued' | 'working' | 'done' | 'error';
   message: string;
+  attention?: string;
   progress: number;
 }
 
@@ -40,6 +41,10 @@ export interface State {
   lessons: Lesson[];
   verses: Verse[];
   contexts: Record<string, VerseContext>;
+  teachings: Teaching[];
+  lastBackupAt: string | null;
+  teachingDialog: { lessonId: string } | null;
+  editingContextKey: string | null;
   folders: Folder[];
   lectures: Lecture[];
   filters: Filters;
@@ -75,6 +80,10 @@ let state: State = {
   lessons: [],
   verses: [],
   contexts: {},
+  teachings: [],
+  lastBackupAt: null,
+  teachingDialog: null,
+  editingContextKey: null,
   folders: [],
   lectures: [],
   filters: emptyFilters,
@@ -150,12 +159,22 @@ export function errorText(e: unknown) {
 }
 
 export async function refreshAll() {
-  const [lessons, verses, contexts, folders, lectures] = await Promise.all([api.lessons(), api.verses(), api.verseContexts(), api.folders(), api.lectures()]);
+  const [lessons, verses, contexts, folders, lectures, teachings, status] = await Promise.all([
+    api.lessons(),
+    api.verses(),
+    api.verseContexts(),
+    api.folders(),
+    api.lectures(),
+    api.teachings(),
+    api.status(),
+  ]);
   const selectedStillExists = lessons.some((l) => l.id === state.selectedId);
   setState({
     lessons,
     verses,
     contexts,
+    teachings,
+    lastBackupAt: status.last_backup_at,
     folders,
     lectures,
     selectedId: selectedStillExists ? state.selectedId : (newestFirst(lessons)[0]?.id ?? null),

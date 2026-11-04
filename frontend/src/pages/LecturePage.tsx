@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, Copy, FilePlus2, Loader2, Lock, Plus, Printer, Save, Sparkles, Trash2, X } from 'lucide-react';
-import { api, type Lecture, type Suggestion, type Verse, type VerseContext } from '../api';
+import { ArrowDown, ArrowUp, Copy, FileDown, FilePlus2, Loader2, Lock, MonitorPlay, PencilLine, Plus, Printer, Save, Sparkles, Trash2, X } from 'lucide-react';
+import { PresentationMode } from '../components/Presentation';
+import { api, saveFile, type Lecture, type Suggestion, type Verse, type VerseContext } from '../api';
 import { askConfirm, errorText, getState, refreshAll, setState, toast, useStore } from '../store';
 
 type NotesStatus = 'idle' | 'loading' | 'ready' | 'offline';
@@ -14,7 +15,7 @@ function ContextLines({ context, testId }: { context?: VerseContext; testId: str
   if (!context) return null;
   return (
     <span data-testid={testId}>
-      <span className="font-semibold">AI context, not scripture. Review before use.</span>
+      <span className="font-semibold" data-testid={`${testId}-label`}>{context.reviewed ? 'Reviewed by you.' : 'AI context, not scripture. Review before use.'}</span>
       {context.speaker && <span className="block" data-testid={`${testId}-speaker`}><span className="font-semibold">Speaker: </span>{context.speaker}</span>}
       {context.context && <span className="block" data-testid={`${testId}-text`}><span className="font-semibold">Context: </span>{context.context}</span>}
     </span>
@@ -48,6 +49,10 @@ export function LecturePage() {
   const [issue, setIssue] = useState('');
   const [objective, setObjective] = useState('');
   const [picked, setPicked] = useState<string[]>([]);
+  // The objective each picked verse was chosen for, kept when a lecture is saved.
+  const [objectiveOf, setObjectiveOf] = useState<Record<string, string>>({});
+  const [presenting, setPresenting] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [coverage, setCoverage] = useState<Coverage>('3');
   const [groups, setGroups] = useState<Group[] | null>(null);
   const contexts = useStore((s) => s.contexts);
@@ -56,11 +61,12 @@ export function LecturePage() {
   const [searching, setSearching] = useState(false);
   const [saving, setSaving] = useState(false);
   const requestSeq = useRef(0);
-  const [aiState, setAiState] = useState<{ available: boolean; model: string } | null>(null);
+  const [aiState, setAiState] = useState<{ available: boolean; model: string; meaning: boolean } | null>(null);
+  const [usedMeaning, setUsedMeaning] = useState<boolean | null>(null);
 
   useEffect(() => {
     let alive = true;
-    api.aiStatus().then((s) => alive && setAiState(s)).catch(() => alive && setAiState({ available: false, model: '' }));
+    api.aiStatus().then((s) => alive && setAiState(s)).catch(() => alive && setAiState({ available: false, model: '', meaning: false }));
     return () => {
       alive = false;
     };
@@ -91,6 +97,7 @@ export function LecturePage() {
         notes: {},
       }));
       setGroups(next);
+      setUsedMeaning(found.some((f) => f.meaning));
       setSearching(false);
       // One objective at a time: the local model can only do one well on a CPU.
       for (let i = 0; i < next.length; i++) {
@@ -103,8 +110,9 @@ export function LecturePage() {
           return;
         }
         patchGroup(i, { status: 'ready', notes: n.notes });
-        setState({ contexts: { ...getState().contexts, ...n.context } });
-        if (n.model) setAiState({ available: true, model: n.model });
+        setState({ contexts: n.context });
+        const model = n.model;
+        if (model) setAiState((a) => ({ available: true, model, meaning: a?.meaning ?? false }));
       }
     } catch (err) {
       if (seq === requestSeq.current) {
@@ -121,6 +129,7 @@ export function LecturePage() {
     setIssue('');
     setObjective('');
     setPicked([]);
+    setObjectiveOf({});
     setGroups(null);
     setSourceLesson('');
   };
@@ -131,6 +140,7 @@ export function LecturePage() {
     setIssue(l.issue);
     setObjective(l.objective);
     setPicked(l.verse_ids);
+    setObjectiveOf(Object.fromEntries(l.verse_ids.map((id, i) => [id, l.verse_objectives[i] ?? ''])));
     setGroups(null);
     setSourceLesson('');
   };
@@ -151,28 +161,50 @@ export function LecturePage() {
       return n;
     });
 
-  const asText = () =>
-    [
+  const objectiveFor = (id: string) => objectiveOf[id] ?? '';
+  const lectureBody = () => ({ title, issue, objective, verse_ids: picked, verse_objectives: picked.map(objectiveFor) });
+  const slides = picked.flatMap((id) => {
+    const verse = byId.get(id);
+    return verse ? [{ verse, objective: objectiveFor(id) }] : [];
+  });
+
+  const asText = () => {
+    const grouped = picked.some((id) => objectiveFor(id));
+    return [
       title,
       ...(issue ? [`Issue: ${issue}`] : []),
-      ...(objective ? [`Objective: ${objective}`] : []),
+      ...(objective && !grouped ? [`Objective: ${objective}`] : []),
       '',
-      ...picked.flatMap((id) => {
+      ...picked.flatMap((id, i) => {
         const v = byId.get(id);
         if (!v) return [];
         const c = contexts[v.canonical_key];
+        const tag = c?.reviewed ? '' : ' (AI, review before use)';
+        const heading = objectiveFor(id) && objectiveFor(id) !== objectiveFor(picked[i - 1]) ? [objectiveFor(id), ''] : [];
         return [
+          ...heading,
           `${v.ref_printed}${v.version ? ` (${v.version})` : ''}`,
           v.text,
-          ...(c?.speaker ? [`Speaker (AI, review before use): ${c.speaker}`] : []),
-          ...(c?.context ? [`Context (AI, review before use): ${c.context}`] : []),
+          ...(c?.speaker ? [`Speaker${tag}: ${c.speaker}`] : []),
+          ...(c?.context ? [`Context${tag}: ${c.context}`] : []),
           '',
         ];
       }),
     ].join('\n');
+  };
+
+  const contextButton = (key: string, testId: string) => {
+    const c = contexts[key];
+    return (
+      <button className="btn no-print !min-h-7 max-lg:!min-h-11" data-testid={testId} onClick={() => setState({ editingContextKey: key })}>
+        <PencilLine size={12} /> {!c ? 'Add speaker and context' : c.reviewed ? 'Edit context' : 'Review or correct'}
+      </button>
+    );
+  };
 
   return (
     <div className="scroll-stable h-full" data-testid="lecture-page">
+      {presenting && <PresentationMode title={title || 'Lecture'} slides={slides} onClose={() => setPresenting(false)} />}
       <div className="mx-auto grid max-w-7xl grid-cols-1 gap-4 p-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] lg:p-4">
         <div className="min-w-0 space-y-3">
           <div className="no-print">
@@ -213,6 +245,7 @@ export function LecturePage() {
               <span className="text-xs text-muted" data-testid="ai-status">
                 {aiState === null ? 'Checking AI' : aiState.available ? `AI notes by ${aiState.model}` : 'AI notes offline. Verse matching still works.'}
               </span>
+              {searching && <span className="flex items-center gap-1 text-xs text-muted" data-testid="lecture-searching"><Loader2 size={12} className="animate-spin" /> Searching</span>}
             </div>
           </form>
 
@@ -223,6 +256,7 @@ export function LecturePage() {
                 {groups.some((g) => g.status === 'loading') && <span className="flex items-center gap-1" data-testid="notes-loading"><Loader2 size={12} className="animate-spin" /> Writing AI notes and context. This can take a few minutes; keep working.</span>}
                 {groups.some((g) => g.status === 'offline') && <span data-testid="notes-offline">AI notes and context unavailable</span>}
               </div>
+              <p className="m-0 text-xs text-muted" data-testid="match-mode">{usedMeaning ? 'Matched by meaning and words' : 'Matched by words only'}</p>
               {groups.every((g) => g.suggestions.length === 0) && <p className="m-0 rounded-lg border border-line p-4 text-center text-[13px] text-muted" data-testid="suggestions-empty">No verses in your library match. Try other words, or upload more lessons.</p>}
               {groups.some((g) => g.suggestions.length > 0) && groups.map((g, groupIndex) => (
               <div key={groupIndex} className="space-y-2" data-testid="objective-group">
@@ -244,6 +278,7 @@ export function LecturePage() {
                       <h3 className="m-0 text-[14px] font-semibold" data-testid="suggestion-ref">{s.ref_en}</h3>
                       {s.ref_tl !== s.ref_en && <span className="text-xs text-muted">{s.ref_tl}</span>}
                       {s.matched_terms.length > 0 && <span className="text-xs text-muted">Matches: {s.matched_terms.join(', ')}</span>}
+                      {s.meaning && <span className="text-xs text-muted" data-testid="suggestion-meaning">Related in meaning</span>}
                     </div>
                     {/* Space is reserved so the note and context appearing do not shift the page. */}
                     <p className="m-0 mb-1 min-h-5 text-xs text-accent2" data-testid="ai-note">
@@ -254,9 +289,10 @@ export function LecturePage() {
                         </>
                       )}
                     </p>
-                    <p className="m-0 mb-2 min-h-12 text-xs text-accent2" data-testid="ai-context">
+                    <p className="m-0 mb-1 min-h-12 text-xs text-accent2" data-testid="ai-context">
                       <ContextLines context={contexts[s.canonical_key]} testId="verse-context" />
                     </p>
+                    <div className="mb-2">{contextButton(s.canonical_key, 'context-edit')}</div>
                     <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
                       {items.map((v) => (
                         <div key={v.id} className="flex flex-col gap-1">
@@ -265,7 +301,10 @@ export function LecturePage() {
                             className="btn !min-h-8 self-start max-lg:!min-h-11"
                             data-testid="suggestion-add"
                             disabled={picked.includes(v.id)}
-                            onClick={() => setPicked((p) => [...p, v.id])}
+                            onClick={() => {
+                              setPicked((p) => [...p, v.id]);
+                              setObjectiveOf((o) => ({ ...o, [v.id]: g.title ?? '' }));
+                            }}
                           >
                             <Plus size={13} /> {picked.includes(v.id) ? 'Added' : 'Add to lecture'}
                           </button>
@@ -301,7 +340,9 @@ export function LecturePage() {
                   const v = byId.get(id);
                   if (!v) return null;
                   return (
-                    <li key={id} className="rounded-md border border-line p-2" data-testid="workspace-verse" data-verse-id={id}>
+                    <li key={id}>
+                      {objectiveFor(id) && objectiveFor(id) !== objectiveFor(picked[i - 1]) && <h3 className="m-0 mb-1 text-[13px] font-semibold text-accent2" data-testid="workspace-objective">{objectiveFor(id)}</h3>}
+                      <div className="rounded-md border border-line p-2" data-testid="workspace-verse" data-verse-id={id}>
                       <div className="flex items-center gap-1">
                         <span className="min-w-0 flex-1 truncate text-[13px] font-semibold">{v.ref_printed}{v.version ? ` (${v.version})` : ''}</span>
                         <span className="no-print flex flex-none">
@@ -316,6 +357,8 @@ export function LecturePage() {
                           <ContextLines context={contexts[v.canonical_key]} testId="workspace-context" />
                         </p>
                       )}
+                      <div className="mt-1">{contextButton(v.canonical_key, 'workspace-context-edit')}</div>
+                      </div>
                     </li>
                   );
                 })}
@@ -329,7 +372,7 @@ export function LecturePage() {
                 onClick={async () => {
                   setSaving(true);
                   try {
-                    const saved = await api.saveLecture({ id: lectureId, title, issue, objective, verse_ids: picked });
+                    const saved = await api.saveLecture({ id: lectureId, ...lectureBody() });
                     setLectureId(saved.id);
                     setState({ lectures: [saved, ...getState().lectures.filter((l) => l.id !== saved.id)] });
                     toast('Lecture saved');
@@ -357,7 +400,29 @@ export function LecturePage() {
                 <Copy size={14} /> Copy
               </button>
               <button className="btn" data-testid="lecture-print" disabled={picked.length === 0} onClick={() => window.print()}>
-                <Printer size={14} /> Print
+                <Printer size={14} /> Print or save as PDF
+              </button>
+              <button
+                className="btn"
+                data-testid="lecture-export-word"
+                disabled={picked.length === 0 || !title.trim() || exporting}
+                title={title.trim() ? undefined : 'Give the lecture a title first'}
+                onClick={async () => {
+                  setExporting(true);
+                  try {
+                    const { blob, name } = await api.exportLecture(lectureBody());
+                    saveFile(blob, name);
+                    toast('Word file downloaded. It is not encrypted.');
+                  } catch (e) {
+                    toast(errorText(e), 'error');
+                  }
+                  setExporting(false);
+                }}
+              >
+                <FileDown size={14} /> Word
+              </button>
+              <button className="btn" data-testid="lecture-present" disabled={slides.length === 0} onClick={() => setPresenting(true)}>
+                <MonitorPlay size={14} /> Present
               </button>
             </div>
           </section>

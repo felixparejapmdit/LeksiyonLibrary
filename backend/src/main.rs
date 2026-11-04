@@ -3,14 +3,16 @@ mod api;
 mod backup;
 mod books;
 mod db;
+mod export;
 mod parser;
+mod semantic;
 mod vault;
 
 use axum::http::{header, HeaderValue};
 use std::{
     future::IntoFuture,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{atomic::AtomicBool, Arc, Mutex},
     time::Duration,
 };
 use tower_http::{
@@ -26,6 +28,7 @@ pub struct Config {
     pub static_dir: PathBuf,
     pub ollama_url: String,
     pub ollama_model: String,
+    pub embed_model: String,
 }
 
 pub struct AppState {
@@ -34,6 +37,7 @@ pub struct AppState {
     pub http: reqwest::Client,
     pub owner_id: String,
     pub vault: vault::Vault,
+    pub indexing: AtomicBool,
 }
 
 const CSP: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; \
@@ -75,6 +79,9 @@ async fn main() {
         static_dir: base.join(env("LV_STATIC", "../frontend/dist")),
         ollama_url: env("LV_OLLAMA_URL", "http://127.0.0.1:11434"),
         ollama_model: env("LV_OLLAMA_MODEL", "llama3.2:3b"),
+        // bge-m3 because it separates related from unrelated questions in Tagalog as well as
+        // English. paraphrase-multilingual, tested first, could not do so for Tagalog.
+        embed_model: env("LV_OLLAMA_EMBED_MODEL", "bge-m3"),
     };
 
     // There is no sign-in, so the app must never be reachable from other computers.
@@ -119,7 +126,9 @@ async fn main() {
     let data_shown = config.data_dir.display().to_string();
     let spa = ServeDir::new(&config.static_dir).fallback(ServeFile::new(index));
 
-    let state = Arc::new(AppState { conn: Mutex::new(conn), config, http, owner_id, vault });
+    let state = Arc::new(AppState { conn: Mutex::new(conn), config, http, owner_id, vault, indexing: AtomicBool::new(false) });
+
+    semantic::kick(state.clone());
 
     let app = api::router(state)
         .fallback_service(tower::ServiceBuilder::new()

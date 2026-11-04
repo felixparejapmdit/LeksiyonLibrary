@@ -53,6 +53,15 @@ export interface Lecture {
   created_at: string;
   updated_at: string;
   verse_ids: string[];
+  verse_objectives: string[];
+}
+
+export interface Teaching {
+  id: string;
+  lesson_id: string;
+  taught_on: string;
+  place: string;
+  notes: string;
 }
 
 export interface Suggestion {
@@ -62,11 +71,44 @@ export interface Suggestion {
   score: number;
   matched_terms: string[];
   verse_ids: string[];
+  meaning: boolean;
 }
 
 export interface VerseContext {
   speaker: string;
   context: string;
+  reviewed: boolean;
+}
+
+const json = (method: string, body: unknown): RequestInit => ({
+  method,
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(body),
+});
+
+/** Downloads a generated file without leaving the page. */
+export function saveFile(blob: Blob, name: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+async function fetchFile(path: string, body: unknown, fallbackName: string) {
+  let res: Response;
+  try {
+    res = await fetch(path, json('POST', body));
+  } catch {
+    throw new ApiError('Cannot reach the server. Check your connection and try again.', 0);
+  }
+  if (!res.ok) {
+    const failure = await res.json().catch(() => null);
+    throw new ApiError(failure?.error ?? `Request failed (${res.status}).`, res.status);
+  }
+  const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') ?? '')?.[1] ?? fallbackName;
+  return { blob: await res.blob(), name };
 }
 
 export class ApiError extends Error {
@@ -92,12 +134,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-const json = (method: string, body: unknown): RequestInit => ({
-  method,
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify(body),
-});
-
 export const api = {
   lessons: () => request<Lesson[]>('/lessons'),
   uploadLesson: (file: File, pages: string[], sourceKind: 'text' | 'ocr') => {
@@ -119,32 +155,28 @@ export const api = {
   correctVerse: (id: string, patch: { text?: string; reference?: string }) => request<Verse>(`/verses/${id}`, json('PATCH', patch)),
   verifyVerse: (id: string) => request<Verse>(`/verses/${id}/verify`, { method: 'POST' }),
   verseContexts: () => request<Record<string, VerseContext>>('/verse-context'),
+  saveVerseContext: (canonical_key: string, speaker: string, context: string) =>
+    request<Record<string, VerseContext>>('/verse-context', json('POST', { canonical_key, speaker, context })),
+  searchMeaning: (q: string) => request<{ available: boolean; keys: string[] }>(`/search/meaning?q=${encodeURIComponent(q)}`),
+  status: () => request<{ last_backup_at: string | null }>('/status'),
+  teachings: () => request<Teaching[]>('/teachings'),
+  addTeaching: (t: { lesson_id: string; taught_on: string; place: string; notes: string }) => request<Teaching[]>('/teachings', json('POST', t)),
+  deleteTeaching: (id: string) => request<Teaching[]>(`/teachings/${id}`, { method: 'DELETE' }),
 
-  aiStatus: () => request<{ available: boolean; reachable: boolean; model: string }>('/ai/status'),
+  aiStatus: () => request<{ available: boolean; reachable: boolean; model: string; meaning: boolean }>('/ai/status'),
   aiSuggest: (issue: string, objective: string, count?: number) =>
-    request<{ log_id: string; suggestions: Suggestion[] }>('/ai/suggest', json('POST', { issue, objective, count })),
+    request<{ log_id: string; suggestions: Suggestion[]; meaning: boolean }>('/ai/suggest', json('POST', { issue, objective, count })),
   aiNotes: (logId: string) =>
     request<{ available: boolean; notes: Record<string, string>; context: Record<string, VerseContext>; model?: string }>('/ai/notes', json('POST', { log_id: logId })),
 
   lectures: () => request<Lecture[]>('/lectures'),
-  saveLecture: (l: { id?: string; title: string; issue: string; objective: string; verse_ids: string[] }) =>
+  saveLecture: (l: { id?: string; title: string; issue: string; objective: string; verse_ids: string[]; verse_objectives: string[] }) =>
     request<Lecture>('/lectures', json('POST', l)),
+  exportLecture: (l: { title: string; issue: string; objective: string; verse_ids: string[]; verse_objectives: string[] }) =>
+    fetchFile('/api/lectures/export', l, 'lecture.docx'),
   deleteLecture: (id: string) => request(`/lectures/${id}`, { method: 'DELETE' }),
 
-  backup: async (passphrase: string) => {
-    let res: Response;
-    try {
-      res = await fetch('/api/backup', json('POST', { passphrase }));
-    } catch {
-      throw new ApiError('Cannot reach the server. Check your connection and try again.', 0);
-    }
-    if (!res.ok) {
-      const body = await res.json().catch(() => null);
-      throw new ApiError(body?.error ?? `Request failed (${res.status}).`, res.status);
-    }
-    const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') ?? '')?.[1] ?? 'lesson-vault-backup.lvbackup';
-    return { blob: await res.blob(), name };
-  },
+  backup: (passphrase: string) => fetchFile('/api/backup', { passphrase }, 'lesson-vault-backup.lvbackup'),
   restore: (file: File, passphrase: string) => {
     const form = new FormData();
     form.set('passphrase', passphrase);

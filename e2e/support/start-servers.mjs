@@ -10,6 +10,21 @@ const root = join(here, '..', '..');
 const APP_PORT = '47329';
 const STUB_PORT = 47321;
 
+// A stand-in for a meaning model: words go to fixed positions, and synonyms share one.
+const SYNONYMS = { calling: 'vocation', duty: 'vocation' };
+const FILLER = new Set('a about above at by first fourth from in it made now second speaks spring the third up verse water'.split(' '));
+function embed(text) {
+  const vector = new Array(1024).fill(0);
+  for (const raw of text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []) {
+    if (FILLER.has(raw)) continue;
+    const word = SYNONYMS[raw] ?? raw;
+    let hash = 7;
+    for (const ch of word) hash = (hash * 31 + ch.codePointAt(0)) >>> 0;
+    vector[hash % vector.length] += 1;
+  }
+  return vector;
+}
+
 let mode = 'good';
 let lastPrompt = null;
 
@@ -27,7 +42,8 @@ const stub = createServer((req, res) => {
     }
     if (req.url === '/__last') return send(200, { lastPrompt });
     if (mode === 'down') return req.socket.destroy();
-    if (req.url === '/api/tags') return send(200, { models: [{ name: 'llama3.2:3b' }] });
+    if (req.url === '/api/tags') return send(200, { models: [{ name: 'llama3.2:3b' }, { name: 'bge-m3:latest' }] });
+    if (req.url === '/api/embed') return send(200, { embeddings: JSON.parse(body).input.map(embed) });
     if (req.url === '/api/chat') {
       lastPrompt = body;
       const candidates = [...body.matchAll(/Candidate (\d+):/g)].map((m) => Number(m[1]));

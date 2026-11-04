@@ -93,7 +93,7 @@ export function FilterChips() {
   );
 }
 
-const Row = memo(function Row({ lesson, selected, query, onOpen }: { lesson: Lesson; selected: boolean; query: string; onOpen: (id: string) => void }) {
+const Row = memo(function Row({ lesson, selected, query, onOpen, taught }: { lesson: Lesson; selected: boolean; query: string; onOpen: (id: string) => void; taught?: string }) {
   const meta = [formatLessonDate(lesson), lesson.location].filter(Boolean).join(' · ');
   return (
     <li className="row-cv" data-testid="lesson-row" data-lesson-id={lesson.id} data-selected={selected}>
@@ -113,6 +113,7 @@ const Row = memo(function Row({ lesson, selected, query, onOpen }: { lesson: Les
             <span className="mt-0.5 block truncate text-xs text-muted max-sm:line-clamp-2 max-sm:whitespace-normal" data-testid="lesson-meta">
               {meta}
               {lesson.author ? ` · By ${lesson.author}` : ''}
+              {taught && <span data-testid="lesson-taught"> · {taught}</span>}
             </span>
           </span>
           {lesson.code && <span className="hidden max-w-44 flex-none truncate rounded border border-line px-1.5 py-0.5 text-[11px] text-muted xl:block">{lesson.code}</span>}
@@ -162,12 +163,22 @@ export function useVisibleLessons() {
 export function LessonRows({ visible, onOpen, empty }: { visible: Lesson[]; onOpen: (id: string) => void; empty: React.ReactNode }) {
   const selectedId = useStore((s) => s.selectedId);
   const query = useStore((s) => s.filters.query);
+  const teachings = useStore((s) => s.teachings);
+  const taught = useMemo(() => {
+    const summary = new Map<string, string>();
+    for (const t of teachings) {
+      const times = teachings.filter((x) => x.lesson_id === t.lesson_id).length;
+      // The list is newest first, so the first one seen is the latest.
+      if (!summary.has(t.lesson_id)) summary.set(t.lesson_id, `Taught ${times === 1 ? 'once' : `${times} times`}, last ${t.taught_on}`);
+    }
+    return summary;
+  }, [teachings]);
   const shown = useProgressive(visible, 50);
   if (visible.length === 0) return <>{empty}</>;
   return (
     <ul className="m-0 list-none space-y-1 p-0" data-testid="lesson-list">
       {shown.map((l) => (
-        <Row key={l.id} lesson={l} selected={l.id === selectedId} query={query} onOpen={onOpen} />
+        <Row key={l.id} lesson={l} selected={l.id === selectedId} query={query} onOpen={onOpen} taught={taught.get(l.id)} />
       ))}
     </ul>
   );

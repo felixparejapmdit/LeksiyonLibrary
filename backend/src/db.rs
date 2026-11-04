@@ -103,7 +103,8 @@ CREATE TABLE IF NOT EXISTS lecture_verses (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   lecture_id TEXT NOT NULL REFERENCES lectures(id) ON DELETE CASCADE,
   verse_id TEXT NOT NULL REFERENCES verses(id) ON DELETE CASCADE,
-  ordinal INTEGER NOT NULL
+  ordinal INTEGER NOT NULL,
+  objective TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS ai_prompts_log (
@@ -125,7 +126,32 @@ CREATE TABLE IF NOT EXISTS verse_context (
   context TEXT NOT NULL DEFAULT '',
   model TEXT NOT NULL DEFAULT '',
   updated_at TEXT NOT NULL,
+  reviewed_at TEXT,
   PRIMARY KEY (user_id, canonical_key)
+);
+
+-- Numbers that represent each verse's meaning. Rebuildable, so not part of backups.
+CREATE TABLE IF NOT EXISTS verse_embeddings (
+  verse_id TEXT PRIMARY KEY REFERENCES verses(id) ON DELETE CASCADE,
+  text_sha TEXT NOT NULL,
+  model TEXT NOT NULL,
+  vector BLOB NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS teachings (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  lesson_id TEXT NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
+  taught_on TEXT NOT NULL,
+  place TEXT NOT NULL DEFAULT '',
+  notes TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS teachings_lesson ON teachings(lesson_id);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
 );
 
 -- Full-text indexes
@@ -171,6 +197,21 @@ BEGIN
 END;
 "#;
 
+/// Creates missing tables, and adds columns that older vaults do not have yet.
+pub fn init(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(SCHEMA)?;
+    for (table, column, definition) in [
+        ("lecture_verses", "objective", "TEXT NOT NULL DEFAULT ''"),
+        ("verse_context", "reviewed_at", "TEXT"),
+    ] {
+        let present: bool = conn.query_row(&format!("SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1)"), [column], |r| r.get(0))?;
+        if !present {
+            conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {definition};"))?;
+        }
+    }
+    Ok(())
+}
+
 /// The single owner of this vault. An existing vault keeps its earliest account, so
 /// everything already saved stays visible; a new vault gets a local placeholder.
 pub fn local_owner(conn: &Connection) -> rusqlite::Result<String> {
@@ -199,6 +240,20 @@ mod tests {
         )
         .unwrap();
         c
+    }
+
+    #[test]
+    fn older_vaults_gain_the_new_columns_without_losing_data() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch("CREATE TABLE lecture_verses (id TEXT PRIMARY KEY, user_id TEXT, lecture_id TEXT, verse_id TEXT, ordinal INTEGER);
+                         INSERT INTO lecture_verses VALUES ('a','u','l','v',0);
+                         CREATE TABLE verse_context (user_id TEXT, canonical_key TEXT, speaker TEXT, context TEXT, model TEXT, updated_at TEXT);").unwrap();
+        init(&c).unwrap();
+        init(&c).unwrap();
+        let objective: String = c.query_row("SELECT objective FROM lecture_verses WHERE id='a'", [], |r| r.get(0)).unwrap();
+        assert_eq!(objective, "");
+        c.query_row("SELECT reviewed_at FROM verse_context", [], |_| Ok(())).unwrap_err();
+        c.execute("INSERT INTO verse_context (user_id,canonical_key,speaker,context,model,updated_at,reviewed_at) VALUES ('u','k','','','','now','now')", []).unwrap();
     }
 
     #[test]
