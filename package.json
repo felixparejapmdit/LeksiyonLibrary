@@ -1,0 +1,13 @@
+{
+  "name": "lesson-vault",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Lesson library and Tagalog-English verse collection. Run from this folder.",
+  "type": "module",
+  "scripts": {
+    "start": "node scripts/run.mjs",
+    "dev": "node scripts/run.mjs dev",
+    "build": "npm --prefix frontend run build && cargo build --release --manifest-path backend/Cargo.toml",
+    "test": "npm run build && cargo test --release --manifest-path backend/Cargo.toml && npm --prefix e2e test"
+  }
+}

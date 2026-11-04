@@ -1,0 +1,42 @@
+# Build output and installed packages
+node_modules/
+backend/target/
+frontend/dist/
+
+# Copied from node_modules by frontend's postinstall
+frontend/public/ocr/
+frontend/public/pdfjs/
+
+# Your vault: database, lesson PDFs, its key and backups. Never publish these,
+# even encrypted.
+backend/data/
+backend/data-backup-*/
+backend/tests/
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+*.enc
+*.enc.previous
+*.key
+*.lvbackup
+*.zip
+
+# Lesson material and recordings that may be restricted or confidential.
+*.pdf
+*.mp4
+backend/tests/fixtures/
+
+# Test output
+e2e/.tmp-data/
+e2e/coverage-data/
+e2e/test-results/
+e2e/playwright-report/
+e2e/summary-*.txt
+
+# Superseded by npm start
+start.ps1
+
+# Local settings and secrets
+.env
+.env.*
+.claude/
