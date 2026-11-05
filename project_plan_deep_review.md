@@ -301,3 +301,13 @@ Added at the project owner's choice: a verse review queue, editable AI context, 
 
 **Limits:** the Word file and any printout are plain files. The PDF route is the browser's print dialog, not a generated file. Presentation mode has been tested in a browser, not on a projector.
 
+### 14. Mac support, chapter and book context (5 November 2026)
+
+**Chapter and book context** replace the AI's verse-level context, at the project owner's request. They are stored per chapter and per book, not per verse: one book reads the same everywhere, a correction reaches every verse it covers, and each is written once. The model still writes a speaker for each verse. Unreviewed verse-level text from the AI was cleared; anything the user reviewed remains as a verse note.
+
+**Accuracy, measured on the real model (`llama3.2:3b`).** Asking about several books and chapters at once blended them: one chapter was described by another book's themes, and speakers came back as book names. Asking about each one at a time was clearly better, and named all four test speakers correctly, so that is how it works now. `qwen2.5-coder:3b` was worse. The model is small and still makes mistakes: on a well-known chapter, it reversed part of what happens. **Treat all of this as a draft for review.** A larger model may do better, but needs disk space this PC does not have.
+
+**Test results:** Rust 50 of 50, Playwright 121 of 121 in one full run. Tests use a stand-in model.
+
+**Mac support** wraps the vault key with a master key in the Mac Keychain, as DPAPI does on Windows. The rest of the code was already cross-platform. **It has not been run on a Mac.** It was written on Windows, where only the Mac-specific key code could be type-checked against a Mac target, not built or run. Safari is also untested; Chrome is the tested browser.
+

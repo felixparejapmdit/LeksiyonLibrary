@@ -29,7 +29,7 @@ test('nothing in the data folder can be read without the key', async ({ page }) 
 
 test('lesson data is never left in the browser cache', async ({ page }) => {
   const lessons: any[] = await (await page.request.get('/api/lessons')).json();
-  for (const path of ['/api/lessons', '/api/verses', '/api/verse-context', '/api/lectures', `/api/lessons/${lessons[0].id}/file`]) {
+  for (const path of ['/api/lessons', '/api/verses', '/api/verse-context', '/api/scripture-context', '/api/lectures', `/api/lessons/${lessons[0].id}/file`]) {
     expect((await page.request.get(path)).headers()['cache-control'], path).toBe('no-store');
   }
 });

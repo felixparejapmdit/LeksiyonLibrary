@@ -130,6 +130,18 @@ CREATE TABLE IF NOT EXISTS verse_context (
   PRIMARY KEY (user_id, canonical_key)
 );
 
+-- Background on a whole book or chapter, kept once and shared by all its verses.
+-- scope is 'book:60' or 'chapter:60.2'.
+CREATE TABLE IF NOT EXISTS scripture_context (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  scope TEXT NOT NULL,
+  context TEXT NOT NULL,
+  model TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL,
+  reviewed_at TEXT,
+  PRIMARY KEY (user_id, scope)
+);
+
 -- Numbers that represent each verse's meaning. Rebuildable, so not part of backups.
 CREATE TABLE IF NOT EXISTS verse_embeddings (
   verse_id TEXT PRIMARY KEY REFERENCES verses(id) ON DELETE CASCADE,
@@ -209,6 +221,9 @@ pub fn init(conn: &Connection) -> rusqlite::Result<()> {
             conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {definition};"))?;
         }
     }
+    // Verse-level context from the AI gave way to chapter and book context. Anything the
+    // user reviewed or wrote is theirs, and stays.
+    conn.execute("UPDATE verse_context SET context = '' WHERE reviewed_at IS NULL AND context <> ''", [])?;
     Ok(())
 }
 

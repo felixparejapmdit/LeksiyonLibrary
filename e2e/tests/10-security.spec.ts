@@ -4,7 +4,7 @@ import { makePdf, notAPdf } from '../support/pdf';
 const EVIL = { Origin: 'https://evil.example' };
 
 test('requests from other websites are refused on every data route', async ({ page }) => {
-  for (const path of ['/api/lessons', '/api/verses', '/api/verse-context', '/api/folders', '/api/lectures', '/api/backup', '/api/ai/status', '/api/search?q=x']) {
+  for (const path of ['/api/lessons', '/api/verses', '/api/verse-context', '/api/scripture-context', '/api/folders', '/api/lectures', '/api/backup', '/api/ai/status', '/api/search?q=x']) {
     expect((await page.request.get(path, { headers: EVIL })).status(), path).toBe(403);
   }
   expect((await page.request.post('/api/reset', { headers: EVIL, data: { confirm: 'RESET' } })).status()).toBe(403);

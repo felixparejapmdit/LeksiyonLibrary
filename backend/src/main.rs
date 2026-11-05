@@ -52,7 +52,7 @@ fn base_dir(exe: Option<&Path>, cwd: &Path) -> PathBuf {
         .map_or_else(|| cwd.to_path_buf(), Path::to_path_buf)
 }
 
-/// Resolves on Ctrl+C, or when the terminal window is closed on Windows.
+/// Resolves on Ctrl+C, or also when the terminal window is closed on Windows.
 async fn shutdown_signal() {
     #[cfg(windows)]
     {

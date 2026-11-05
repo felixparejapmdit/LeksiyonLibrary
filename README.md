@@ -1,6 +1,6 @@
 # Lesson Vault
 
-Lesson library and Tagalog-English verse collection. Rust (Axum) + SQLite backend, React + Vite + Tailwind PWA frontend. Runs locally. Lessons are encrypted on disk and can only be opened by the Windows account that created them, on this PC.
+Lesson library and Tagalog-English verse collection. Rust (Axum) + SQLite backend, React + Vite + Tailwind PWA frontend. Runs locally on Windows or Mac. Lessons are encrypted on disk and can only be opened by the user account that created them, on that computer.
 
 ## Run
 
@@ -11,6 +11,8 @@ From this folder, in a terminal:
 Then open http://127.0.0.1:47319. It goes straight to your dashboard; there is no sign-in. Press **Ctrl+C** in that terminal to stop.
 
 `npm start` builds whatever has changed, then runs the app in the foreground. The first build takes a few minutes; later starts take seconds. It needs Node.js and Rust installed.
+
+On a Mac, also install Apple's command line tools first (`xcode-select --install`). The first start asks permission to use the Keychain, where the vault's key is protected. Choose **Always Allow**. Because the app is not code-signed, macOS may ask again after a rebuild. Mac support has not yet been tested on a real Mac.
 
 To work on the frontend with hot reload:
 
@@ -33,9 +35,11 @@ If the port is taken, the server stops with an error instead of moving to anothe
 
 Nothing in this repository contains lesson data. A fresh clone starts with an empty vault.
 
-Everything saved by the app is encrypted with AES-256-GCM. The key is protected by Windows and tied to this account on this PC, so copying `backend/data` elsewhere yields nothing readable. There is no password to remember for daily use.
+Everything saved by the app is encrypted with AES-256-GCM. The key is protected by the operating system (DPAPI on Windows, the Keychain on a Mac) and tied to this account on this computer, so copying `backend/data` elsewhere yields nothing readable. There is no password to remember for daily use.
 
-**If this PC fails, or Windows is reinstalled, your vault cannot be opened.** Download an encrypted backup regularly (Backup, then choose a passphrase) and keep it off this PC. A forgotten passphrase cannot be recovered. Do not delete `backend/data/vault.key`.
+**If this computer fails, or its system is reinstalled, your vault cannot be opened.** Download an encrypted backup regularly (Backup, then choose a passphrase) and keep it off this PC. A forgotten passphrase cannot be recovered. Do not delete `backend/data/vault.key`.
+
+To move to another computer, including from Windows to a Mac, make an encrypted backup and use Restore there. Restore replaces whatever is in that vault.
 
 Files you export, such as a downloaded PDF or a copied lecture, are not encrypted.
 
@@ -43,7 +47,7 @@ Files you export, such as a downloaded PDF or a copied lecture, are not encrypte
 
 Write one objective per line and choose 3, 4 or 5 verses per objective. Verses come only from your library, shown exactly as stored. If fewer match, the app says so instead of adding unrelated verses.
 
-With the local AI running, each verse also shows who is speaking and its context. This is the model's reading, not scripture, and can be wrong, so it is labelled until you review or correct it. Your wording is then kept, and later AI runs leave it alone. It never changes the verse.
+With the local AI running, each verse also shows who is speaking, a **chapter context** and a **book context**. These are the model's reading, not scripture, and can be wrong, so they are labelled until you review or correct them. Each chapter and book context is written once and shared by all its verses, so a correction applies everywhere and later searches are quicker. Your wording is kept, later AI runs leave it alone, and it never changes the verse.
 
 Saved lectures keep each verse under its objective. From the workspace you can copy, print or save as PDF, download a Word file, or present full screen, one reference at a time in both languages (arrow keys to move, Esc to leave). Word files and printouts are not encrypted.
 

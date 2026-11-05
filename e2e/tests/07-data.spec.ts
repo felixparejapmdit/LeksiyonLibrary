@@ -143,6 +143,8 @@ test('a junk file is rejected on restore', async ({ app: page }) => {
 test('reset needs the typed word, wipes the vault, and restore brings everything back', async ({ app: page }) => {
   const versesBefore: any[] = await (await page.request.get('/api/verses')).json();
   const contextBefore = await (await page.request.get('/api/verse-context')).json();
+  const scriptureBefore = await (await page.request.get('/api/scripture-context')).json();
+  expect(Object.keys(scriptureBefore).length, 'book and chapter context exists to protect').toBeGreaterThan(0);
   await page.getByTestId('header-reset').click();
   await expect(page.getByTestId('confirm-accept')).toBeDisabled();
   await page.getByTestId('confirm-text').fill('reset');
@@ -154,6 +156,7 @@ test('reset needs the typed word, wipes the vault, and restore brings everything
   await expect(page.getByTestId('viewer-empty')).toBeVisible();
   expect(await (await page.request.get('/api/verses')).json()).toEqual([]);
   expect(await (await page.request.get('/api/verse-context')).json()).toEqual({});
+  expect(await (await page.request.get('/api/scripture-context')).json()).toEqual({});
 
   await page.goto('/bibles');
   await expect(page.getByTestId('bibles-empty')).toContainText('No verses yet');
@@ -175,6 +178,7 @@ test('reset needs the typed word, wipes the vault, and restore brings everything
   const pick = (vs: any[]) => vs.map((v) => [v.id, v.text, v.status, v.ocr_raw]).sort();
   expect(pick(versesAfter)).toEqual(pick(versesBefore));
   expect(await (await page.request.get('/api/verse-context')).json()).toEqual(contextBefore);
+  expect(await (await page.request.get('/api/scripture-context')).json()).toEqual(scriptureBefore);
   const locked = versesAfter.find((v) => v.status === 'verified');
   expect((await page.request.patch(`/api/verses/${locked.id}`, { data: { text: 'x' } })).status()).toBe(409);
 });

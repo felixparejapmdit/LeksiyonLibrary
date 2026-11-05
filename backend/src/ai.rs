@@ -6,8 +6,8 @@
 //! always read from the database by id. Nothing in this module writes to the
 //! verses table.
 //!
-//! The speaker and context shown beside a verse are the model's reading, not
-//! facts from the library, and are always labelled that way in the interface.
+//! The speaker, chapter context and book context shown beside a verse are the model's
+//! reading, not facts from the library, and are labelled that way until the user reviews them.
 
 use regex::Regex;
 use rusqlite::{params, Connection};
@@ -173,12 +173,6 @@ const MAX_SPEAKER_CHARS: usize = 80;
 /// One candidate shown to the model: canonical key, printed reference, verse text.
 pub type Candidate = (String, String, String);
 
-#[derive(Serialize, Clone, Debug, PartialEq)]
-pub struct VerseContext {
-    pub speaker: String,
-    pub context: String,
-}
-
 /// Validates the model's reply. Unknown candidates, quoted passages and notes
 /// that reproduce stored verse wording are discarded, not repaired.
 pub fn sanitize_notes(reply: &Value, candidates: &[Candidate]) -> HashMap<String, String> {
@@ -209,37 +203,6 @@ pub fn sanitize_notes(reply: &Value, candidates: &[Candidate]) -> HashMap<String
     out
 }
 
-/// Validates the speaker and context the same way as notes, and also discards any
-/// that cite a verse: the model may describe a passage but not add references.
-pub fn sanitize_context(reply: &Value, candidates: &[Candidate]) -> HashMap<String, VerseContext> {
-    let mut out = HashMap::new();
-    let Some(items) = reply.get("notes").and_then(|n| n.as_array()) else {
-        return out;
-    };
-    let clean = |item: &Value, field: &str, verse: &str, max: usize| -> Option<String> {
-        let text = item.get(field)?.as_str()?.trim();
-        let rejected = text.is_empty()
-            || QUOTED.is_match(text)
-            || reproduces_scripture(text, verse)
-            || !crate::parser::find_references(text).is_empty();
-        (!rejected).then(|| text.chars().take(max).collect())
-    };
-    for item in items {
-        let Some(num) = item.get("candidate").and_then(candidate_number) else {
-            continue;
-        };
-        let Some((key, _, verse)) = num.checked_sub(1).and_then(|i| candidates.get(i as usize)) else {
-            continue;
-        };
-        let speaker = clean(item, "speaker", verse, MAX_SPEAKER_CHARS);
-        let context = clean(item, "context", verse, MAX_NOTE_CHARS);
-        if speaker.is_some() || context.is_some() {
-            out.insert(key.clone(), VerseContext { speaker: speaker.unwrap_or_default(), context: context.unwrap_or_default() });
-        }
-    }
-    out
-}
-
 fn candidate_number(c: &Value) -> Option<u64> {
     c.as_u64().or_else(|| c.as_str().and_then(|s| s.trim_start_matches('V').parse().ok()))
 }
@@ -258,9 +221,115 @@ fn reproduces_scripture(note: &str, verse: &str) -> bool {
     note_words.windows(6).any(|w| shingles.contains(w))
 }
 
+/// A book or chapter whose background is wanted.
+pub struct ScopeRequest {
+    pub scope: String,
+    pub label: String,
+}
+
+/// "60.2:9-10" is book 60, chapter 2.
+fn parse_key(key: &str) -> Option<(u32, &str)> {
+    let (book, rest) = key.split_once('.')?;
+    let chapter = rest.split(':').next()?;
+    (!chapter.is_empty()).then_some(())?;
+    Some((book.parse().ok()?, chapter))
+}
+
+/// The books and chapters of these verses that are not already in `known`, each once.
+pub fn scope_requests(keys: &[String], known: &HashSet<String>) -> Vec<ScopeRequest> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    let mut add = |scope: String, label: String| {
+        if !known.contains(&scope) && seen.insert(scope.clone()) {
+            out.push(ScopeRequest { scope, label });
+        }
+    };
+    for key in keys {
+        let Some((book_id, chapter)) = parse_key(key) else { continue };
+        let Some(book) = crate::books::by_id(book_id) else { continue };
+        add(format!("chapter:{book_id}.{chapter}"), format!("chapter {chapter} of the book of {}", book.en));
+        add(format!("book:{book_id}"), format!("the book of {}", book.en));
+    }
+    out
+}
+
+const MAX_SCOPE_CHARS: usize = 600;
+
+const SPEAKER_SYSTEM: &str = "Reply with JSON only, shaped as {\"speaker\":\"<name>\"}. Name the person speaking in this Bible verse, \
+    such as the author or someone being quoted. Give a person, never the name of the book. If the passage does not make it clear, say \"Not stated\".";
+
+const SCOPE_SYSTEM: &str = "You give a Bible teacher brief background. Reply with JSON only, shaped as {\"context\":\"<two or three short sentences>\"}. \
+    For a book: who wrote it, who it was written to, and why. \
+    For a chapter: who is being addressed, what happens or is discussed in that chapter, and its main point. \
+    Be specific to that item, and do not describe the whole book when asked about one chapter. \
+    State only what is widely accepted, and if you are unsure, say so rather than guessing. \
+    Never quote scripture, and never cite chapter and verse numbers.";
+
+/// Discards text that quotes scripture or cites a verse.
+fn clean_text(text: &str, max: usize) -> Option<String> {
+    let text = text.trim();
+    let rejected = text.is_empty() || QUOTED.is_match(text) || !crate::parser::find_references(text).is_empty();
+    (!rejected).then(|| whole_sentences(text, max))
+}
+
+/// Shortens long text at the end of a sentence, never partway through one.
+fn whole_sentences(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let clipped: String = text.chars().take(max).collect();
+    match clipped.rfind(". ") {
+        Some(end) => clipped[..=end].to_string(),
+        None => clipped,
+    }
+}
+
+/// A speaker must be a person. Small models tend to answer with the book's name.
+fn clean_speaker(speaker: &str, reference: &str) -> Option<String> {
+    let speaker = clean_text(speaker, MAX_SPEAKER_CHARS)?;
+    (!reference.to_lowercase().starts_with(&speaker.to_lowercase())).then_some(speaker)
+}
+
+async fn ask_json(client: &reqwest::Client, base_url: &str, model: &str, system: &str, user: &str) -> Result<Value, String> {
+    let resp = client
+        .post(format!("{}/api/chat", base_url.trim_end_matches('/')))
+        .json(&json!({
+            "model": model,
+            "stream": false,
+            "format": "json",
+            "options": { "temperature": 0.1 },
+            "messages": [
+                { "role": "system", "content": system },
+                { "role": "user", "content": user }
+            ]
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("AI service unreachable: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("AI service returned {}", resp.status()));
+    }
+    let body: Value = resp.json().await.map_err(|e| format!("Unreadable AI response: {e}"))?;
+    let content = body.pointer("/message/content").and_then(|c| c.as_str()).unwrap_or("");
+    serde_json::from_str(content).map_err(|_| "AI response was not valid JSON".to_string())
+}
+
+/// Asked one at a time: measured on the real model, this named every speaker correctly,
+/// where asking about several verses at once returned book names.
+pub async fn request_speaker(client: &reqwest::Client, base_url: &str, model: &str, reference: &str) -> Result<Option<String>, String> {
+    let reply = ask_json(client, base_url, model, SPEAKER_SYSTEM, &format!("Verse: {reference}")).await?;
+    Ok(reply.get("speaker").and_then(|c| c.as_str()).and_then(|s| clean_speaker(s, reference)))
+}
+
+/// Asked one at a time: measured on the real model, asking about several at once blended
+/// them, so that a chapter was described by another book's themes.
+pub async fn request_scope(client: &reqwest::Client, base_url: &str, model: &str, label: &str) -> Result<Option<String>, String> {
+    let reply = ask_json(client, base_url, model, SCOPE_SYSTEM, &format!("Background on: {label}")).await?;
+    Ok(reply.get("context").and_then(|c| c.as_str()).and_then(|t| clean_text(t, MAX_SCOPE_CHARS)))
+}
+
 pub struct NotesResult {
     pub notes: HashMap<String, String>,
-    pub context: HashMap<String, VerseContext>,
     pub model: String,
 }
 
@@ -279,9 +348,7 @@ pub async fn request_notes(
         .collect::<Vec<_>>()
         .join("\n");
     let system = "You help a minister choose among scripture candidates. Reply with JSON only, shaped as \
-        {\"notes\":[{\"candidate\":<number>,\"speaker\":\"<who is speaking>\",\"context\":\"<one short sentence>\",\"note\":\"<one short sentence>\"}]}. \
-        For each candidate: speaker names who is speaking in the verse, or says \"Not stated\" if the passage does not make it clear; \
-        context says who is being addressed and what is happening at that point in the book; note explains why the candidate fits the \
+        {\"notes\":[{\"candidate\":<number>,\"note\":\"<one short sentence>\"}]}. Each note explains why that candidate fits the \
         issue and objective. If you are unsure, say so rather than guessing. Never quote, paraphrase, translate or rewrite scripture. \
         Never add verses or references. Use only the candidate numbers given.";
     let user = format!("Issue: {issue}\nObjective: {objective}\n\n{list}");
@@ -306,7 +373,7 @@ pub async fn request_notes(
     let body: Value = resp.json().await.map_err(|e| format!("Unreadable AI response: {e}"))?;
     let content = body.pointer("/message/content").and_then(|c| c.as_str()).unwrap_or("");
     let parsed: Value = serde_json::from_str(content).map_err(|_| "AI response was not valid JSON".to_string())?;
-    Ok(NotesResult { notes: sanitize_notes(&parsed, candidates), context: sanitize_context(&parsed, candidates), model: model.to_string() })
+    Ok(NotesResult { notes: sanitize_notes(&parsed, candidates), model: model.to_string() })
 }
 
 #[cfg(test)]
@@ -321,25 +388,39 @@ mod tests {
     }
 
     #[test]
-    fn valid_speaker_and_context_are_kept() {
-        let reply = json!({"notes": [{"candidate": 1, "speaker": "King David", "context": "David is praying after God's promise.", "note": "Fits."}]});
-        let c = sanitize_context(&reply, &cands());
-        assert_eq!(c["10.7:24"], VerseContext { speaker: "King David".into(), context: "David is praying after God's promise.".into() });
+    fn a_speaker_must_be_a_person_and_cannot_cite_or_quote() {
+        assert_eq!(clean_speaker(" Peter ", "I Peter 2:9-10").as_deref(), Some("Peter"));
+        assert_eq!(clean_speaker("Not stated", "I Peter 2:9-10").as_deref(), Some("Not stated"));
+        assert_eq!(clean_speaker("I Peter", "I Peter 2:9-10"), None, "the book's name is not a person");
+        assert_eq!(clean_speaker("colossians", "Colossians 3:12 & 15"), None);
+        assert_eq!(clean_speaker("See John 3:16", "I Peter 2:9-10"), None);
+        assert_eq!(clean_speaker("", "I Peter 2:9-10"), None);
     }
 
     #[test]
-    fn context_cannot_quote_scripture_cite_verses_or_use_unknown_candidates() {
-        let reply = json!({"notes": [
-            {"candidate": 1, "speaker": "David", "context": "It says \"the sample verse one speaks of a people kept safe\"."},
-            {"candidate": 2, "speaker": "Paul", "context": "As John 3:16 also teaches."},
-            {"candidate": 9, "speaker": "Nobody", "context": "Invented."},
-            {"candidate": 0, "speaker": "Nobody", "context": "Invented."}
-        ]});
-        let c = sanitize_context(&reply, &cands());
-        assert_eq!(c["10.7:24"].context, "");
-        assert_eq!(c["45.9:4"].context, "");
-        assert_eq!(c["45.9:4"].speaker, "Paul");
-        assert_eq!(c.len(), 2);
+    fn each_book_and_chapter_is_asked_about_once_and_only_if_missing() {
+        let keys = vec!["60.2:9-10".to_string(), "60.2:11".to_string(), "60.3:1".to_string(), "19.138:7-8,2".to_string(), "bad".to_string(), "999.1:1".to_string()];
+        let requests = scope_requests(&keys, &HashSet::from(["book:19".to_string()]));
+        let scopes: Vec<&str> = requests.iter().map(|r| r.scope.as_str()).collect();
+        assert_eq!(scopes, vec!["chapter:60.2", "book:60", "chapter:60.3", "chapter:19.138"]);
+        assert!(requests[0].label.starts_with("chapter 2 of the book of "), "{}", requests[0].label);
+        assert!(requests[1].label.starts_with("the book of "), "{}", requests[1].label);
+    }
+
+    #[test]
+    fn long_text_is_shortened_at_a_sentence_end() {
+        assert_eq!(whole_sentences("One two. Three four five.", 100), "One two. Three four five.");
+        assert_eq!(whole_sentences("One two. Three four five.", 15), "One two.");
+        assert_eq!(whole_sentences("No sentence end here at all", 10), "No sentenc");
+    }
+
+    #[test]
+    fn scripture_context_cannot_quote_or_cite_verses() {
+        assert_eq!(clean_text(" A chapter about identity. ", MAX_SCOPE_CHARS).as_deref(), Some("A chapter about identity."));
+        assert_eq!(clean_text("As John 3:16 teaches.", MAX_SCOPE_CHARS), None);
+        assert_eq!(clean_text("It reads \"a long passage that is quoted from the text\".", MAX_SCOPE_CHARS), None);
+        assert_eq!(clean_text("", MAX_SCOPE_CHARS), None);
+        assert!(clean_text(&"word ".repeat(300), MAX_SCOPE_CHARS).unwrap().chars().count() <= MAX_SCOPE_CHARS);
     }
 
     fn library() -> Connection {

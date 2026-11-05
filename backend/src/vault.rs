@@ -2,12 +2,13 @@
 //!
 //! - The database and PDFs are sealed with AES-256-GCM, so reading them needs the key
 //!   and any change to the file is detected.
-//! - The key is random and stored wrapped by Windows DPAPI, which ties it to this
-//!   Windows account on this PC. Copying the data folder elsewhere yields nothing.
+//! - The key is random and stored wrapped by the operating system: DPAPI on Windows, the
+//!   Keychain on a Mac. That ties it to this user account on this computer, so copying
+//!   the data folder elsewhere yields nothing.
 //! - SQLite runs in memory and is saved as a sealed snapshot, so no plaintext database,
 //!   journal or temporary file ever reaches the disk.
 //!
-//! Losing the key file, the Windows profile or the PC makes this data unreadable by
+//! Losing the key file, the user account or the computer makes this data unreadable by
 //! design. Passphrase-protected backups (see `backup.rs`) are the way to recover.
 
 use crate::db;
@@ -96,14 +97,14 @@ impl Vault {
         let key_path = dir.join(KEY_FILE);
         let key: Vec<u8> = if key_path.exists() {
             let wrapped = std::fs::read(&key_path).map_err(|e| format!("cannot read the vault key: {e}"))?;
-            dpapi::unprotect(&wrapped).map_err(|_| {
-                "This vault can only be opened by the Windows account and PC that created it. On another PC, restore a passphrase-protected backup instead.".to_string()
+            key_guard::unprotect(&wrapped).map_err(|_| {
+                "This vault can only be opened by the user account and computer that created it. On another computer, restore a passphrase-protected backup instead.".to_string()
             })?
         } else if Self::has_encrypted_data(dir) {
             return Err("The vault key file (vault.key) is missing, so this data cannot be opened. Restore it, or start with an empty data folder and restore a passphrase-protected backup.".into());
         } else {
             let fresh = Aes256Gcm::generate_key(&mut OsRng).to_vec();
-            let wrapped = dpapi::protect(&fresh)?;
+            let wrapped = key_guard::protect(&fresh)?;
             write_atomic(&key_path, &wrapped).map_err(|e| format!("cannot save the vault key: {e}"))?;
             fresh
         };
@@ -234,7 +235,7 @@ impl Vault {
 
 /// Windows Data Protection: only this Windows account on this PC can unwrap the key.
 #[cfg(windows)]
-mod dpapi {
+mod key_guard {
     use windows_sys::Win32::Foundation::LocalFree;
     use windows_sys::Win32::Security::Cryptography::{CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB};
 
@@ -274,11 +275,61 @@ mod dpapi {
     }
 }
 
+/// Mac Keychain: a master key kept there wraps the vault key, so only this user account on
+/// this Mac can unwrap it. macOS may ask for permission the first time, and again after a
+/// rebuild, because the app is not code-signed.
+#[cfg(target_os = "macos")]
+mod key_guard {
+    use aes_gcm::{
+        aead::{Aead, AeadCore, KeyInit, OsRng},
+        Aes256Gcm, Nonce,
+    };
+    use security_framework::passwords::{get_generic_password, set_generic_password};
+    use std::sync::Mutex;
+
+    const SERVICE: &str = "Lesson Vault";
+    const ACCOUNT: &str = "vault-master-key";
+    const ITEM_NOT_FOUND: i32 = -25300;
+    const NONCE_LEN: usize = 12;
+    static CREATING: Mutex<()> = Mutex::new(());
+
+    /// A new master key is made only if the Keychain says none exists. Any other failure,
+    /// such as a locked Keychain or a refused prompt, must not replace it: that would make
+    /// every vault wrapped by the old key unreadable.
+    fn master() -> Result<Aes256Gcm, String> {
+        let _guard = CREATING.lock().unwrap_or_else(|e| e.into_inner());
+        let key = match get_generic_password(SERVICE, ACCOUNT) {
+            Ok(key) => key,
+            Err(e) if e.code() == ITEM_NOT_FOUND => {
+                let fresh = Aes256Gcm::generate_key(&mut OsRng);
+                set_generic_password(SERVICE, ACCOUNT, fresh.as_slice()).map_err(|e| format!("The Keychain refused to store the vault's key: {e}"))?;
+                fresh.to_vec()
+            }
+            Err(e) => return Err(format!("The Keychain did not allow access to the vault's key: {e}")),
+        };
+        Aes256Gcm::new_from_slice(&key).map_err(|_| "The vault's key in the Keychain is invalid.".to_string())
+    }
+
+    pub fn protect(plain: &[u8]) -> Result<Vec<u8>, String> {
+        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+        let body = master()?.encrypt(&nonce, plain).map_err(|_| "Could not protect the vault key.".to_string())?;
+        Ok([nonce.as_slice(), body.as_slice()].concat())
+    }
+
+    pub fn unprotect(wrapped: &[u8]) -> Result<Vec<u8>, String> {
+        if wrapped.len() < NONCE_LEN {
+            return Err("The vault key file is damaged.".into());
+        }
+        let (nonce, body) = wrapped.split_at(NONCE_LEN);
+        master()?.decrypt(Nonce::from_slice(nonce), body).map_err(|_| "This vault key belongs to another user account or computer.".to_string())
+    }
+}
+
 /// Without an operating-system key store, refusing to run is safer than storing the key
 /// beside the data it protects.
-#[cfg(not(windows))]
-mod dpapi {
-    const UNSUPPORTED: &str = "Lesson Vault's encryption currently needs Windows, which protects its key.";
+#[cfg(not(any(windows, target_os = "macos")))]
+mod key_guard {
+    const UNSUPPORTED: &str = "Lesson Vault's encryption needs Windows or macOS, which protect its key.";
     pub fn protect(_: &[u8]) -> Result<Vec<u8>, String> {
         Err(UNSUPPORTED.into())
     }
@@ -287,7 +338,7 @@ mod dpapi {
     }
 }
 
-#[cfg(all(test, windows))]
+#[cfg(all(test, any(windows, target_os = "macos")))]
 mod tests {
     use super::*;
 
@@ -380,7 +431,7 @@ mod tests {
 
         // A key wrapped for someone else cannot be unwrapped here.
         std::fs::write(dir.join(KEY_FILE), b"not a key this account can unwrap").unwrap();
-        assert!(Vault::open(&dir).err().unwrap().contains("Windows account"));
+        assert!(Vault::open(&dir).err().unwrap().contains("user account"));
 
         // A missing key must never quietly become a new key and orphan the data.
         std::fs::remove_file(dir.join(KEY_FILE)).unwrap();

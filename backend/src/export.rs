@@ -10,7 +10,9 @@ pub struct Item {
     pub version: String,
     pub text: String,
     pub speaker: String,
-    pub context: String,
+    pub verse_note: String,
+    pub chapter_context: String,
+    pub book_context: String,
     pub reviewed: bool,
 }
 
@@ -51,16 +53,24 @@ pub fn document(title: &str, issue: &str, objective: &str, items: &[Item]) -> St
         let version = if item.version.is_empty() { String::new() } else { format!(" ({})", item.version) };
         body += &paragraph(&format!("{}{version}", item.reference), 24, true, false, 60);
         body += &paragraph(&item.text, 24, false, false, 80);
-        if !item.speaker.is_empty() || !item.context.is_empty() {
-            let label = if item.reviewed { "Context" } else { "AI context, not scripture. Review before use" };
-            let mut note = format!("{label}.");
-            if !item.speaker.is_empty() {
-                note += &format!(" Speaker: {}.", item.speaker.trim_end_matches('.'));
+        let lines: Vec<String> = [
+            ("Speaker", &item.speaker),
+            ("Verse note", &item.verse_note),
+            ("Chapter context", &item.chapter_context),
+            ("Book context", &item.book_context),
+        ]
+        .iter()
+        .filter(|(_, text)| !text.is_empty())
+        .map(|(name, text)| format!("{name}: {text}"))
+        .collect();
+        if !lines.is_empty() {
+            if !item.reviewed {
+                body += &paragraph("AI context, not scripture. Review before use.", 20, true, true, 40);
             }
-            if !item.context.is_empty() {
-                note += &format!(" {}", item.context);
+            for line in &lines {
+                body += &paragraph(line, 20, false, true, 40);
             }
-            body += &paragraph(&note, 20, false, true, 200);
+            body += &paragraph("", 12, false, false, 120);
         }
     }
     format!(
@@ -88,7 +98,7 @@ mod tests {
     use super::*;
 
     fn item(objective: &str, reference: &str, reviewed: bool) -> Item {
-        Item { objective: objective.into(), reference: reference.into(), version: "ESV".into(), text: "Text & <more>".into(), speaker: "Paul".into(), context: "A letter.".into(), reviewed }
+        Item { objective: objective.into(), reference: reference.into(), version: "ESV".into(), text: "Text & <more>".into(), speaker: "Paul".into(), verse_note: String::new(), chapter_context: "A chapter.".into(), book_context: "A letter.".into(), reviewed }
     }
 
     #[test]
@@ -115,7 +125,9 @@ mod tests {
         assert!(document("T", "", "", &[item("", "A 1:1", false)]).contains("AI context, not scripture"));
         let reviewed = document("T", "", "", &[item("", "A 1:1", true)]);
         assert!(!reviewed.contains("AI context"));
-        assert!(reviewed.contains("Speaker: Paul."));
+        assert!(reviewed.contains("Speaker: Paul"));
+        assert!(reviewed.contains("Chapter context: A chapter."));
+        assert!(reviewed.contains("Book context: A letter."));
     }
 
     #[test]

@@ -108,39 +108,49 @@ test.describe('reviewing AI context', () => {
       const label = page.getByTestId('verse-context-label');
       await expect(label).toHaveText('AI context, not scripture. Review before use.');
       await expect(page.getByTestId('verse-context-speaker')).toContainText('STUB-SPEAKER');
+      await expect(page.getByTestId('verse-context-chapter')).toContainText('Chapter context (John 3): STUB-CHAPTER');
+      await expect(page.getByTestId('verse-context-book')).toContainText('Book context (John): STUB-BOOK');
 
       await page.getByTestId('context-edit').click();
       await expect(page.getByTestId('context-ai-note')).toBeVisible();
       await expect(page.getByTestId('context-speaker')).toHaveValue(/STUB-SPEAKER/);
+      await expect(page.getByTestId('context-chapter')).toHaveValue(/STUB-CHAPTER/);
+      await expect(page.getByTestId('context-book')).toHaveValue(/STUB-BOOK/);
       await page.getByTestId('context-cancel').click();
       await page.getByTestId('context-edit').click();
       await page.getByTestId('context-dialog-close').click();
       await page.getByTestId('context-edit').click();
       await page.getByTestId('context-speaker').fill('The apostle');
-      await page.getByTestId('context-text').fill('Writing to believers about their vocation.');
+      await page.getByTestId('context-chapter').fill('My chapter background.');
+      await page.getByTestId('context-book').fill('My book background.');
+      await page.getByTestId('context-note').fill('My note on this verse.');
       await page.getByTestId('context-save').click();
       await expect(label).toHaveText('Reviewed by you.');
       await expect(page.getByTestId('verse-context-speaker')).toContainText('The apostle');
+      await expect(page.getByTestId('verse-context-chapter')).toContainText('My chapter background.');
+      await expect(page.getByTestId('verse-context-book')).toContainText('My book background.');
+      await expect(page.getByTestId('verse-context-note')).toContainText('My note on this verse.');
 
       // Another AI run must not replace it.
       await page.getByTestId('lecture-suggest').click();
       await expect(page.getByTestId('notes-loading')).toHaveCount(0, { timeout: 15_000 });
       await page.waitForTimeout(300);
       await expect(page.getByTestId('verse-context-speaker')).toContainText('The apostle');
+      await expect(page.getByTestId('verse-context-chapter')).toContainText('My chapter background.');
       await page.reload();
-      const contexts = await (await page.request.get('/api/verse-context')).json();
-      expect(Object.values(contexts)[0]).toEqual({ speaker: 'The apostle', context: 'Writing to believers about their vocation.', reviewed: true });
+      expect(Object.values(await (await page.request.get('/api/verse-context')).json())[0]).toEqual({ speaker: 'The apostle', context: 'My note on this verse.', reviewed: true });
+      const scripture: any = await (await page.request.get('/api/scripture-context')).json();
+      expect(Object.values(scripture)).toEqual(expect.arrayContaining([{ context: 'My chapter background.', reviewed: true }, { context: 'My book background.', reviewed: true }]));
 
       // The verse itself is never touched.
       const verses: any[] = await (await page.request.get('/api/verses')).json();
       expect(verses[0].text).toBe(VERSES[0][1]);
 
-      // A verse with none can have it added by hand.
+      // Everything can be cleared, then added by hand.
       await setAiMode('down');
       await ask(page, 'vocation');
       await page.getByTestId('context-edit').click();
-      await page.getByTestId('context-speaker').fill('');
-      await page.getByTestId('context-text').fill('');
+      for (const field of ['context-speaker', 'context-chapter', 'context-book', 'context-note']) await page.getByTestId(field).fill('');
       await page.getByTestId('context-save').click();
       await expect(page.getByTestId('verse-context')).toHaveCount(0);
       await expect(page.getByTestId('context-edit')).toContainText('Add speaker and context');
@@ -151,7 +161,61 @@ test.describe('reviewing AI context', () => {
       await setAiMode('good');
 
       expect((await page.request.post('/api/verse-context', { data: { canonical_key: 'no.such:key', speaker: 'x', context: '' } })).status()).toBe(404);
+      for (const scope of ['nonsense', 'book:9999', 'chapter:43', 'chapter:43.x'])
+        expect((await page.request.post('/api/scripture-context', { data: { scope, context: 'x' } })).status(), scope).toBe(400);
     });
+  });
+
+  test('chapter and book context are written once and shared by their verses', async ({ page }) => {
+    await setAiMode('good');
+    await withEmptyVault(page, async () => {
+      // Same chapter, and another chapter of the same book.
+      await addLesson(page, 'shared.pdf', 'Shared Lesson', [VERSES[0], VERSES[1], ['Juan 4:1', 'A made up verse about a different chapter of vocation.']]);
+      await ask(page, 'vocation');
+      await expect(page.getByTestId('suggestion')).toHaveCount(3);
+      const chapters = await page.getByTestId('verse-context-chapter').allInnerTexts();
+      const byChapter = (name: string) => chapters.filter((t) => t.includes(`(${name})`));
+      expect(byChapter('John 3')).toHaveLength(2);
+      expect(byChapter('John 4')).toHaveLength(1);
+      expect(byChapter('John 3')[0]).toBe(byChapter('John 3')[1]);
+      expect(byChapter('John 4')[0]).not.toBe(byChapter('John 3')[0]);
+      const books = await page.getByTestId('verse-context-book').allInnerTexts();
+      expect(new Set(books).size, 'the same book, the same context').toBe(1);
+
+      const stored: any = await (await page.request.get('/api/scripture-context')).json();
+      expect(Object.keys(stored).sort()).toEqual(['book:43', 'chapter:43.3', 'chapter:43.4']);
+
+      // A correction reaches every verse in that chapter, and no others.
+      const john3 = page.getByTestId('suggestion').filter({ hasText: 'John 3:5' });
+      await john3.getByTestId('context-edit').click();
+      await page.getByTestId('context-chapter').fill('Corrected for the whole chapter.');
+      await page.getByTestId('context-save').click();
+      await expect(page.getByTestId('verse-context-chapter').filter({ hasText: 'Corrected for the whole chapter.' })).toHaveCount(2);
+      const after = await page.getByTestId('verse-context-chapter').allInnerTexts();
+      expect(after.filter((t) => t.includes('(John 4)'))[0]).not.toContain('Corrected');
+
+      // It is not asked for again once it exists.
+      const before = JSON.stringify(await (await page.request.get('/api/scripture-context')).json());
+      await page.getByTestId('lecture-suggest').click();
+      await expect(page.getByTestId('suggestions')).toBeVisible();
+      await page.waitForTimeout(800);
+      expect(JSON.stringify(await (await page.request.get('/api/scripture-context')).json())).toBe(before);
+    });
+  });
+
+  test('a hostile model cannot put quotes or other verses in chapter or book context', async ({ page }) => {
+    await setAiMode('hostile');
+    await withEmptyVault(page, async () => {
+      await addLesson(page, 'hostile.pdf', 'Hostile Lesson', VERSES.slice(0, 1));
+      await ask(page, 'vocation');
+      await expect(page.getByTestId('verse-context-chapter')).toHaveCount(0);
+      await expect(page.getByTestId('verse-context-book')).toHaveCount(0);
+      const body = await page.getByTestId('suggestions').textContent();
+      for (const bad of ['John 3:16', 'God picked you']) expect(body).not.toContain(bad);
+      await expect(page.getByTestId('verse-context-speaker')).toHaveCount(0);
+      expect(await (await page.request.get('/api/scripture-context')).json()).toEqual({});
+    });
+    await setAiMode('good');
   });
 });
 
@@ -182,7 +246,7 @@ test.describe('objective groups', () => {
 
       // Context can be reviewed from the workspace too.
       await page.getByTestId('workspace-context-edit').first().click();
-      await expect(page.getByTestId('context-speaker')).toHaveValue(/STUB-SPEAKER/);
+      await expect(page.getByTestId('context-chapter')).toHaveValue(/STUB-CHAPTER/);
       await page.getByTestId('context-cancel').click();
 
       await page.getByTestId('lecture-copy').click();
@@ -201,6 +265,8 @@ test.describe('objective groups', () => {
       expect(doc.indexOf('>planting<')).toBeLessThan(doc.indexOf('>walking<'));
       expect(doc).toContain(VERSES[1][1]);
       expect(doc).toContain('AI context, not scripture');
+      expect(doc).toContain('Chapter context: STUB-CHAPTER');
+      expect(doc).toContain('Book context: STUB-BOOK');
 
       // Narrowing the window must not lose the lecture being worked on.
       await page.setViewportSize({ width: 800, height: 900 });
@@ -270,6 +336,8 @@ test.describe('presentation mode', () => {
       await expect(page.getByTestId('present-context-text')).toHaveCount(0);
       await page.getByTestId('present-context').click();
       await expect(page.getByTestId('present-context-text')).toContainText('AI context, not scripture');
+      await expect(page.getByTestId('present-context-text')).toContainText('Chapter context (John 3): STUB-CHAPTER');
+      await expect(page.getByTestId('present-context-text')).toContainText('Book context (John): STUB-BOOK');
       await page.getByTestId('present-context').click();
       await expect(page.getByTestId('present-context-text')).toHaveCount(0);
 

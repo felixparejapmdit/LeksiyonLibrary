@@ -4,6 +4,7 @@ import { BellRing, CheckCircle2, CircleAlert, FileUp, FolderUp, Loader2, UploadC
 import { api, saveFile, type Category, type Language } from '../api';
 import { enqueueFiles, enqueueFolder } from '../ingest';
 import { errorText, refreshAll, setState, toast, useStore } from '../store';
+import { backgroundOf, scopeNames, scopesOf } from './VerseContext';
 
 function Modal({ title, subtitle, onClose, children, testId, wide }: { title: string; subtitle?: string; onClose: () => void; children: React.ReactNode; testId: string; wide?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -334,39 +335,57 @@ export function ContextDialog() {
 
 // Keyed by verse, so its fields start filled in rather than being filled just after opening.
 function ContextForm({ verseKey: key }: { verseKey: string }) {
-  const current = useStore((s) => s.contexts[key]);
+  const contexts = useStore((s) => s.contexts);
+  const scripture = useStore((s) => s.scripture);
   const reference = useStore((s) => s.verses.find((v) => v.canonical_key === key)?.ref_en ?? '');
-  const [speaker, setSpeaker] = useState(current?.speaker ?? '');
-  const [context, setContext] = useState(current?.context ?? '');
+  const current = backgroundOf({ contexts, scripture }, key);
+  const scopes = scopesOf(key);
+  const names = scopeNames(reference);
+  const [speaker, setSpeaker] = useState(current.speaker);
+  const [note, setNote] = useState(current.verseNote);
+  const [chapter, setChapter] = useState(current.chapter);
+  const [book, setBook] = useState(current.book);
   const [busy, setBusy] = useState(false);
+  const nothing = !speaker.trim() && !note.trim() && !chapter.trim() && !book.trim();
   return (
-    <Modal title="Speaker and context" subtitle={reference} onClose={closeContext} testId="context-dialog">
+    <Modal title="Speaker and context" subtitle={reference} onClose={closeContext} testId="context-dialog" wide>
       <form
         className="contents"
         onSubmit={async (e) => {
           e.preventDefault();
           setBusy(true);
           try {
-            setState({ contexts: await api.saveVerseContext(key, speaker, context) });
+            const verse = await api.saveVerseContext(key, speaker, note);
+            await api.saveScriptureContext(scopes.chapter, chapter);
+            const saved = await api.saveScriptureContext(scopes.book, book);
+            setState({ contexts: verse, scripture: saved });
             closeContext();
-            toast(speaker.trim() || context.trim() ? 'Saved as reviewed' : 'Context removed');
+            toast(nothing ? 'Context removed' : 'Saved as reviewed');
           } catch (err) {
             setBusy(false);
             toast(errorText(err), 'error');
           }
         }}
       >
-        <div className="space-y-3 p-4">
-          {current && !current.reviewed && <p className="m-0 text-xs text-warn" data-testid="context-ai-note">This was written by the AI and can be wrong. Check it, correct it if needed, then save.</p>}
+        <div className="scroll-stable min-h-0 space-y-3 p-4">
+          {!current.empty && !current.reviewed && <p className="m-0 text-xs text-warn" data-testid="context-ai-note">This was written by the AI and can be wrong. Check it, correct it if needed, then save.</p>}
           <label className="block text-xs text-muted">
-            Who is speaking
+            Who is speaking in this verse
             <input className="field mt-1" maxLength={200} data-testid="context-speaker" value={speaker} onChange={(e) => setSpeaker(e.target.value)} />
           </label>
           <label className="block text-xs text-muted">
-            Context: who is being addressed, and what is happening
-            <textarea className="field mt-1 min-h-24" maxLength={2000} data-testid="context-text" value={context} onChange={(e) => setContext(e.target.value)} />
+            Chapter context ({names.chapter}). Used for every verse in this chapter.
+            <textarea className="field mt-1 min-h-24" maxLength={4000} data-testid="context-chapter" value={chapter} onChange={(e) => setChapter(e.target.value)} />
           </label>
-          <p className="m-0 text-xs text-muted">This never changes the verse itself. Clear both fields to remove it.</p>
+          <label className="block text-xs text-muted">
+            Book context ({names.book}). Used for every verse in this book.
+            <textarea className="field mt-1 min-h-24" maxLength={4000} data-testid="context-book" value={book} onChange={(e) => setBook(e.target.value)} />
+          </label>
+          <label className="block text-xs text-muted">
+            Your note on this verse (optional)
+            <textarea className="field mt-1 min-h-16" maxLength={2000} data-testid="context-note" value={note} onChange={(e) => setNote(e.target.value)} />
+          </label>
+          <p className="m-0 text-xs text-muted">This never changes the verse itself. Clear a field to remove it. A cleared chapter or book context can be written again by the AI.</p>
         </div>
         <div className="flex justify-end gap-2 border-t border-line px-4 py-3">
           <button type="button" className="btn" data-testid="context-cancel" onClick={closeContext}>Cancel</button>

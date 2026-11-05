@@ -216,7 +216,8 @@ test('every verse shows who is speaking and its context, labelled as AI', async 
   await expect(page.getByTestId('verse-context')).toHaveCount(6);
   await expect(page.getByTestId('verse-context').first()).toContainText('AI context, not scripture. Review before use.');
   await expect(page.getByTestId('verse-context-speaker').first()).toContainText('Speaker: STUB-SPEAKER-');
-  await expect(page.getByTestId('verse-context-text').first()).toContainText('Context: STUB-CONTEXT-');
+  await expect(page.getByTestId('verse-context-chapter').first()).toContainText(/Chapter context \(.+ \d+\): (STUB-CHAPTER|.+)/);
+  await expect(page.getByTestId('verse-context-book').first()).toContainText(/Book context \(.+\):/);
 });
 
 test('the context stays apart from the verse and follows it into the workspace and copy', async ({ page }) => {
@@ -235,7 +236,8 @@ test('the context stays apart from the verse and follows it into the workspace a
   await page.getByTestId('lecture-copy').click();
   const clip = await page.evaluate(() => navigator.clipboard.readText());
   expect(clip).toContain('Speaker (AI, review before use): STUB-SPEAKER-');
-  expect(clip).toContain('Context (AI, review before use): STUB-CONTEXT-');
+  expect(clip).toContain('Chapter context (AI, review before use): ');
+  expect(clip).toContain('Book context (AI, review before use): ');
 
   // The speaker and context are kept, so a saved lecture still shows them.
   await page.getByTestId('lecture-save').click();
@@ -244,7 +246,8 @@ test('the context stays apart from the verse and follows it into the workspace a
   await page.getByTestId('side-lecture').click();
   await page.getByTestId('saved-open').click();
   await expect(page.getByTestId('workspace-context-speaker')).toContainText('STUB-SPEAKER-');
-  await expect(page.getByTestId('workspace-context-text')).toContainText('STUB-CONTEXT-');
+  await expect(page.getByTestId('workspace-context-chapter')).toContainText('Chapter context');
+  await expect(page.getByTestId('workspace-context-book')).toContainText('Book context');
   await page.getByTestId('saved-delete').click();
   await page.getByTestId('confirm-accept').click();
   await expect(page.getByTestId('saved-empty')).toBeVisible();

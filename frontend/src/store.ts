@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { api, ApiError, type Category, type Folder, type Lecture, type Lesson, type Teaching, type Verse, type VerseContext } from './api';
+import { api, ApiError, type Category, type Folder, type Lecture, type Lesson, type ScriptureContext, type Teaching, type Verse, type VerseContext } from './api';
 
 export type SortMode = 'newest' | 'oldest' | 'title';
 
@@ -41,6 +41,7 @@ export interface State {
   lessons: Lesson[];
   verses: Verse[];
   contexts: Record<string, VerseContext>;
+  scripture: Record<string, ScriptureContext>;
   teachings: Teaching[];
   lastBackupAt: string | null;
   teachingDialog: { lessonId: string } | null;
@@ -80,6 +81,7 @@ let state: State = {
   lessons: [],
   verses: [],
   contexts: {},
+  scripture: {},
   teachings: [],
   lastBackupAt: null,
   teachingDialog: null,
@@ -159,10 +161,11 @@ export function errorText(e: unknown) {
 }
 
 export async function refreshAll() {
-  const [lessons, verses, contexts, folders, lectures, teachings, status] = await Promise.all([
+  const [lessons, verses, contexts, scripture, folders, lectures, teachings, status] = await Promise.all([
     api.lessons(),
     api.verses(),
     api.verseContexts(),
+    api.scriptureContexts(),
     api.folders(),
     api.lectures(),
     api.teachings(),
@@ -173,6 +176,7 @@ export async function refreshAll() {
     lessons,
     verses,
     contexts,
+    scripture,
     teachings,
     lastBackupAt: status.last_backup_at,
     folders,

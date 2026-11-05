@@ -186,7 +186,7 @@ export function PdfViewer({ lesson, onBack }: { lesson: Lesson; onBack?: () => v
         const next = currentPage + 1;
         const nextKey = `${url}|${next}|${scale}|${rotation}`;
         if (next <= doc.numPages && !cachedPage(nextKey)) {
-          requestIdleCallback?.(() => {
+          window.requestIdleCallback?.(() => {
             if (signal.cancelled) return;
             renderToCanvas(doc, next, scale, rotation, signal)
               .then((c) => {

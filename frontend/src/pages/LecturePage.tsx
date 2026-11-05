@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, Copy, FileDown, FilePlus2, Loader2, Lock, MonitorPlay, PencilLine, Plus, Printer, Save, Sparkles, Trash2, X } from 'lucide-react';
 import { PresentationMode } from '../components/Presentation';
-import { api, saveFile, type Lecture, type Suggestion, type Verse, type VerseContext } from '../api';
+import { backgroundAsText, backgroundOf, ContextLines } from '../components/VerseContext';
+import { api, saveFile, type Lecture, type Suggestion, type Verse } from '../api';
 import { askConfirm, errorText, getState, refreshAll, setState, toast, useStore } from '../store';
 
 type NotesStatus = 'idle' | 'loading' | 'ready' | 'offline';
@@ -9,18 +10,6 @@ type Group = { title: string | null; objective: string; logId: string; suggestio
 type Coverage = 'best' | '3' | '4' | '5';
 
 const objectiveLines = (text: string) => text.split('\n').map((l) => l.trim()).filter(Boolean);
-
-/** The model's reading of a verse, always labelled as such and kept apart from the text. */
-function ContextLines({ context, testId }: { context?: VerseContext; testId: string }) {
-  if (!context) return null;
-  return (
-    <span data-testid={testId}>
-      <span className="font-semibold" data-testid={`${testId}-label`}>{context.reviewed ? 'Reviewed by you.' : 'AI context, not scripture. Review before use.'}</span>
-      {context.speaker && <span className="block" data-testid={`${testId}-speaker`}><span className="font-semibold">Speaker: </span>{context.speaker}</span>}
-      {context.context && <span className="block" data-testid={`${testId}-text`}><span className="font-semibold">Context: </span>{context.context}</span>}
-    </span>
-  );
-}
 
 function ReadOnlyVerse({ verse }: { verse: Verse }) {
   const lessons = useStore((s) => s.lessons);
@@ -56,6 +45,7 @@ export function LecturePage() {
   const [coverage, setCoverage] = useState<Coverage>('3');
   const [groups, setGroups] = useState<Group[] | null>(null);
   const contexts = useStore((s) => s.contexts);
+  const scripture = useStore((s) => s.scripture);
   const lessons = useStore((s) => s.lessons);
   const [sourceLesson, setSourceLesson] = useState('');
   const [searching, setSearching] = useState(false);
@@ -110,7 +100,7 @@ export function LecturePage() {
           return;
         }
         patchGroup(i, { status: 'ready', notes: n.notes });
-        setState({ contexts: n.context });
+        setState({ contexts: n.context, scripture: n.scripture });
         const model = n.model;
         if (model) setAiState((a) => ({ available: true, model, meaning: a?.meaning ?? false }));
       }
@@ -178,15 +168,12 @@ export function LecturePage() {
       ...picked.flatMap((id, i) => {
         const v = byId.get(id);
         if (!v) return [];
-        const c = contexts[v.canonical_key];
-        const tag = c?.reviewed ? '' : ' (AI, review before use)';
         const heading = objectiveFor(id) && objectiveFor(id) !== objectiveFor(picked[i - 1]) ? [objectiveFor(id), ''] : [];
         return [
           ...heading,
           `${v.ref_printed}${v.version ? ` (${v.version})` : ''}`,
           v.text,
-          ...(c?.speaker ? [`Speaker${tag}: ${c.speaker}`] : []),
-          ...(c?.context ? [`Context${tag}: ${c.context}`] : []),
+          ...backgroundAsText(backgroundOf({ contexts, scripture }, v.canonical_key)),
           '',
         ];
       }),
@@ -194,10 +181,10 @@ export function LecturePage() {
   };
 
   const contextButton = (key: string, testId: string) => {
-    const c = contexts[key];
+    const c = backgroundOf({ contexts, scripture }, key);
     return (
       <button className="btn no-print !min-h-7 max-lg:!min-h-11" data-testid={testId} onClick={() => setState({ editingContextKey: key })}>
-        <PencilLine size={12} /> {!c ? 'Add speaker and context' : c.reviewed ? 'Edit context' : 'Review or correct'}
+        <PencilLine size={12} /> {c.empty ? 'Add speaker and context' : c.reviewed ? 'Edit context' : 'Review or correct'}
       </button>
     );
   };
@@ -253,7 +240,7 @@ export function LecturePage() {
             <section className="no-print space-y-2" aria-label="Suggestions" data-testid="suggestions">
               <div className="flex items-center gap-2 text-xs text-muted">
                 <h2 className="m-0 text-[13px] font-semibold text-fg">Suggestions ({groups.reduce((n, g) => n + g.suggestions.length, 0)})</h2>
-                {groups.some((g) => g.status === 'loading') && <span className="flex items-center gap-1" data-testid="notes-loading"><Loader2 size={12} className="animate-spin" /> Writing AI notes and context. This can take a few minutes; keep working.</span>}
+                {groups.some((g) => g.status === 'loading') && <span className="flex items-center gap-1" data-testid="notes-loading"><Loader2 size={12} className="animate-spin" /> Writing AI notes and chapter and book context. This can take a few minutes the first time; keep working.</span>}
                 {groups.some((g) => g.status === 'offline') && <span data-testid="notes-offline">AI notes and context unavailable</span>}
               </div>
               <p className="m-0 text-xs text-muted" data-testid="match-mode">{usedMeaning ? 'Matched by meaning and words' : 'Matched by words only'}</p>
@@ -289,8 +276,8 @@ export function LecturePage() {
                         </>
                       )}
                     </p>
-                    <p className="m-0 mb-1 min-h-12 text-xs text-accent2" data-testid="ai-context">
-                      <ContextLines context={contexts[s.canonical_key]} testId="verse-context" />
+                    <p className="m-0 mb-1 min-h-28 text-xs leading-relaxed text-accent2" data-testid="ai-context">
+                      <ContextLines verseKey={s.canonical_key} reference={s.ref_en} testId="verse-context" />
                     </p>
                     <div className="mb-2">{contextButton(s.canonical_key, 'context-edit')}</div>
                     <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
@@ -352,11 +339,9 @@ export function LecturePage() {
                         </span>
                       </div>
                       <p className="m-0 mt-1 text-[13px] leading-relaxed" data-testid="workspace-text">{v.text}</p>
-                      {contexts[v.canonical_key] && (
-                        <p className="m-0 mt-1 text-xs text-accent2">
-                          <ContextLines context={contexts[v.canonical_key]} testId="workspace-context" />
-                        </p>
-                      )}
+                      <p className="m-0 mt-1 text-xs leading-relaxed text-accent2">
+                        <ContextLines verseKey={v.canonical_key} reference={v.ref_en} testId="workspace-context" />
+                      </p>
                       <div className="mt-1">{contextButton(v.canonical_key, 'workspace-context-edit')}</div>
                       </div>
                     </li>

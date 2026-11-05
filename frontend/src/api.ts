@@ -76,6 +76,13 @@ export interface Suggestion {
 
 export interface VerseContext {
   speaker: string;
+  /** A note the user wrote about this verse. The AI writes chapter and book context instead. */
+  context: string;
+  reviewed: boolean;
+}
+
+/** Background on a whole chapter or book, shared by all its verses. */
+export interface ScriptureContext {
   context: string;
   reviewed: boolean;
 }
@@ -157,6 +164,8 @@ export const api = {
   verseContexts: () => request<Record<string, VerseContext>>('/verse-context'),
   saveVerseContext: (canonical_key: string, speaker: string, context: string) =>
     request<Record<string, VerseContext>>('/verse-context', json('POST', { canonical_key, speaker, context })),
+  scriptureContexts: () => request<Record<string, ScriptureContext>>('/scripture-context'),
+  saveScriptureContext: (scope: string, context: string) => request<Record<string, ScriptureContext>>('/scripture-context', json('POST', { scope, context })),
   searchMeaning: (q: string) => request<{ available: boolean; keys: string[] }>(`/search/meaning?q=${encodeURIComponent(q)}`),
   status: () => request<{ last_backup_at: string | null }>('/status'),
   teachings: () => request<Teaching[]>('/teachings'),
@@ -167,7 +176,7 @@ export const api = {
   aiSuggest: (issue: string, objective: string, count?: number) =>
     request<{ log_id: string; suggestions: Suggestion[]; meaning: boolean }>('/ai/suggest', json('POST', { issue, objective, count })),
   aiNotes: (logId: string) =>
-    request<{ available: boolean; notes: Record<string, string>; context: Record<string, VerseContext>; model?: string }>('/ai/notes', json('POST', { log_id: logId })),
+    request<{ available: boolean; notes: Record<string, string>; context: Record<string, VerseContext>; scripture: Record<string, ScriptureContext>; model?: string }>('/ai/notes', json('POST', { log_id: logId })),
 
   lectures: () => request<Lecture[]>('/lectures'),
   saveLecture: (l: { id?: string; title: string; issue: string; objective: string; verse_ids: string[]; verse_objectives: string[] }) =>

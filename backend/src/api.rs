@@ -663,8 +663,128 @@ struct NotesBody {
     log_id: String,
 }
 
+/// Finds the speaker of any of these verses without one. Each is kept, and each answer is
+/// saved as it arrives, so an interrupted run loses nothing. Failing here costs only the
+/// speakers: the notes already written are still returned.
+async fn fill_speakers(s: &S, user_id: &str, candidates: &[ai::Candidate]) -> ApiResult<serde_json::Map<String, Value>> {
+    let owner = user_id.to_string();
+    let mut known = with_db(s, move |c| Ok(contexts_for(c, &owner)?)).await?;
+    for (key, reference, _) in candidates {
+        // An entry the user reviewed stays as it is, even with no speaker.
+        if known.get(key).is_some_and(|k| k["reviewed"] == true || k["speaker"].as_str().is_some_and(|x| !x.is_empty())) {
+            continue;
+        }
+        let found = match ai::request_speaker(&s.http, &s.config.ollama_url, &s.config.ollama_model, reference).await {
+            Ok(found) => found,
+            Err(e) => {
+                eprintln!("AI speaker unavailable: {e}");
+                break;
+            }
+        };
+        let Some(speaker) = found else { continue };
+        let (owner, key, model) = (user_id.to_string(), key.clone(), s.config.ollama_model.clone());
+        known = with_db(s, move |c| {
+            c.execute(
+                "INSERT INTO verse_context (user_id, canonical_key, speaker, context, model, updated_at) VALUES (?1,?2,?3,'',?4,?5)
+                 ON CONFLICT (user_id, canonical_key) DO UPDATE SET speaker = excluded.speaker, model = excluded.model, updated_at = excluded.updated_at
+                 WHERE verse_context.reviewed_at IS NULL",
+                params![owner, key, speaker, model, now()],
+            )?;
+            Ok(contexts_for(c, &owner)?)
+        })
+        .await?;
+    }
+    Ok(known)
+}
+
+/// Writes background for any book or chapter of these verses that has none yet. Each is
+/// written once and shared, so later searches are quicker, and saved as it arrives.
+async fn fill_scripture_context(s: &S, user_id: &str, keys: &[String]) -> ApiResult<serde_json::Map<String, Value>> {
+    let owner = user_id.to_string();
+    let mut known = with_db(s, move |c| Ok(scripture_for(c, &owner)?)).await?;
+    for request in ai::scope_requests(keys, &known.keys().cloned().collect()) {
+        let written = match ai::request_scope(&s.http, &s.config.ollama_url, &s.config.ollama_model, &request.label).await {
+            Ok(written) => written,
+            Err(e) => {
+                eprintln!("AI context unavailable: {e}");
+                break;
+            }
+        };
+        let Some(text) = written else { continue };
+        let (owner, model) = (user_id.to_string(), s.config.ollama_model.clone());
+        known = with_db(s, move |c| {
+            // A review made in the meantime wins over what the AI just wrote.
+            c.execute(
+                "INSERT INTO scripture_context (user_id, scope, context, model, updated_at) VALUES (?1,?2,?3,?4,?5)
+                 ON CONFLICT (user_id, scope) DO NOTHING",
+                params![owner, request.scope, text, model, now()],
+            )?;
+            Ok(scripture_for(c, &owner)?)
+        })
+        .await?;
+    }
+    Ok(known)
+}
+
+fn scripture_for(c: &Connection, user_id: &str) -> rusqlite::Result<serde_json::Map<String, Value>> {
+    let mut st = c.prepare("SELECT scope, context, reviewed_at FROM scripture_context WHERE user_id=?1")?;
+    let rows = st.query_map([user_id], |r| {
+        Ok((r.get::<_, String>(0)?, json!({ "context": r.get::<_, String>(1)?, "reviewed": r.get::<_, Option<String>>(2)?.is_some() })))
+    })?;
+    rows.collect()
+}
+
+async fn list_scripture_context(State(s): State<S>, u: User) -> ApiResult<Json<Value>> {
+    let rows = with_db(&s, move |c| Ok(scripture_for(c, &u.id)?)).await?;
+    Ok(Json(Value::Object(rows)))
+}
+
+#[derive(Deserialize)]
+struct ScriptureContextBody {
+    scope: String,
+    context: String,
+}
+
+fn valid_scope(scope: &str) -> bool {
+    let id = match (scope.strip_prefix("book:"), scope.strip_prefix("chapter:")) {
+        (Some(book), _) => book,
+        (_, Some(chapter)) => match chapter.split_once('.') {
+            Some((book, number)) if !number.is_empty() && number.chars().all(|c| c.is_ascii_digit()) => book,
+            _ => return false,
+        },
+        _ => return false,
+    };
+    id.parse().ok().and_then(crate::books::by_id).is_some()
+}
+
+/// The user's wording replaces the AI's for every verse in that book or chapter, and later
+/// AI runs leave it alone. Clearing it lets the AI write it again.
+async fn save_scripture_context(State(s): State<S>, u: User, Json(b): Json<ScriptureContextBody>) -> ApiResult<Json<Value>> {
+    if !valid_scope(&b.scope) {
+        return Err(ApiError::bad("Unknown book or chapter."));
+    }
+    let text = b.context.trim().to_string();
+    if text.chars().count() > 4000 {
+        return Err(ApiError::bad("That text is too long."));
+    }
+    let rows = with_db(&s, move |c| {
+        if text.is_empty() {
+            c.execute("DELETE FROM scripture_context WHERE user_id=?1 AND scope=?2", params![u.id, b.scope])?;
+        } else {
+            c.execute(
+                "INSERT INTO scripture_context (user_id, scope, context, updated_at, reviewed_at) VALUES (?1,?2,?3,?4,?4)
+                 ON CONFLICT (user_id, scope) DO UPDATE SET context=excluded.context, updated_at=excluded.updated_at, reviewed_at=excluded.reviewed_at",
+                params![u.id, b.scope, text, now()],
+            )?;
+        }
+        Ok(scripture_for(c, &u.id)?)
+    })
+    .await?;
+    Ok(Json(Value::Object(rows)))
+}
+
 async fn ai_notes(State(s): State<S>, u: User, Json(b): Json<NotesBody>) -> ApiResult<Json<Value>> {
-    let owner = u.id.clone();
+    let u_id = u.id.clone();
     let (issue, objective, candidates) = with_db(&s, move |c| {
         let row: Option<(String, String, String)> = c
             .query_row(
@@ -693,36 +813,18 @@ async fn ai_notes(State(s): State<S>, u: User, Json(b): Json<NotesBody>) -> ApiR
     })
     .await?;
     if candidates.is_empty() {
-        return Ok(Json(json!({ "available": true, "notes": {}, "context": {} })));
+        return Ok(Json(json!({ "available": true, "notes": {}, "context": {}, "scripture": {} })));
     }
     match ai::request_notes(&s.http, &s.config.ollama_url, &s.config.ollama_model, &issue, &objective, &candidates).await {
         Ok(r) => {
-            // Kept, so a saved lecture still shows it and it need not be written again.
-            let (context, model) = (r.context.clone(), r.model.clone());
-            let stored = with_db(&s, move |c| {
-                let tx = c.transaction()?;
-                for (key, v) in &context {
-                    tx.execute(
-                        "INSERT INTO verse_context (user_id, canonical_key, speaker, context, model, updated_at) VALUES (?1,?2,?3,?4,?5,?6)
-                         ON CONFLICT (user_id, canonical_key) DO UPDATE SET
-                           speaker = CASE WHEN excluded.speaker <> '' THEN excluded.speaker ELSE speaker END,
-                           context = CASE WHEN excluded.context <> '' THEN excluded.context ELSE context END,
-                           model = excluded.model, updated_at = excluded.updated_at
-                         WHERE verse_context.reviewed_at IS NULL",
-                        params![owner, key, v.speaker, v.context, model, now()],
-                    )?;
-                }
-                tx.commit()?;
-                Ok(contexts_for(c, &owner)?)
-            })
-            .await
-            .map(|saved| (saved, r.notes, r.model));
-            let (saved, notes, used) = stored?;
-            Ok(Json(json!({ "available": true, "notes": notes, "context": saved, "model": used })))
+            let saved = fill_speakers(&s, &u_id, &candidates).await?;
+            let keys: Vec<String> = candidates.iter().map(|x| x.0.clone()).collect();
+            let scripture = fill_scripture_context(&s, &u_id, &keys).await?;
+            Ok(Json(json!({ "available": true, "notes": r.notes, "context": saved, "scripture": scripture, "model": r.model })))
         }
         Err(e) => {
             eprintln!("AI notes unavailable: {e}");
-            Ok(Json(json!({ "available": false, "notes": {}, "context": {} })))
+            Ok(Json(json!({ "available": false, "notes": {}, "context": {}, "scripture": {} })))
         }
     }
 }
@@ -964,17 +1066,40 @@ async fn export_lecture(State(s): State<S>, u: User, Json(b): Json<ExportBody>) 
         for (i, id) in b.verse_ids.iter().enumerate() {
             let row = c
                 .query_row(
-                    "SELECT v.ref_printed, v.version, v.text, COALESCE(x.speaker,''), COALESCE(x.context,''), x.reviewed_at IS NOT NULL
+                    "SELECT v.ref_printed, v.version, v.text, COALESCE(x.speaker,''), COALESCE(x.context,''), x.canonical_key IS NULL OR x.reviewed_at IS NOT NULL, v.canonical_key
                      FROM verses v LEFT JOIN verse_context x ON x.user_id = v.user_id AND x.canonical_key = v.canonical_key
                      WHERE v.id=?1 AND v.user_id=?2",
                     params![id, u.id],
-                    |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, String>(4)?, r.get::<_, bool>(5)?)),
+                    |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, String>(4)?, r.get::<_, bool>(5)?, r.get::<_, String>(6)?)),
                 )
                 .optional()?;
-            let Some((reference, version, text, speaker, context, reviewed)) = row else {
+            let Some((reference, version, text, speaker, verse_note, verse_reviewed, key)) = row else {
                 return Err(ApiError::bad("A selected verse no longer exists."));
             };
-            items.push(export::Item { objective: b.verse_objectives.get(i).map_or(String::new(), |o| o.trim().to_string()), reference, version, text, speaker, context, reviewed });
+            let (book, rest) = key.split_once('.').unwrap_or((key.as_str(), ""));
+            let chapter_number = rest.split(':').next().unwrap_or_default();
+            let scope = |name: String| -> rusqlite::Result<Option<(String, bool)>> {
+                c.query_row(
+                    "SELECT context, reviewed_at IS NOT NULL FROM scripture_context WHERE user_id=?1 AND scope=?2",
+                    params![u.id, name],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()
+            };
+            let chapter = scope(format!("chapter:{book}.{chapter_number}"))?;
+            let whole_book = scope(format!("book:{book}"))?;
+            let reviewed = verse_reviewed && chapter.as_ref().is_none_or(|x| x.1) && whole_book.as_ref().is_none_or(|x| x.1);
+            items.push(export::Item {
+                objective: b.verse_objectives.get(i).map_or(String::new(), |o| o.trim().to_string()),
+                reference,
+                version,
+                text,
+                speaker,
+                verse_note,
+                chapter_context: chapter.map_or(String::new(), |x| x.0),
+                book_context: whole_book.map_or(String::new(), |x| x.0),
+                reviewed,
+            });
         }
         Ok(items)
     })
@@ -1115,6 +1240,7 @@ pub fn router(state: S) -> Router {
         .route("/verses/{id}", axum::routing::patch(correct_verse))
         .route("/verses/{id}/verify", post(verify_verse))
         .route("/verse-context", get(list_verse_context).post(save_verse_context))
+        .route("/scripture-context", get(list_scripture_context).post(save_scripture_context))
         .route("/ai/status", get(ai_status))
         .route("/ai/suggest", post(ai_suggest))
         .route("/ai/notes", post(ai_notes))

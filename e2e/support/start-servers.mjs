@@ -45,16 +45,33 @@ const stub = createServer((req, res) => {
     if (req.url === '/api/tags') return send(200, { models: [{ name: 'llama3.2:3b' }, { name: 'bge-m3:latest' }] });
     if (req.url === '/api/embed') return send(200, { embeddings: JSON.parse(body).input.map(embed) });
     if (req.url === '/api/chat') {
+      // Speakers and background are asked for one at a time, separately from verse notes.
+      const verse = /Verse: ([^"]+)/.exec(body);
+      if (verse) {
+        const speaker = mode === 'hostile' ? 'See John 3:16' : `STUB-SPEAKER-${verse[1].length}`;
+        return send(200, { message: { content: JSON.stringify({ speaker }) } });
+      }
+      const scope = /Background on: ([^"]+)/.exec(body);
+      if (scope) {
+        const isChapter = scope[1].startsWith('chapter');
+        const context =
+          mode === 'hostile'
+            ? isChapter
+              ? 'As John 3:16 also teaches.'
+              : 'It reads "God picked you and made you his special people forever".'
+            : `${isChapter ? 'STUB-CHAPTER' : 'STUB-BOOK'}: background on ${scope[1]}.`;
+        return send(200, { message: { content: JSON.stringify({ context }) } });
+      }
       lastPrompt = body;
       const candidates = [...body.matchAll(/Candidate (\d+):/g)].map((m) => Number(m[1]));
       const notes =
         mode === 'hostile'
           ? [
-              { candidate: 1, note: 'Better wording: "God picked you and made you his special people forever"', speaker: 'HOSTILE-SPEAKER', context: 'As John 3:16 also teaches.' },
+              { candidate: 1, note: 'Better wording: "God picked you and made you his special people forever"' },
               { candidate: 999, note: 'John 3:16 fits better than all of these.', speaker: 'INVENTED', context: 'INVENTED' },
-              { candidate: 2, note: 'Fits the topic.', text: 'TAMPERED SCRIPTURE', verse: 'TAMPERED SCRIPTURE', context: 'It reads "God picked you and made you his special people forever".' },
+              { candidate: 2, note: 'Fits the topic.', text: 'TAMPERED SCRIPTURE', verse: 'TAMPERED SCRIPTURE' },
             ]
-          : candidates.map((n) => ({ candidate: n, note: `STUB-NOTE-${n}: relevant to the stated objective.`, speaker: `STUB-SPEAKER-${n}`, context: `STUB-CONTEXT-${n}: what is happening here.` }));
+          : candidates.map((n) => ({ candidate: n, note: `STUB-NOTE-${n}: relevant to the stated objective.` }));
       const reply = () => send(200, { message: { content: JSON.stringify({ notes }) } });
       return mode === 'slow' ? setTimeout(reply, 1500) : reply();
     }
@@ -65,7 +82,7 @@ stub.listen(STUB_PORT, '127.0.0.1');
 
 const data = join(here, '..', '.tmp-data');
 rmSync(data, { recursive: true, force: true });
-const exe = join(root, 'backend', 'target', 'release', 'lesson-vault.exe');
+const exe = join(root, 'backend', 'target', 'release', process.platform === 'win32' ? 'lesson-vault.exe' : 'lesson-vault');
 if (!existsSync(exe)) throw new Error('Build the backend first: cargo build --release');
 
 const app = spawn(exe, [], {

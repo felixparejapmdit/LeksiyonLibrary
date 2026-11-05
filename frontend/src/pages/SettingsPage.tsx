@@ -41,7 +41,7 @@ export function SettingsPage() {
             {lessons} {lessons === 1 ? 'lesson' : 'lessons'}, {verses.length} verse {verses.length === 1 ? 'record' : 'records'}, {verses.filter((v) => v.status === 'verified').length} verified.
           </p>
           <p className="m-0 mb-2 text-[13px] text-muted" data-testid="settings-encryption">
-            Your lessons are encrypted on this PC and can only be opened by this Windows account. If this PC fails, an encrypted backup is the only way to get them back.
+            Your lessons are encrypted on this PC and can only be opened by this user account on this computer. If this computer fails, an encrypted backup is the only way to get them back.
           </p>
           <p className="m-0 mb-2 text-[13px] text-muted" data-testid="settings-last-backup">
             {lastBackup ? `Last backup: ${new Date(lastBackup).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}.` : 'No backup made yet.'}
