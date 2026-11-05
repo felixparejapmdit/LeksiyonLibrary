@@ -44,6 +44,8 @@ pub struct ImportVerse {
 pub struct Issue {
     pub row: usize,
     pub message: String,
+    /// A row left out, as read, so it can be kept for the user to fix in the app.
+    pub sheet_row: Option<SheetRow>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -57,8 +59,11 @@ pub struct Fix {
 pub struct Plan {
     pub rows: usize,
     pub verses: Vec<ImportVerse>,
-    /// Rows left out, for the user to fix in the file.
+    /// Rows left out, for the user to fix in the app or in the file.
     pub problems: Vec<Issue>,
+    /// Rows whose text started with a number other than the Verse column's. The column is
+    /// taken as right, so the number was dropped as any printed verse number is.
+    pub number_fixes: Vec<Issue>,
     /// Rows imported, with a note on the verse asking the user to check them.
     pub flagged: Vec<Issue>,
     pub book_fixes: Vec<Fix>,
@@ -187,7 +192,9 @@ pub fn sheet_address(input: &str, remembered: Option<&str>) -> Result<(String, S
 
 static SERIES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^(III|II|I|3|2|1)\s+(.+)$").unwrap());
 static VERSE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^(\d+)\s*(\([a-z]\)|[a-z])?$").unwrap());
-static LEADING_NUMBER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\d+)\s*(.?)").unwrap());
+static LEADING_NUMBER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\d+)(?:[-\u{2013}](\d+))?").unwrap());
+static ORDINAL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^(st|nd|rd|th)\b").unwrap());
+static NUMBER_NOTE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"The text starts with the number \d+, but this row says verse \S+\. Check the reference\.\s*").unwrap());
 static SPACED_YEAR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\S+)\s+(\d{4})$").unwrap());
 static TRAILING_YEAR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(.*?)(\d{4})$").unwrap());
 
@@ -214,7 +221,7 @@ fn find_book(name: &str) -> Result<&'static Book, String> {
         return Ok(book);
     }
     if number.is_none() && NEEDS_NUMBER.contains(&lower.as_str()) {
-        return Err(format!("\"{name}\" could be more than one book. Add its number, such as I {name} or II {name}, then import the file again."));
+        return Err(format!("\"{name}\" could be more than one book. Choose which one under Rows to fix, or add its number in the sheet and import it again."));
     }
     Err(format!("The book \"{name}\" was not recognized."))
 }
@@ -225,20 +232,41 @@ fn strip_invisible(text: &str) -> String {
     text.chars().filter(|c| !matches!(*c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2064}' | '\u{FEFF}' | '\u{00AD}')).collect::<String>().trim().to_string()
 }
 
-/// Verse text often starts with its own number, as printed. It is removed when it is the
-/// right number. A different one may mean the row's reference is wrong, so it stays visible
-/// and the verse is flagged.
-fn split_verse_number(text: &str, verse: &str, part: &str) -> (String, Option<String>) {
-    let Some(c) = LEADING_NUMBER.captures(text) else { return (text.to_string(), None) };
-    let next = c.get(2).map_or("", |m| m.as_str());
-    // "12,000 men" begins with a number, but not a verse number.
-    if next.starts_with([',', '.', ':']) {
-        return (text.to_string(), None);
+/// What was at the start of a verse's text.
+#[derive(Debug, PartialEq)]
+enum LeadingNumber {
+    /// No verse number, or the right one, which was removed.
+    Fine,
+    /// Another number or a range, stuck to the first word as printed verse numbers are. The
+    /// Verse column is taken as right, so it was removed. Holds what was found.
+    Corrected(String),
+    /// Another number with a space after it, as in "3 days later". It may belong to the
+    /// sentence, so the text is left alone for the user to check. Holds what was found.
+    Unsure(String),
+}
+
+/// Verse text often starts with its own number, as printed. The Verse column decides what
+/// the verse is, so a printed number never stays in the text, unless it could be part of
+/// the sentence.
+fn split_verse_number(text: &str, verse: &str, part: &str) -> (String, LeadingNumber) {
+    let unchanged = |outcome| (text.to_string(), outcome);
+    let Some(c) = LEADING_NUMBER.captures(text) else { return unchanged(LeadingNumber::Fine) };
+    let found = c.get(0).unwrap().as_str();
+    let rest = &text[found.len()..];
+    // "12,000 men", "40-taon" and "3rd day" begin with a number, but not a verse number.
+    if rest.trim_start().starts_with([',', '.', ':']) || rest.starts_with(['-', '\u{2013}']) || ORDINAL.is_match(rest) {
+        return unchanged(LeadingNumber::Fine);
     }
-    if &c[1] != verse {
-        return (text.to_string(), Some(c[1].to_string()));
-    }
-    let rest = &text[c.get(1).unwrap().end()..];
+    let wanted = verse.parse::<u64>().ok();
+    let first = c[1].parse::<u64>().ok();
+    let last = c.get(2).and_then(|m| m.as_str().parse::<u64>().ok());
+    let outcome = match last {
+        // "20-21" printed on a row for verse 21 covers it.
+        Some(last) if first <= wanted && wanted <= Some(last) => LeadingNumber::Corrected(found.to_string()),
+        None if c[1] == *verse => LeadingNumber::Fine,
+        _ if rest.starts_with(char::is_whitespace) || rest.is_empty() => return unchanged(LeadingNumber::Unsure(found.to_string())),
+        _ => LeadingNumber::Corrected(found.to_string()),
+    };
     // Part of a verse can be printed with its letter too, as "18a" or "18(a)".
     let letter = part.trim_matches(['(', ')']);
     let rest = if letter.is_empty() {
@@ -246,7 +274,61 @@ fn split_verse_number(text: &str, verse: &str, part: &str) -> (String, Option<St
     } else {
         rest.strip_prefix(part).or_else(|| rest.strip_prefix(&format!("({letter})"))).or_else(|| rest.strip_prefix(letter).filter(|after| after.starts_with(char::is_whitespace))).unwrap_or(rest)
     };
-    (rest.trim_start().to_string(), None)
+    (rest.trim_start().to_string(), outcome)
+}
+
+/// The books a name without its number could be, for the user to choose from.
+pub fn book_choices(name: &str) -> Vec<String> {
+    let name = name.trim();
+    if name.is_empty() || SERIES.is_match(name) {
+        return vec![];
+    }
+    ["I", "II", "III"].iter().filter_map(|number| find_book(&format!("{number} {name}")).ok()).map(|book| book.en.to_string()).collect()
+}
+
+/// Verses imported before a wrong leading number was corrected on import get the same
+/// correction. Text the user has already changed is theirs and is left alone. Returns how
+/// many were corrected.
+pub fn repair_leading_numbers(conn: &rusqlite::Connection) -> rusqlite::Result<usize> {
+    let waiting: Vec<(String, String, String, String, String, String, String, String, String, String)> = {
+        let mut st = conn.prepare(
+            "SELECT id,user_id,canonical_key,version,language,ref_printed,ref_en,text,ocr_raw,ref_note FROM verses
+             WHERE import_source<>'' AND status='unverified' AND ref_note LIKE 'The text starts with the number %'",
+        )?;
+        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?)))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    let mut repaired = 0;
+    for (id, user, key, version, language, printed, reference, text, raw, note) in waiting {
+        let cleaned = strip_invisible(&raw);
+        let Some(number) = key.rsplit(':').next() else { continue };
+        let (fixed, outcome) = split_verse_number(&cleaned, number, printed.strip_prefix(reference.as_str()).unwrap_or(""));
+        if text != cleaned || !matches!(outcome, LeadingNumber::Corrected(_)) || fixed.is_empty() {
+            continue;
+        }
+        repaired += 1;
+        // Without its number, it may turn out to be a row that is already in the vault.
+        let repeat: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM verses WHERE user_id=?1 AND canonical_key=?2 AND version=?3 AND language=?4 AND text=?5 AND id<>?6)",
+            rusqlite::params![user, key, version, language, fixed, id],
+            |r| r.get(0),
+        )?;
+        let used: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM lecture_verses WHERE verse_id=?1) OR EXISTS(SELECT 1 FROM lesson_verses WHERE verse_id=?1)",
+            [&id],
+            |r| r.get(0),
+        )?;
+        if repeat && !used {
+            conn.execute("DELETE FROM verses WHERE id=?1", [&id])?;
+            continue;
+        }
+        let sha = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(fixed.as_bytes()));
+        conn.execute(
+            "UPDATE verses SET text=?1, text_sha256=?2, ref_note=?3 WHERE id=?4",
+            rusqlite::params![fixed, sha, NUMBER_NOTE.replace(&note, "").trim(), id],
+        )?;
+    }
+    Ok(repaired)
 }
 
 fn tally(fixes: BTreeMap<(String, String), usize>) -> Vec<Fix> {
@@ -272,7 +354,8 @@ pub fn plan(rows: &[SheetRow]) -> Plan {
         let corrected = drag_filled.unwrap_or_else(|| version.clone());
         previous = Some((version, corrected.clone()));
 
-        let mut problem = |message: String| plan.problems.push(Issue { row: row.row, message });
+        let kept_row = SheetRow { translation: corrected.clone(), ..row.clone() };
+        let mut problem = |message: String| plan.problems.push(Issue { row: row.row, message, sheet_row: Some(kept_row.clone()) });
         if corrected.is_empty() {
             problem("This row has no translation.".into());
             continue;
@@ -306,7 +389,11 @@ pub fn plan(rows: &[SheetRow]) -> Plan {
             *book_fixes.entry((row.book.trim().to_string(), book.en.to_string())).or_insert(0) += 1;
         }
 
-        let (text, other_number) = split_verse_number(&cleaned, &number, part);
+        let (text, leading) = split_verse_number(&cleaned, &number, part);
+        if text.is_empty() {
+            problem("This row has no text.".into());
+            continue;
+        }
         let detected = crate::language::detect(&text);
         let canonical_key = format!("{}.{chapter}:{number}", book.id);
         if !seen.insert((canonical_key.clone(), corrected.clone(), detected.language, text.clone())) {
@@ -317,15 +404,17 @@ pub fn plan(rows: &[SheetRow]) -> Plan {
             plan.other_wordings += 1;
         }
         let mut notes = Vec::new();
-        if let Some(found) = other_number {
-            notes.push(format!("The text starts with the number {found}, but this row says verse {number}. Check the reference."));
+        match leading {
+            LeadingNumber::Fine => {}
+            LeadingNumber::Corrected(found) => plan.number_fixes.push(Issue { row: row.row, message: format!("The text started with {found}. The Verse column says {number}, so {found} was removed."), sheet_row: None }),
+            LeadingNumber::Unsure(found) => notes.push(format!("The text starts with the number {found}, but this row says verse {number}. Check the reference.")),
         }
         if !detected.confident {
             notes.push(format!("The language could not be told for certain, so this was filed as {}. Please check it.", if detected.language == "tl" { "Tagalog" } else { "English" }));
         }
         let note = notes.join(" ");
         if !note.is_empty() {
-            plan.flagged.push(Issue { row: row.row, message: note.clone() });
+            plan.flagged.push(Issue { row: row.row, message: note.clone(), sheet_row: None });
         }
         let reference = |name: &str| format!("{name} {chapter}:{number}");
         plan.verses.push(ImportVerse {
@@ -388,17 +477,117 @@ mod tests {
     }
 
     #[test]
-    fn a_wrong_leading_number_is_kept_and_flagged() {
-        let p = one("NIV", "John", "1", "5", &format!("12{TAGALOG}"));
-        assert_eq!(p.verses[0].text, format!("12{TAGALOG}"));
+    fn the_verse_column_wins_over_a_number_stuck_to_the_text() {
+        for (verse, printed) in [("19", "9"), ("12", "1212"), ("21", "20-21"), ("21", "21-22"), ("1", "11")] {
+            let p = one("NIV", "John", "1", verse, &format!("{printed}{TAGALOG}"));
+            assert_eq!(p.verses[0].text, TAGALOG, "{printed}");
+            assert_eq!(p.verses[0].note, "", "{printed}");
+            assert!(p.flagged.is_empty(), "{printed}");
+            assert!(p.number_fixes[0].message.contains(printed), "{}", p.number_fixes[0].message);
+            assert_eq!(p.verses[0].raw, format!("{printed}{TAGALOG}"), "the cell is kept as it was");
+        }
+    }
+
+    #[test]
+    fn a_number_that_may_be_part_of_the_sentence_is_kept_and_flagged() {
+        let p = one("NIV", "John", "1", "5", "12 men went up to the city");
+        assert_eq!(p.verses[0].text, "12 men went up to the city");
         assert!(p.verses[0].note.contains("number 12"), "{}", p.verses[0].note);
         assert_eq!(p.flagged[0].row, 2);
+        assert!(p.number_fixes.is_empty());
     }
 
     #[test]
     fn a_number_that_is_part_of_the_sentence_stays() {
-        let (text, other) = split_verse_number("12,000 men went up", "12", "");
-        assert_eq!((text.as_str(), other), ("12,000 men went up", None));
+        for text in ["12,000 men went up", "12.5 measures", "40-taon sa ilang", "3rd day came", "2nd of them"] {
+            let (kept, outcome) = split_verse_number(text, "12", "");
+            assert_eq!((kept.as_str(), outcome), (text, LeadingNumber::Fine));
+        }
+    }
+
+    #[test]
+    fn a_row_with_only_a_number_has_no_text() {
+        assert!(one("NIV", "John", "1", "5", "5").problems[0].message.contains("no text"));
+    }
+
+    #[test]
+    fn a_left_out_row_is_kept_whole_with_its_corrected_translation() {
+        let p = plan(&[row(2, "AMP2015", "John", "1", "1", TAGALOG), row(3, "AMP2016", "Peter", "2", "9", TAGALOG)]);
+        let kept = p.problems[0].sheet_row.as_ref().unwrap();
+        assert_eq!((kept.row, kept.translation.as_str(), kept.book.as_str(), kept.chapter.as_str(), kept.verse.as_str(), kept.content.as_str()), (3, "AMP2015", "Peter", "2", "9", TAGALOG));
+    }
+
+    #[test]
+    fn the_books_a_name_could_be_are_offered() {
+        assert_eq!(book_choices("Peter"), vec!["I Peter", "II Peter"]);
+        assert_eq!(book_choices(" Corinthians "), vec!["I Corinthians", "II Corinthians"]);
+        assert_eq!(book_choices("Kings"), vec!["I Kings", "II Kings"]);
+        assert!(book_choices("Hezekiah").is_empty());
+        assert!(book_choices("I Peter").is_empty(), "this already says which one");
+    }
+
+    fn vault_with(rows: &[(&str, &str, &str, &str, &str)]) -> rusqlite::Connection {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::init(&c).unwrap();
+        c.execute_batch("INSERT INTO users VALUES ('u','a@b.c','x','now');").unwrap();
+        for (id, text, raw, status, note) in rows {
+            c.execute(
+                "INSERT INTO verses (id,user_id,canonical_key,book_id,ref_printed,ref_en,ref_tl,version,language,text,text_sha256,ocr_raw,status,ref_note,created_at,import_source)
+                 VALUES (?1,'u','43.1:19',43,'John 1:19','John 1:19','Juan 1:19','NIV','tl',?2,'h',?3,'unverified',?4,'now','made-up.xlsx, row 2')",
+                [id, text, raw, note],
+            )
+            .unwrap();
+            if *status == "verified" {
+                c.execute("UPDATE verses SET status='verified' WHERE id=?1", [id]).unwrap();
+            }
+        }
+        c
+    }
+
+    const OLD_NOTE: &str = "The text starts with the number 9, but this row says verse 19. Check the reference.";
+
+    #[test]
+    fn a_vault_imported_earlier_gets_the_same_correction_once() {
+        let raw = format!("9{TAGALOG}");
+        let c = vault_with(&[("a", &raw, &raw, "unverified", OLD_NOTE)]);
+        assert_eq!(repair_leading_numbers(&c).unwrap(), 1);
+        assert_eq!(repair_leading_numbers(&c).unwrap(), 0);
+        let (text, sha, note, kept): (String, String, String, String) = c.query_row("SELECT text,text_sha256,ref_note,ocr_raw FROM verses", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).unwrap();
+        assert_eq!((text.as_str(), note.as_str(), kept.as_str()), (TAGALOG, "", raw.as_str()));
+        assert_eq!(sha, hex::encode(<sha2::Sha256 as sha2::Digest>::digest(TAGALOG.as_bytes())), "a backup checks this hash");
+        let found: i64 = c.query_row("SELECT count(*) FROM verses_fts WHERE verses_fts MATCH 'Pablo'", [], |r| r.get(0)).unwrap();
+        assert_eq!(found, 1);
+    }
+
+    #[test]
+    fn the_repair_leaves_other_notes_and_the_users_own_changes_alone() {
+        let raw = format!("9{TAGALOG}");
+        let language = "Please check the language.";
+        let both = format!("{OLD_NOTE} {language}");
+        let c = vault_with(&[("noted", &raw, &raw, "unverified", &both), ("edited", "My own wording", "9edited cell", "unverified", OLD_NOTE)]);
+        assert_eq!(repair_leading_numbers(&c).unwrap(), 1);
+        let note: String = c.query_row("SELECT ref_note FROM verses WHERE id='noted'", [], |r| r.get(0)).unwrap();
+        assert_eq!(note, language);
+        let (text, note): (String, String) = c.query_row("SELECT text,ref_note FROM verses WHERE id='edited'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!((text.as_str(), note.as_str()), ("My own wording", OLD_NOTE));
+    }
+
+    #[test]
+    fn the_repair_never_touches_a_verified_verse() {
+        let raw = format!("9{TAGALOG}");
+        let c = vault_with(&[("locked", &raw, &raw, "verified", OLD_NOTE)]);
+        assert_eq!(repair_leading_numbers(&c).unwrap(), 0);
+        let text: String = c.query_row("SELECT text FROM verses", [], |r| r.get(0)).unwrap();
+        assert_eq!(text, raw);
+    }
+
+    #[test]
+    fn a_repair_that_reveals_a_repeat_removes_the_repeat() {
+        let raw = format!("9{TAGALOG}");
+        let c = vault_with(&[("original", TAGALOG, TAGALOG, "unverified", ""), ("repeat", &raw, &raw, "unverified", OLD_NOTE)]);
+        assert_eq!(repair_leading_numbers(&c).unwrap(), 1);
+        let left: Vec<String> = c.prepare("SELECT id FROM verses").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+        assert_eq!(left, vec!["original"]);
     }
 
     #[test]
@@ -459,7 +648,7 @@ mod tests {
 
     #[test]
     fn the_letter_printed_with_a_part_of_a_verse_is_not_left_in_the_text() {
-        for printed in ["18a Ang simula", "18(a) Ang simula", "18 Ang simula"] {
+        for printed in ["18a Ang simula", "18(a) Ang simula", "18 Ang simula", "18Ang simula"] {
             assert_eq!(split_verse_number(printed, "18", "(a)").0, "Ang simula", "{printed}");
         }
         assert_eq!(split_verse_number("18 at ang huli", "18", "(a)").0, "at ang huli", "a word that starts with the letter stays whole");

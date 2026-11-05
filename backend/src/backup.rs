@@ -15,7 +15,7 @@ use sha2::{Digest, Sha256};
 use std::io::{Cursor, Read, Write};
 use zip::write::SimpleFileOptions;
 
-const TABLES: &[&str] = &["folders", "lessons", "verses", "lesson_verses", "lectures", "lecture_verses", "verse_context", "scripture_context", "context_tagalog", "teachings"];
+const TABLES: &[&str] = &["folders", "lessons", "verses", "lesson_verses", "lectures", "lecture_verses", "verse_context", "scripture_context", "context_tagalog", "import_rows_to_fix"];
 const MAX_MANIFEST_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_PDF_BYTES: u64 = 128 * 1024 * 1024;
 

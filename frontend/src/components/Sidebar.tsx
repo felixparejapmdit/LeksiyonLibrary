@@ -1,5 +1,5 @@
 import { memo, useMemo, useState } from 'react';
-import { Archive, BookMarked, CalendarDays, ChevronDown, ChevronRight, Folder, FolderPlus, ListChecks, MapPin, Sparkles, Trash2 } from 'lucide-react';
+import { Archive, BookMarked, ChevronDown, ChevronRight, Folder, FolderPlus, ListChecks, MapPin, Sparkles, Trash2 } from 'lucide-react';
 import { api } from '../api';
 import { useProgressive } from './Layout';
 import {
@@ -19,8 +19,8 @@ import {
   verseGroups,
 } from '../store';
 
-function Count({ n, testId }: { n: number; testId?: string }) {
-  return <span className="ml-auto flex-none pl-2 text-xs text-muted tabular-nums" data-testid={testId}>{n}</span>;
+function Count({ n, testId, title }: { n: number; testId?: string; title?: string }) {
+  return <span className="ml-auto flex-none pl-2 text-xs text-muted tabular-nums" data-testid={testId} title={title}>{n}</span>;
 }
 
 const rowClass = (active: boolean) =>
@@ -82,7 +82,8 @@ export function Sidebar() {
   }, [verses]);
 
   const shownGroups = useProgressive(groups, 60);
-  const referenceCount = useMemo(() => new Set(verses.map((v) => v.canonical_key)).size, [verses]);
+  // Both counts are of verses, so the library is always unverified plus verified.
+  const unverified = useMemo(() => verses.filter((v) => v.status === 'unverified').length, [verses]);
 
   const allActive = route === '/' && f.category === 'all' && f.year === null && !f.verseKey && !f.folderId && !f.query;
 
@@ -113,17 +114,14 @@ export function Sidebar() {
         </button>
         <button className={rowClass(route === '/bibles')} data-testid="side-bibles" onClick={() => navigate('/bibles')}>
           <BookMarked size={15} className="flex-none" /> Bibles Library
-          <Count n={referenceCount} testId="side-bibles-count" />
+          <Count n={verses.length} testId="side-bibles-count" title={`${verses.length} verses: ${verses.length - unverified} verified, ${unverified} to review`} />
         </button>
         <button className={rowClass(route === '/lecture')} data-testid="side-lecture" onClick={() => navigate('/lecture')}>
           <Sparkles size={15} className="flex-none" /> Lecture Maker
         </button>
         <button className={rowClass(route === '/review')} data-testid="side-review" onClick={() => navigate('/review')}>
           <ListChecks size={15} className="flex-none" /> Review Verses
-          <Count n={verses.filter((v) => v.status === 'unverified').length} testId="side-review-count" />
-        </button>
-        <button className={rowClass(route === '/history')} data-testid="side-history" onClick={() => navigate('/history')}>
-          <CalendarDays size={15} className="flex-none" /> Teaching History
+          <Count n={unverified} testId="side-review-count" title={`${unverified} of ${verses.length} verses still to review`} />
         </button>
       </div>
       <div className="scroll-stable min-h-0 flex-1 px-2 pb-3">

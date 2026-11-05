@@ -58,14 +58,6 @@ export interface Lecture {
   verse_objectives: string[];
 }
 
-export interface Teaching {
-  id: string;
-  lesson_id: string;
-  taught_on: string;
-  place: string;
-  notes: string;
-}
-
 export interface Suggestion {
   canonical_key: string;
   ref_en: string;
@@ -110,7 +102,23 @@ export interface ImportReport {
   translation_fixes: { from: string; to: string; count: number }[];
   problems: { row: number; message: string }[];
   flagged: { row: number; message: string }[];
+  number_fixes: { row: number; message: string }[];
 }
+
+export interface RowToFix {
+  id: string;
+  source: string;
+  row: number;
+  translation: string;
+  book: string;
+  chapter: string;
+  verse: string;
+  content: string;
+  message: string;
+  choices: string[];
+}
+
+export type RowCorrection = Pick<RowToFix, 'translation' | 'book' | 'chapter' | 'verse' | 'content'>;
 
 const json = (method: string, body: unknown): RequestInit => ({
   method,
@@ -193,6 +201,9 @@ export const api = {
     return request<ImportReport>('/verses/import', { method: 'POST', body: form });
   },
   importGoogleSheet: (sheet: string, commit: boolean) => request<ImportReport>('/verses/import/google', json('POST', { sheet, commit })),
+  rowsToFix: () => request<RowToFix[]>('/verses/import/rows'),
+  fixRow: (id: string, row: RowCorrection) => request<RowToFix[]>(`/verses/import/rows/${id}`, json('POST', row)),
+  dismissRow: (id: string) => request<RowToFix[]>(`/verses/import/rows/${id}`, { method: 'DELETE' }),
   removeImported: () => request<{ removed: number; kept: number }>('/verses/import', { method: 'DELETE' }),
   contextTagalog: () => request<Record<string, TagalogContext>>('/context-tagalog'),
   saveContextTagalog: (item: string, text: string) => request<Record<string, TagalogContext>>('/context-tagalog', json('POST', { item, text })),
@@ -205,9 +216,6 @@ export const api = {
   saveScriptureContext: (scope: string, context: string) => request<Record<string, ScriptureContext>>('/scripture-context', json('POST', { scope, context })),
   searchMeaning: (q: string) => request<{ available: boolean; keys: string[] }>(`/search/meaning?q=${encodeURIComponent(q)}`),
   status: () => request<{ last_backup_at: string | null; has_saved_sheet: boolean }>('/status'),
-  teachings: () => request<Teaching[]>('/teachings'),
-  addTeaching: (t: { lesson_id: string; taught_on: string; place: string; notes: string }) => request<Teaching[]>('/teachings', json('POST', t)),
-  deleteTeaching: (id: string) => request<Teaching[]>(`/teachings/${id}`, { method: 'DELETE' }),
 
   aiStatus: () => request<{ available: boolean; reachable: boolean; model: string; meaning: boolean }>('/ai/status'),
   aiSuggest: (issue: string, objective: string, count?: number) =>

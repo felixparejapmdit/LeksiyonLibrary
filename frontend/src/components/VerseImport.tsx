@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
-import { FileSpreadsheet, Link2, Loader2, Trash2, Upload } from 'lucide-react';
-import { api, type ImportReport } from '../api';
+import { Check, FileSpreadsheet, Link2, Loader2, Trash2, Upload } from 'lucide-react';
+import { api, type ImportReport, type RowToFix } from '../api';
 import { askConfirm, errorText, refreshAll, setState, toast, useStore } from '../store';
 
 type Source = { kind: 'file'; file: File } | { kind: 'sheet'; sheet: string };
@@ -31,9 +31,85 @@ function IssueList({ title, issues, testId, open }: { title: string; issues: Imp
   );
 }
 
+/** A row an import left out. Saving runs it through the same checks as the sheet. */
+function RowFix({ row }: { row: RowToFix }) {
+  const [draft, setDraft] = useState({ translation: row.translation, book: row.choices.length > 0 ? '' : row.book, chapter: row.chapter, verse: row.verse, content: row.content });
+  const [busy, setBusy] = useState(false);
+  const set = (patch: Partial<typeof draft>) => setDraft((d) => ({ ...d, ...patch }));
+  const act = async (work: () => Promise<RowToFix[]>, done: string) => {
+    setBusy(true);
+    try {
+      const rowsToFix = await work();
+      await refreshAll();
+      setState({ rowsToFix });
+      toast(done);
+    } catch (e) {
+      setBusy(false);
+      toast(errorText(e), 'error');
+    }
+  };
+  const small = 'field !min-h-[34px] !py-1 !text-xs max-lg:!min-h-11';
+  return (
+    <li className="rounded-md border border-line p-2" data-testid="fix-row" data-row={row.row}>
+      <p className="m-0 text-xs font-semibold" data-testid="fix-row-title">Row {row.row} of {row.source}</p>
+      <p className="m-0 mt-0.5 text-xs text-warn" data-testid="fix-row-message">{row.message}</p>
+      <div className="mt-2 flex flex-wrap items-end gap-1.5">
+        <label className="w-24 text-xs text-muted">
+          Translation
+          <input className={`${small} mt-0.5`} data-testid="fix-row-translation" value={draft.translation} onChange={(e) => set({ translation: e.target.value })} />
+        </label>
+        <label className="min-w-36 flex-1 text-xs text-muted">
+          Book
+          {row.choices.length > 0 ? (
+            <select className={`${small} mt-0.5`} data-testid="fix-row-book" value={draft.book} onChange={(e) => set({ book: e.target.value })}>
+              <option value="">Choose the book ({row.book})</option>
+              {row.choices.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          ) : (
+            <input className={`${small} mt-0.5`} data-testid="fix-row-book" value={draft.book} onChange={(e) => set({ book: e.target.value })} />
+          )}
+        </label>
+        <label className="w-16 text-xs text-muted">
+          Chapter
+          <input className={`${small} mt-0.5`} data-testid="fix-row-chapter" value={draft.chapter} onChange={(e) => set({ chapter: e.target.value })} />
+        </label>
+        <label className="w-16 text-xs text-muted">
+          Verse
+          <input className={`${small} mt-0.5`} data-testid="fix-row-verse" value={draft.verse} onChange={(e) => set({ verse: e.target.value })} />
+        </label>
+      </div>
+      <label className="mt-1.5 block text-xs text-muted">
+        Text
+        <textarea className={`${small} mt-0.5 min-h-14`} data-testid="fix-row-content" value={draft.content} onChange={(e) => set({ content: e.target.value })} />
+      </label>
+      <div className="mt-1.5 flex flex-wrap gap-1.5">
+        <button className="btn btn-primary !min-h-8 max-lg:!min-h-11" data-testid="fix-row-save" disabled={busy || !draft.book.trim()} onClick={() => act(() => api.fixRow(row.id, draft), `Row ${row.row} added to your verses`)}>
+          <Check size={13} /> Save this verse
+        </button>
+        <button
+          className="btn !min-h-8 max-lg:!min-h-11"
+          data-testid="fix-row-dismiss"
+          disabled={busy}
+          onClick={() =>
+            askConfirm({
+              title: `Leave out row ${row.row}?`,
+              body: 'This row will not be added to your verses. It comes back if you import the sheet again without fixing it there.',
+              confirmLabel: 'Leave it out',
+              onConfirm: () => act(() => api.dismissRow(row.id), `Row ${row.row} left out`),
+            })
+          }
+        >
+          Leave out
+        </button>
+      </div>
+    </li>
+  );
+}
+
 /** Bulk verses from an Excel file or Google Sheet, always previewed before anything is saved. */
 export function VerseImport() {
   const verses = useStore((s) => s.verses);
+  const rowsToFix = useStore((s) => s.rowsToFix);
   const hasSavedSheet = useStore((s) => s.hasSavedSheet);
   const inputRef = useRef<HTMLInputElement>(null);
   const [sheet, setSheet] = useState('');
@@ -61,7 +137,8 @@ export function VerseImport() {
       await refreshAll();
       setPreview(null);
       setSheet('');
-      toast(`${report.new_verses} verses imported and encrypted`);
+      const left = report.problems.length;
+      toast(left > 0 ? `${report.new_verses} verses imported and encrypted. ${left} ${left === 1 ? 'row' : 'rows'} to fix below.` : `${report.new_verses} verses imported and encrypted`);
     } catch (e) {
       toast(errorText(e), 'error');
     }
@@ -129,16 +206,27 @@ export function VerseImport() {
             {r.already_in_vault > 0 && ` ${r.already_in_vault} already in your vault.`}
             {r.other_wordings > 0 && ` ${r.other_wordings} are another wording of a verse in the same translation, and all wordings are kept.`}
           </p>
-          <IssueList title="Rows left out. Fix these in the sheet, then import it again" issues={r.problems} testId="import-problems" open />
+          <IssueList title="Rows left out. After you continue, you can fix them here under Rows to fix" issues={r.problems} testId="import-problems" open />
           <IssueList title="Imported, but marked for you to check" issues={r.flagged} testId="import-flagged" />
+          <IssueList title="Verse numbers corrected to match the Verse column" issues={r.number_fixes} testId="import-number-fixes" />
           <FixList title="Book names corrected" fixes={r.book_fixes} testId="import-book-fixes" />
           <FixList title="Translation codes corrected, such as Excel counting up AMP2015 to AMP2016" fixes={r.translation_fixes} testId="import-translation-fixes" />
           <div className="flex flex-wrap gap-1.5 pt-1">
-            <button className="btn btn-primary" data-testid="import-confirm" disabled={busy || r.new_verses === 0} onClick={commit}>
-              <Upload size={14} /> Import {r.new_verses} {r.new_verses === 1 ? 'verse' : 'verses'}
+            <button className="btn btn-primary" data-testid="import-confirm" disabled={busy || (r.new_verses === 0 && r.problems.length === 0)} onClick={commit}>
+              <Upload size={14} /> {r.new_verses === 0 && r.problems.length > 0 ? `Keep ${r.problems.length} ${r.problems.length === 1 ? 'row' : 'rows'} to fix` : `Import ${r.new_verses} ${r.new_verses === 1 ? 'verse' : 'verses'}`}
             </button>
             <button className="btn" data-testid="import-cancel" disabled={busy} onClick={() => setPreview(null)}>Cancel</button>
           </div>
+        </div>
+      )}
+
+      {rowsToFix.length > 0 && (
+        <div className="mt-3 border-t border-line pt-2" data-testid="rows-to-fix">
+          <h3 className="m-0 text-[13px] font-semibold" data-testid="rows-to-fix-title">Rows to fix ({rowsToFix.length})</h3>
+          <p className="m-0 mt-0.5 mb-2 text-xs text-muted">These rows were not imported. Correct each one here to add it to your verses. They are kept encrypted in your vault until then.</p>
+          <ul className="m-0 list-none space-y-2 p-0">
+            {rowsToFix.map((row) => <RowFix key={row.id} row={row} />)}
+          </ul>
         </div>
       )}
 
@@ -151,7 +239,7 @@ export function VerseImport() {
             onClick={() =>
               askConfirm({
                 title: 'Remove imported verses?',
-                body: 'Imported verses are removed from your vault. Any you have verified, or added to a saved lecture, are kept.',
+                body: 'Imported verses, and any rows waiting to be fixed, are removed from your vault. Any verse you have verified, or added to a saved lecture, is kept.',
                 confirmLabel: 'Remove imported verses',
                 onConfirm: async () => {
                   const res = await api.removeImported();

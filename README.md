@@ -62,16 +62,17 @@ Settings has an **Import Bible verses** section. The sheet needs these columns i
 - **From an Excel file:** the most private way. The file is read in memory and not kept. The original on your computer is not encrypted, so keep it somewhere safe or delete it afterwards.
 - **From Google Sheets:** paste the link. After that the spreadsheet is remembered, so the `gid` of another tab is enough. The sheet must be shared as Anyone with the link, which means anyone who gets the link can read it. Turn that off again after importing if the verses are sensitive.
 
-You see a preview before anything is saved. Language is read from each row's words, because a translation code does not say what language a row is in. Misspelled books and Excel's drag-fill of a code (AMP2015, AMP2016, ...) are corrected and listed. A book missing its number ("Peter") is left out and listed, because it could be either book. Fix it in the sheet and import again: rows already in the vault are not added twice.
+You see a preview before anything is saved. Language is read from each row's words, because a translation code does not say what language a row is in. Misspelled books and Excel's drag-fill of a code (AMP2015, AMP2016, ...) are corrected and listed. When the text starts with a number other than the Verse column's, stuck to the first word as in `9Ang`, the column is taken as right and the number is removed. A number followed by a space may belong to the sentence, so that row is imported and marked for you to check.
+
+A book missing its number ("Peter") could be either book, so that row is left out and kept under **Rows to fix** in Settings, where you choose the book and save it. You can also fix it in the sheet and import again: rows already in the vault are not added twice.
 
 Imported verses are encrypted like the rest of the vault, and stay unverified until you check them. The original cell is kept beside the cleaned text. **Remove imported verses** undoes an import, keeping anything you verified or use in a saved lecture.
 
 ## Other tools
 
-- **Bibles Library:** filter by book, translation, language and status, one page at a time. Extra translations of a reference fold away. Search and filters work from memory, and the app keeps nothing readable on disk or in the browser's cache.
+- **Bibles Library:** its count is every verse record, and Review Verses counts those still unverified, so the two differ only by what you have verified. Three views: **Cards**; **Table**, one verse to a line in the same columns as an imported sheet, opening to the full card; and **Parallel**, two languages or translations side by side for each reference. Filter by book, translation, language and status, one page at a time. Extra translations of a reference fold away. Search and filters work from memory, and the app keeps nothing readable on disk or in the browser's cache.
 - **Review Verses:** steps through unverified verses beside the page they came from. Verifying locks a verse permanently.
 - **Find by meaning:** finds verses related to a question even when they share no words, in Tagalog or English. Available in the Lecture Maker, Bibles Library and Search. It suggests from your library only, and falls back to matching words if the model is off.
-- **Teaching History:** records when and where you gave each lesson, and warns before you repeat one.
 - **Select a folder:** when uploading, adds every PDF in a folder, skips other files, and flags lessons to check.
 - **Backup reminder:** appears if you have lessons and no backup in the last 14 days.
 

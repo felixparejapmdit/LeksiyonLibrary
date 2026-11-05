@@ -72,7 +72,9 @@ test.describe('importing verses', () => {
       await expect(page.getByTestId('import-problems')).toContainText('could be more than one book');
       await expect(page.getByTestId('import-book-fixes')).toContainText('Mathew became Matthew (2)');
       await expect(page.getByTestId('import-translation-fixes')).toContainText('AMP2016 became AMP2015 (1)');
-      await expect(page.getByTestId('import-flagged')).toContainText('Row 8:');
+      await expect(page.getByTestId('import-number-fixes')).toContainText('Row 8:');
+      await expect(page.getByTestId('import-number-fixes')).toContainText('The Verse column says 7');
+      await expect(page.getByTestId('import-flagged')).toHaveCount(0);
       expect(await verses(page), 'a preview saves nothing').toEqual([]);
 
       await page.getByTestId('import-cancel').click();
@@ -90,13 +92,12 @@ test.describe('importing verses', () => {
       expect(byRow(4)).toMatchObject({ canonical_key: '51.3:12', version: 'ETRB', language: 'en', text: en });
       expect(byRow(6)).toMatchObject({ ref_en: 'Matthew 5:1', version: 'AMP2015' });
       expect(byRow(7)).toMatchObject({ version: 'AMP2015', text: tl('dalawa'), ocr_raw: `‪2${tl('dalawa')}` });
-      expect(byRow(8).text, 'a number that does not match stays visible').toBe(`9${tl('mali')}`);
-      expect(byRow(8).ref_note).toContain('number 9');
+      expect(byRow(8), 'the Verse column wins over a number stuck to the text').toMatchObject({ ref_en: 'John 1:7', text: tl('mali'), ref_note: '', ocr_raw: `9${tl('mali')}` });
 
       // Importing the same file again adds nothing.
       await chooseFile(page, 'made-up.xlsx', xlsx(ROWS));
       await expect(page.getByTestId('import-summary')).toHaveText('0 new verses ready to import from made-up.xlsx');
-      await expect(page.getByTestId('import-confirm')).toBeDisabled();
+      await expect(page.getByTestId('import-confirm')).toHaveText('Keep 1 row to fix');
       await expect(page.getByTestId('import-counts')).toContainText('6 already in your vault');
       await page.getByTestId('import-cancel').click();
     });
@@ -128,7 +129,103 @@ test.describe('importing verses', () => {
       await expect(page.getByTestId('app-shell')).toBeVisible();
       await expect(page.getByRole('button', { name: /Colossians 3:12/ })).toHaveCount(0);
       await expect(page.getByTestId('side-verses-count')).toHaveText('0');
-      await expect(page.getByTestId('side-bibles-count'), 'they still count towards the library').toHaveText('4');
+      await expect(page.getByTestId('side-bibles-count'), 'they still count towards the library').toHaveText('6');
+    });
+  });
+
+  test('the library and review counts are both counts of verses', async ({ page }) => {
+    await withEmptyVault(page, async () => {
+      await page.request.post('/api/verses/import', { multipart: { commit: '1', file: { name: 'made-up.xlsx', mimeType: 'application/octet-stream', buffer: xlsx(ROWS) } } });
+      await page.goto('/');
+      await expect(page.getByTestId('side-bibles-count')).toHaveText('6');
+      await expect(page.getByTestId('side-review-count'), 'nothing verified yet, so they are equal').toHaveText('6');
+      const [first] = await verses(page);
+      await page.request.post(`/api/verses/${first.id}/verify`);
+      await page.reload();
+      await expect(page.getByTestId('side-bibles-count')).toHaveText('6');
+      await expect(page.getByTestId('side-review-count'), 'they differ by what has been verified').toHaveText('5');
+      await expect(page.getByTestId('side-review-count')).toHaveAttribute('title', '5 of 6 verses still to review');
+    });
+  });
+
+  test('a row left out can be fixed in the app, and stays sealed until then', async ({ page }) => {
+    await withEmptyVault(page, async () => {
+      await page.goto('/settings');
+      await chooseFile(page, 'made-up.xlsx', xlsx(ROWS));
+      await expect(page.getByTestId('rows-to-fix'), 'a preview keeps nothing').toHaveCount(0);
+      await page.getByTestId('import-confirm').click();
+      await expect(page.getByTestId('toast').filter({ hasText: '1 row to fix below' })).toBeVisible();
+
+      const row = page.getByTestId('fix-row');
+      await expect(page.getByTestId('rows-to-fix-title')).toHaveText('Rows to fix (1)');
+      await expect(row.getByTestId('fix-row-title')).toHaveText('Row 9 of made-up.xlsx');
+      await expect(row.getByTestId('fix-row-message')).toContainText('could be more than one book');
+      await expect(row.getByTestId('fix-row-content')).toHaveValue(tl('walang bilang'));
+      await expect(row.getByTestId('fix-row-book').locator('option')).toHaveText(['Choose the book (Peter)', 'I Peter', 'II Peter']);
+      await expect(row.getByTestId('fix-row-save'), 'the book has to be chosen').toBeDisabled();
+
+      // Sealed on disk, like the verses, and in a backup.
+      for (const file of everyFile(dataDir)) expect(readFileSync(file).includes('walang bilang'), file).toBe(false);
+      const backup = await (await page.request.post('/api/backup', { data: { passphrase: TEST_PASSPHRASE } })).body();
+      await page.request.post('/api/reset', { data: { confirm: 'RESET' } });
+      expect(await (await page.request.get('/api/verses/import/rows')).json()).toEqual([]);
+      await page.request.post('/api/restore', { multipart: { passphrase: TEST_PASSPHRASE, file: { name: 'b.lvbackup', mimeType: 'application/octet-stream', buffer: backup } } });
+
+      // The Bibles Library points to it.
+      await page.goto('/bibles');
+      await expect(page.getByTestId('bibles-rows-to-fix')).toContainText('1 imported row was left out');
+      await page.getByTestId('bibles-rows-to-fix-open').click();
+      await expect(page.getByTestId('rows-to-fix')).toBeVisible();
+
+      // A correction goes through the same checks as the sheet.
+      await row.getByTestId('fix-row-book').selectOption('II Peter');
+      await row.getByTestId('fix-row-chapter').fill('x');
+      await row.getByTestId('fix-row-save').click();
+      await expect(page.getByTestId('toast').filter({ hasText: 'were not understood' })).toBeVisible();
+      expect(await verses(page)).toHaveLength(6);
+      await row.getByTestId('fix-row-chapter').fill('2');
+      await row.getByTestId('fix-row-save').click();
+      await expect(page.getByTestId('rows-to-fix')).toHaveCount(0);
+      await expect(page.getByTestId('side-bibles-count')).toHaveText('7');
+      const fixed = (await verses(page)).find((v) => v.import_source === 'made-up.xlsx, row 9');
+      expect(fixed).toMatchObject({ ref_en: 'II Peter 2:21', version: 'TLB', status: 'unverified', text: tl('walang bilang') });
+
+      // Importing the same sheet again neither adds it twice nor asks again.
+      await chooseFile(page, 'made-up.xlsx', xlsx(ROWS));
+      await expect(page.getByTestId('import-summary')).toHaveText('0 new verses ready to import from made-up.xlsx');
+      await expect(page.getByTestId('import-problems')).toHaveCount(0);
+      await expect(page.getByTestId('import-confirm')).toBeDisabled();
+      await page.getByTestId('import-cancel').click();
+    });
+  });
+
+  test('a row left out can be set aside, and fixing the sheet clears it', async ({ page }) => {
+    await withEmptyVault(page, async () => {
+      const send = (rows: string[][]) => page.request.post('/api/verses/import', { multipart: { commit: '1', file: { name: 'made-up.xlsx', mimeType: 'application/octet-stream', buffer: xlsx(rows) } } });
+      await send(ROWS);
+      await page.goto('/settings');
+      await page.getByTestId('fix-row-dismiss').click();
+      await page.getByTestId('confirm-accept').click();
+      await expect(page.getByTestId('rows-to-fix')).toHaveCount(0);
+
+      // The sheet still has the slip, so importing it brings the row back.
+      await send(ROWS);
+      await page.reload();
+      await expect(page.getByTestId('rows-to-fix-title')).toHaveText('Rows to fix (1)');
+
+      // Fixed in the sheet, it becomes a verse and leaves the list.
+      await send(ROWS.map((r) => (r[1] === 'Peter' ? ['TLB', 'I Peter', r[2], r[3], r[4]] : r)));
+      await page.reload();
+      await expect(page.getByTestId('rows-to-fix')).toHaveCount(0);
+      expect((await verses(page)).filter((v) => v.ref_en === 'I Peter 2:21')).toHaveLength(1);
+
+      expect((await page.request.post('/api/verses/import/rows/nope', { data: { translation: 'A', book: 'John', chapter: '1', verse: '1', content: 'x' } })).status()).toBe(404);
+      expect((await page.request.delete('/api/verses/import/rows/nope')).status()).toBe(404);
+
+      // Undoing an import clears what it left behind.
+      await send(ROWS);
+      await page.request.delete('/api/verses/import');
+      expect(await (await page.request.get('/api/verses/import/rows')).json()).toEqual([]);
     });
   });
 
@@ -190,7 +287,7 @@ test.describe('a large Bibles Library', () => {
   const load = async (page: Page) => {
     await page.request.post('/api/verses/import', { multipart: { commit: '1', file: { name: 'large.xlsx', mimeType: 'application/octet-stream', buffer: xlsx(large()) } } });
     await page.goto('/bibles');
-    await expect(page.getByTestId('bibles-range')).toHaveText('1–25 of 121 references, 124 records');
+    await expect(page.getByTestId('bibles-range')).toHaveText('1–25 of 121 references, 124 verses');
   };
 
   test('verses are paged, and only one page is ever on screen', async ({ page }) => {
@@ -202,18 +299,18 @@ test.describe('a large Bibles Library', () => {
       const firstKey = await groups.first().getAttribute('data-key');
 
       await page.getByTestId('bibles-page-next').click();
-      await expect(page.getByTestId('bibles-range')).toHaveText('26–50 of 121 references, 124 records');
+      await expect(page.getByTestId('bibles-range')).toHaveText('26–50 of 121 references, 124 verses');
       expect(await groups.first().getAttribute('data-key')).not.toBe(firstKey);
       await page.getByTestId('bibles-page-prev').click();
       await expect(groups.first()).toHaveAttribute('data-key', firstKey!);
 
       await page.getByRole('button', { name: 'Page 5', exact: true }).click();
-      await expect(page.getByTestId('bibles-range')).toHaveText('101–121 of 121 references, 124 records');
+      await expect(page.getByTestId('bibles-range')).toHaveText('101–121 of 121 references, 124 verses');
       await expect(page.getByTestId('bibles-page-next')).toBeDisabled();
       await expect(page.getByRole('button', { name: 'Page 5', exact: true })).toHaveAttribute('aria-current', 'page');
 
       await page.getByTestId('bibles-page-size').selectOption('100');
-      await expect(page.getByTestId('bibles-range')).toHaveText('1–100 of 121 references, 124 records');
+      await expect(page.getByTestId('bibles-range')).toHaveText('1–100 of 121 references, 124 verses');
       await expect(groups).toHaveCount(100);
       await page.getByTestId('bibles-page-size').selectOption('25');
     });
@@ -224,15 +321,15 @@ test.describe('a large Bibles Library', () => {
       await load(page);
       await page.getByTestId('bibles-page-next').click();
       await page.getByTestId('bibles-book').selectOption({ label: 'John' });
-      await expect(page.getByTestId('bibles-range')).toHaveText('1–1 of 1 reference, 4 records');
+      await expect(page.getByTestId('bibles-range')).toHaveText('1–1 of 1 reference, 4 verses');
       await expect(page.getByTestId('bibles-pagination')).toHaveCount(0);
 
       await page.getByTestId('bibles-clear').click();
-      await expect(page.getByTestId('bibles-range')).toHaveText('1–25 of 121 references, 124 records');
+      await expect(page.getByTestId('bibles-range')).toHaveText('1–25 of 121 references, 124 verses');
       await expect(page.getByTestId('bibles-clear')).toHaveCount(0);
 
       await page.getByTestId('bibles-search').fill('blg7x3');
-      await expect(page.getByTestId('bibles-range')).toHaveText('1–1 of 1 reference, 1 record');
+      await expect(page.getByTestId('bibles-range')).toHaveText('1–1 of 1 reference, 1 verse');
       await expect(page.getByTestId('verse-group-title')).toContainText('Romans 7:3');
       await page.getByTestId('bibles-clear').click();
     });
@@ -244,7 +341,7 @@ test.describe('a large Bibles Library', () => {
       await page.getByTestId('bibles-book').selectOption({ label: 'John' });
       const group = page.getByTestId('verse-group');
       await expect(group.getByTestId('verse-card')).toHaveCount(1);
-      await expect(group.getByTestId('verse-group-count')).toContainText('4 records');
+      await expect(group.getByTestId('verse-group-count')).toContainText('4 verses');
       await group.getByTestId('verse-group-more').click();
       await expect(group.getByTestId('verse-card')).toHaveCount(4);
       await expect(group.getByTestId('verse-group-more')).toHaveCount(0);
@@ -256,11 +353,112 @@ test.describe('a large Bibles Library', () => {
     await withEmptyVault(page, async () => {
       await load(page);
       await page.getByTestId('bibles-page-next').click();
-      await expect(page.getByTestId('bibles-range')).toHaveText('26–50 of 121 references, 124 records');
+      await expect(page.getByTestId('bibles-range')).toHaveText('26–50 of 121 references, 124 verses');
       await page.getByTestId('side-lecture').click();
       await expect(page.getByTestId('lecture-page')).toBeVisible();
       await page.getByTestId('side-bibles').click();
-      await expect(page.getByTestId('bibles-range')).toHaveText('26–50 of 121 references, 124 records');
+      await expect(page.getByTestId('bibles-range')).toHaveText('26–50 of 121 references, 124 verses');
+    });
+  });
+
+  test('the table shows every verse on one line, in the columns of the sheet', async ({ page }) => {
+    await withEmptyVault(page, async () => {
+      await load(page);
+      await page.getByTestId('bibles-layout-table').click();
+      await expect(page.getByTestId('bibles-layout-table')).toHaveAttribute('aria-pressed', 'true');
+      await expect(page.getByTestId('bibles-range')).toHaveText('1–25 of 124 verses');
+      await expect(page.getByTestId('table-row')).toHaveCount(25);
+      await expect(page.getByTestId('bibles-table').locator('th')).toHaveText(['Open', 'Translation', 'Book', 'Chapter', 'Verse', 'Content', 'Language', 'Status']);
+
+      await page.getByTestId('bibles-book').selectOption({ label: 'John' });
+      await expect(page.getByTestId('bibles-range')).toHaveText('1–4 of 4 verses');
+      const row = page.getByTestId('table-row').first();
+      await expect(row.getByTestId('table-translation')).toHaveText('AAA');
+      await expect(row.getByTestId('table-book')).toHaveText('John');
+      await expect(row.getByTestId('table-chapter')).toHaveText('3');
+      await expect(row.getByTestId('table-verse')).toHaveText('5');
+      await expect(row.getByTestId('table-text')).toContainText('Ang salita ay AAA');
+      await expect(row.getByTestId('table-language')).toHaveText('Tagalog');
+      await expect(row.getByTestId('table-status')).toHaveText('Unverified');
+
+      // A row stays one line tall however long its verse is, and opens to the full card.
+      const height = (await row.boundingBox())!.height;
+      expect(height).toBeLessThan(45);
+      await row.getByTestId('table-row-toggle').click();
+      await expect(page.getByTestId('table-row-detail').getByTestId('verse-text')).toContainText('Ang salita ay AAA');
+      await page.getByTestId('table-row-detail').getByTestId('verse-verify').click();
+      await page.getByTestId('confirm-accept').click();
+      await expect(row.getByTestId('table-status')).toHaveText('Verified');
+      await row.getByTestId('table-row-toggle').click();
+      await expect(page.getByTestId('table-row-detail')).toHaveCount(0);
+
+      // Paged by lines, and the choice of view is still there after a reload.
+      await page.getByTestId('bibles-clear').click();
+      await page.getByTestId('bibles-page-next').click();
+      await expect(page.getByTestId('bibles-range')).toHaveText('26–50 of 124 verses');
+      await page.reload();
+      await expect(page.getByTestId('bibles-table')).toBeVisible();
+      await page.getByTestId('bibles-layout-cards').click();
+      await expect(page.getByTestId('bibles-table')).toHaveCount(0);
+      await expect(page.getByTestId('verse-group')).toHaveCount(25);
+    });
+  });
+
+  test('the parallel view lines up two translations of the same verse', async ({ page }) => {
+    await withEmptyVault(page, async () => {
+      await page.request.post('/api/verses/import', {
+        multipart: {
+          commit: '1',
+          file: {
+            name: 'parallel.xlsx',
+            mimeType: 'application/octet-stream',
+            buffer: xlsx([HEADER, ['MSG', 'John', '1', '1', tl('una')], ['ETRB', 'John', '1', '1', en], ['CEV', 'John', '1', '1', tl('pangalawa')], ['MSG', 'John', '1', '2', tl('dalawa')]]),
+          },
+        },
+      });
+      await page.goto('/bibles');
+      await page.getByTestId('bibles-layout-parallel').click();
+      await expect(page.getByTestId('bibles-translation'), 'the sides choose these instead').toHaveCount(0);
+      await expect(page.getByTestId('bibles-language')).toHaveCount(0);
+      await expect(page.getByTestId('bibles-range')).toHaveText('1–2 of 2 references');
+
+      const first = page.getByTestId('parallel-row').first();
+      await expect(first.getByTestId('parallel-title')).toContainText('John 1:1');
+      await expect(first.getByTestId('parallel-side-left')).toContainText('ETRB');
+      await expect(first.getByTestId('parallel-side-left')).toContainText(en);
+      await expect(first.getByTestId('parallel-side-right').getByTestId('parallel-verse'), 'every wording on that side').toHaveCount(2);
+
+      // They really sit side by side at this width.
+      const [a, b] = [await first.getByTestId('parallel-side-left').boundingBox(), await first.getByTestId('parallel-side-right').boundingBox()];
+      expect(b!.x).toBeGreaterThan(a!.x + a!.width - 2);
+      expect(Math.abs(a!.y - b!.y)).toBeLessThan(2);
+
+      // A side with nothing says so, and can be left out.
+      await expect(page.getByTestId('parallel-row').nth(1).getByTestId('parallel-empty')).toHaveText('No English for this verse.');
+      await page.getByTestId('parallel-both').check();
+      await expect(page.getByTestId('parallel-row')).toHaveCount(1);
+      await page.getByTestId('parallel-both').uncheck();
+
+      // Each side can be one translation.
+      await page.getByTestId('parallel-left').selectOption('MSG');
+      await page.getByTestId('parallel-right').selectOption('CEV');
+      await expect(first.getByTestId('parallel-side-left').getByTestId('parallel-text')).toHaveText(tl('una'));
+      await expect(first.getByTestId('parallel-side-right').getByTestId('parallel-text')).toHaveText(tl('pangalawa'));
+      await first.getByTestId('parallel-side-left').getByTestId('parallel-copy').click();
+      await expect(page.getByTestId('toast').first()).toBeVisible();
+
+      // No match says why, and search still applies to both sides.
+      await page.getByTestId('parallel-both').check();
+      await page.getByTestId('bibles-search').fill('dalawa');
+      await expect(page.getByTestId('bibles-empty')).toContainText('No verses match these two sides');
+      await page.getByTestId('bibles-clear').click();
+
+      await page.setViewportSize({ width: 390, height: 800 });
+      await page.getByTestId('parallel-both').uncheck();
+      const narrow = [await first.getByTestId('parallel-side-left').boundingBox(), await first.getByTestId('parallel-side-right').boundingBox()];
+      expect(narrow[1]!.y, 'on a phone the sides stack').toBeGreaterThan(narrow[0]!.y);
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await page.getByTestId('bibles-layout-cards').click();
     });
   });
 

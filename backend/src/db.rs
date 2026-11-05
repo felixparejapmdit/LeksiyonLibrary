@@ -163,16 +163,20 @@ CREATE TABLE IF NOT EXISTS verse_embeddings (
   vector BLOB NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS teachings (
+-- Rows an import left out, kept whole so the user can fix them here. Removed once fixed.
+CREATE TABLE IF NOT EXISTS import_rows_to_fix (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  lesson_id TEXT NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
-  taught_on TEXT NOT NULL,
-  place TEXT NOT NULL DEFAULT '',
-  notes TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL,
+  row_number INTEGER NOT NULL,
+  translation TEXT NOT NULL DEFAULT '',
+  book TEXT NOT NULL DEFAULT '',
+  chapter TEXT NOT NULL DEFAULT '',
+  verse TEXT NOT NULL DEFAULT '',
+  content TEXT NOT NULL DEFAULT '',
+  message TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS teachings_lesson ON teachings(lesson_id);
 
 CREATE TABLE IF NOT EXISTS app_settings (
   key TEXT PRIMARY KEY,
@@ -238,6 +242,9 @@ pub fn init(conn: &Connection) -> rusqlite::Result<()> {
     // Verse-level context from the AI gave way to chapter and book context. Anything the
     // user reviewed or wrote is theirs, and stays.
     conn.execute("UPDATE verse_context SET context = '' WHERE reviewed_at IS NULL AND context <> ''", [])?;
+    // Teaching history was removed from the app.
+    conn.execute_batch("DROP TABLE IF EXISTS teachings;")?;
+    crate::verse_import::repair_leading_numbers(conn)?;
     Ok(())
 }
 

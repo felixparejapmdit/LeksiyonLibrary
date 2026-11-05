@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { api, ApiError, type Category, type Folder, type Language, type Lecture, type Lesson, type ScriptureContext, type TagalogContext, type Teaching, type Verse, type VerseContext } from './api';
+import { api, ApiError, type Category, type Folder, type Language, type Lecture, type Lesson, type RowToFix, type ScriptureContext, type TagalogContext, type Verse, type VerseContext } from './api';
 
 export type SortMode = 'newest' | 'oldest' | 'title';
 
@@ -45,9 +45,8 @@ export interface State {
   tagalog: Record<string, TagalogContext>;
   contextLanguage: Language;
   hasSavedSheet: boolean;
-  teachings: Teaching[];
+  rowsToFix: RowToFix[];
   lastBackupAt: string | null;
-  teachingDialog: { lessonId: string } | null;
   editingContextKey: string | null;
   folders: Folder[];
   lectures: Lecture[];
@@ -88,9 +87,8 @@ let state: State = {
   tagalog: {},
   contextLanguage: stored('lv.contextLanguage', 'en') === 'tl' ? 'tl' : 'en',
   hasSavedSheet: false,
-  teachings: [],
+  rowsToFix: [],
   lastBackupAt: null,
-  teachingDialog: null,
   editingContextKey: null,
   folders: [],
   lectures: [],
@@ -167,7 +165,7 @@ export function errorText(e: unknown) {
 }
 
 export async function refreshAll() {
-  const [lessons, verses, contexts, scripture, tagalog, folders, lectures, teachings, status] = await Promise.all([
+  const [lessons, verses, contexts, scripture, tagalog, folders, lectures, rowsToFix, status] = await Promise.all([
     api.lessons(),
     api.verses(),
     api.verseContexts(),
@@ -175,7 +173,7 @@ export async function refreshAll() {
     api.contextTagalog(),
     api.folders(),
     api.lectures(),
-    api.teachings(),
+    api.rowsToFix(),
     api.status(),
   ]);
   const selectedStillExists = lessons.some((l) => l.id === state.selectedId);
@@ -185,7 +183,7 @@ export async function refreshAll() {
     contexts,
     scripture,
     tagalog,
-    teachings,
+    rowsToFix,
     lastBackupAt: status.last_backup_at,
     hasSavedSheet: status.has_saved_sheet,
     folders,

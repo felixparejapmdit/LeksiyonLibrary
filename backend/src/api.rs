@@ -617,33 +617,66 @@ fn with_counts(fixes: &[verse_import::Fix]) -> Vec<Value> {
     fixes.iter().map(|f| json!({ "from": f.from, "to": f.to, "count": f.count })).collect()
 }
 
-/// Saves the plan's verses, or with `commit` false only reports what would happen. Verses go
-/// into the vault's database, so they are sealed with everything else.
+fn import_verse(c: &Connection, user_id: &str, v: &verse_import::ImportVerse, source: &str, ts: &str) -> rusqlite::Result<()> {
+    c.execute(
+        "INSERT INTO verses (id,user_id,canonical_key,book_id,ref_printed,ref_en,ref_tl,version,language,text,text_sha256,ocr_raw,status,ref_note,created_at,import_source)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,'unverified',?13,?14,?15)",
+        params![new_id(), user_id, v.canonical_key, v.book_id, v.ref_printed, v.ref_en, v.ref_tl, v.version, v.language, v.text, sha_hex(v.text.as_bytes()), v.raw, v.note, ts, format!("{source}, row {}", v.row)],
+    )?;
+    Ok(())
+}
+
+fn verse_in_vault(c: &Connection, user_id: &str, v: &verse_import::ImportVerse) -> rusqlite::Result<bool> {
+    c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM verses WHERE user_id=?1 AND canonical_key=?2 AND version=?3 AND language=?4 AND ocr_raw=?5)",
+        params![user_id, v.canonical_key, v.version, v.language, v.raw],
+        |r| r.get(0),
+    )
+}
+
+/// Whether a left-out row has since become a verse, because it was fixed here or in the sheet.
+const ROW_ALREADY_FIXED: &str = "EXISTS(SELECT 1 FROM verses v WHERE v.user_id=?1 AND v.version=?2 AND v.ocr_raw=?3)";
+
+/// Saves the plan's verses, and keeps the rows left out so they can be fixed in the app. With
+/// `commit` false it only reports what would happen. All of it goes into the vault's
+/// database, so it is sealed with everything else.
 async fn apply_import(s: &S, user_id: String, plan: verse_import::Plan, source: String, commit: bool) -> ApiResult<Value> {
     let report = with_db(s, move |c| {
         let tx = c.transaction()?;
         let (mut added, mut existing) = (0_i64, 0_i64);
         let ts = now();
         for v in &plan.verses {
-            let present: bool = tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM verses WHERE user_id=?1 AND canonical_key=?2 AND version=?3 AND language=?4 AND ocr_raw=?5)",
-                params![user_id, v.canonical_key, v.version, v.language, v.raw],
-                |r| r.get(0),
-            )?;
-            if present {
+            if verse_in_vault(&tx, &user_id, v)? {
                 existing += 1;
                 continue;
             }
             added += 1;
             if commit {
-                tx.execute(
-                    "INSERT INTO verses (id,user_id,canonical_key,book_id,ref_printed,ref_en,ref_tl,version,language,text,text_sha256,ocr_raw,status,ref_note,created_at,import_source)
-                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,'unverified',?13,?14,?15)",
-                    params![new_id(), user_id, v.canonical_key, v.book_id, v.ref_printed, v.ref_en, v.ref_tl, v.version, v.language, v.text, sha_hex(v.text.as_bytes()), v.raw, v.note, ts, format!("{source}, row {}", v.row)],
-                )?;
+                import_verse(&tx, &user_id, v, &source, &ts)?;
+            }
+        }
+        let mut problems = Vec::new();
+        for issue in &plan.problems {
+            let Some(row) = &issue.sheet_row else { continue };
+            let fixed: bool = tx.query_row(&format!("SELECT {ROW_ALREADY_FIXED}"), params![user_id, row.translation, row.content], |r| r.get(0))?;
+            if !fixed {
+                problems.push(issue);
             }
         }
         if commit {
+            // The sheet is the latest word on its own rows, so a row fixed there stops being listed.
+            tx.execute("DELETE FROM import_rows_to_fix WHERE user_id=?1 AND source=?2", params![user_id, source])?;
+            for issue in &problems {
+                let Some(row) = &issue.sheet_row else { continue };
+                tx.execute(
+                    "INSERT INTO import_rows_to_fix (id,user_id,source,row_number,translation,book,chapter,verse,content,message,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+                    params![new_id(), user_id, source, row.row as i64, row.translation, row.book, row.chapter, row.verse, row.content, issue.message, ts],
+                )?;
+            }
+            tx.execute(
+                "DELETE FROM import_rows_to_fix WHERE user_id=?1 AND EXISTS(SELECT 1 FROM verses v WHERE v.user_id=?1 AND v.version=import_rows_to_fix.translation AND v.ocr_raw=import_rows_to_fix.content)",
+                [&user_id],
+            )?;
             tx.commit()?;
         }
         let issues = |list: &[verse_import::Issue]| list.iter().map(|i| json!({ "row": i.row, "message": i.message })).collect::<Vec<_>>();
@@ -660,7 +693,8 @@ async fn apply_import(s: &S, user_id: String, plan: verse_import::Plan, source: 
             "translations": plan.translations(),
             "book_fixes": with_counts(&plan.book_fixes),
             "translation_fixes": with_counts(&plan.translation_fixes),
-            "problems": issues(&plan.problems),
+            "number_fixes": issues(&plan.number_fixes),
+            "problems": problems.iter().map(|i| json!({ "row": i.row, "message": i.message })).collect::<Vec<_>>(),
             "flagged": issues(&plan.flagged),
         }))
     })
@@ -669,6 +703,73 @@ async fn apply_import(s: &S, user_id: String, plan: verse_import::Plan, source: 
         semantic::kick(s.clone());
     }
     Ok(report)
+}
+
+fn rows_to_fix(c: &Connection, user_id: &str) -> rusqlite::Result<Vec<Value>> {
+    let mut st = c.prepare("SELECT id,source,row_number,translation,book,chapter,verse,content,message FROM import_rows_to_fix WHERE user_id=?1 ORDER BY source,row_number")?;
+    let rows = st.query_map([user_id], |r| {
+        let book: String = r.get(4)?;
+        Ok(json!({
+            "id": r.get::<_, String>(0)?, "source": r.get::<_, String>(1)?, "row": r.get::<_, i64>(2)?,
+            "translation": r.get::<_, String>(3)?, "chapter": r.get::<_, String>(5)?, "verse": r.get::<_, String>(6)?,
+            "content": r.get::<_, String>(7)?, "message": r.get::<_, String>(8)?,
+            "choices": verse_import::book_choices(&book), "book": book,
+        }))
+    })?;
+    rows.collect()
+}
+
+async fn list_rows_to_fix(State(s): State<S>, u: User) -> ApiResult<Json<Value>> {
+    let rows = with_db(&s, move |c| Ok(rows_to_fix(c, &u.id)?)).await?;
+    Ok(Json(json!(rows)))
+}
+
+#[derive(Deserialize)]
+struct FixRowBody {
+    translation: String,
+    book: String,
+    chapter: String,
+    verse: String,
+    content: String,
+}
+
+/// Takes the user's correction through the same checks as the sheet itself. A row that still
+/// has a problem stays on the list, and nothing is saved.
+async fn fix_row(State(s): State<S>, u: User, Path(id): Path<String>, Json(b): Json<FixRowBody>) -> ApiResult<Json<Value>> {
+    let rows = with_db(&s, move |c| {
+        let found: Option<(String, i64)> = c
+            .query_row("SELECT source,row_number FROM import_rows_to_fix WHERE id=?1 AND user_id=?2", params![id, u.id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .optional()?;
+        let Some((source, row)) = found else { return Err(ApiError::not_found()) };
+        let sheet_row = verse_import::SheetRow { row: row as usize, translation: b.translation, book: b.book, chapter: b.chapter, verse: b.verse, content: b.content };
+        let plan = verse_import::plan(&[sheet_row]);
+        if let Some(problem) = plan.problems.first() {
+            return Err(ApiError::bad(problem.message.clone()));
+        }
+        let tx = c.transaction()?;
+        for v in &plan.verses {
+            if !verse_in_vault(&tx, &u.id, v)? {
+                import_verse(&tx, &u.id, v, &source, &now())?;
+            }
+        }
+        tx.execute("DELETE FROM import_rows_to_fix WHERE id=?1", [&id])?;
+        tx.commit()?;
+        Ok(rows_to_fix(c, &u.id)?)
+    })
+    .await?;
+    semantic::kick(s.clone());
+    Ok(Json(json!(rows)))
+}
+
+async fn dismiss_row(State(s): State<S>, u: User, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    let rows = with_db(&s, move |c| {
+        if c.execute("DELETE FROM import_rows_to_fix WHERE id=?1 AND user_id=?2", params![id, u.id])? == 0 {
+            return Err(ApiError::not_found());
+        }
+        Ok(rows_to_fix(c, &u.id)?)
+    })
+    .await?;
+    Ok(Json(json!(rows)))
 }
 
 /// Reads an Excel file. It is only ever held in memory, and is not kept.
@@ -774,6 +875,7 @@ async fn remove_imported(State(s): State<S>, u: User) -> ApiResult<Json<Value>> 
              AND id NOT IN (SELECT verse_id FROM lesson_verses WHERE user_id=?1)",
             [&u.id],
         )?;
+        c.execute("DELETE FROM import_rows_to_fix WHERE user_id=?1", [&u.id])?;
         let kept: i64 = c.query_row("SELECT count(*) FROM verses WHERE user_id=?1 AND import_source<>''", [&u.id], |r| r.get(0))?;
         Ok(json!({ "removed": removed, "kept": kept }))
     })
@@ -1205,59 +1307,6 @@ async fn search_meaning(State(s): State<S>, u: User, Query(q): Query<MeaningQuer
     Ok(Json(json!({ "available": true, "keys": keys.into_iter().map(|k| k.0).collect::<Vec<_>>() })))
 }
 
-// ---------- Teaching history ----------
-
-fn teachings_for(c: &Connection, user_id: &str) -> rusqlite::Result<Vec<Value>> {
-    let mut st = c.prepare("SELECT id, lesson_id, taught_on, place, notes FROM teachings WHERE user_id=?1 ORDER BY taught_on DESC, created_at DESC")?;
-    let rows = st.query_map([user_id], |r| {
-        Ok(json!({ "id": r.get::<_, String>(0)?, "lesson_id": r.get::<_, String>(1)?, "taught_on": r.get::<_, String>(2)?, "place": r.get::<_, String>(3)?, "notes": r.get::<_, String>(4)? }))
-    })?;
-    rows.collect()
-}
-
-async fn list_teachings(State(s): State<S>, u: User) -> ApiResult<Json<Value>> {
-    let rows = with_db(&s, move |c| Ok(teachings_for(c, &u.id)?)).await?;
-    Ok(Json(json!(rows)))
-}
-
-#[derive(Deserialize)]
-struct TeachingBody {
-    lesson_id: String,
-    taught_on: String,
-    place: String,
-    notes: String,
-}
-
-async fn add_teaching(State(s): State<S>, u: User, Json(b): Json<TeachingBody>) -> ApiResult<Json<Value>> {
-    if chrono::NaiveDate::parse_from_str(b.taught_on.trim(), "%Y-%m-%d").is_err() {
-        return Err(ApiError::bad("Date must be YYYY-MM-DD."));
-    }
-    let rows = with_db(&s, move |c| {
-        let owned: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM lessons WHERE id=?1 AND user_id=?2)", params![b.lesson_id, u.id], |r| r.get(0))?;
-        if !owned {
-            return Err(ApiError::not_found());
-        }
-        c.execute(
-            "INSERT INTO teachings (id,user_id,lesson_id,taught_on,place,notes,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7)",
-            params![new_id(), u.id, b.lesson_id, b.taught_on.trim(), b.place.trim(), b.notes.trim(), now()],
-        )?;
-        Ok(teachings_for(c, &u.id)?)
-    })
-    .await?;
-    Ok(Json(json!(rows)))
-}
-
-async fn delete_teaching(State(s): State<S>, u: User, Path(id): Path<String>) -> ApiResult<Json<Value>> {
-    let rows = with_db(&s, move |c| {
-        if c.execute("DELETE FROM teachings WHERE id=?1 AND user_id=?2", params![id, u.id])? == 0 {
-            return Err(ApiError::not_found());
-        }
-        Ok(teachings_for(c, &u.id)?)
-    })
-    .await?;
-    Ok(Json(json!(rows)))
-}
-
 async fn status(State(s): State<S>, _u: User) -> ApiResult<Json<Value>> {
     let (last, sheet): (Option<String>, Option<String>) = with_db(&s, |c| {
         let setting = |key: &str| c.query_row("SELECT value FROM app_settings WHERE key=?1", [key], |r| r.get(0)).optional();
@@ -1577,14 +1626,14 @@ pub fn router(state: S) -> Router {
         .route("/search", get(search))
         .route("/search/meaning", get(search_meaning))
         .route("/status", get(status))
-        .route("/teachings", get(list_teachings).post(add_teaching))
-        .route("/teachings/{id}", axum::routing::delete(delete_teaching))
         .route("/lectures/export", post(export_lecture))
         .route("/folders", get(list_folders).post(create_folder))
         .route("/folders/{id}", axum::routing::delete(delete_folder))
         .route("/verses", get(list_verses))
         .route("/verses/import", post(import_verses).delete(remove_imported).layer(DefaultBodyLimit::max(MAX_WORKBOOK + 1024 * 1024)))
         .route("/verses/import/google", post(import_google_sheet))
+        .route("/verses/import/rows", get(list_rows_to_fix))
+        .route("/verses/import/rows/{id}", post(fix_row).delete(dismiss_row))
         .route("/verses/{id}", axum::routing::patch(correct_verse))
         .route("/verses/{id}/verify", post(verify_verse))
         .route("/verse-context", get(list_verse_context).post(save_verse_context))

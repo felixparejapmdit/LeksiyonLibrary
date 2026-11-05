@@ -489,60 +489,27 @@ test.describe('search by meaning', () => {
 });
 
 test.describe('teaching history', () => {
-  test('records where and when a lesson was given, warns about repeats, and is in backups', async ({ page }) => {
+  test('is gone from the app, and an older backup that holds it still restores', async ({ page }) => {
     await withEmptyVault(page, async () => {
-      const lesson = await addLesson(page, 'history.pdf', 'History Lesson', VERSES.slice(0, 1));
+      await addLesson(page, 'history.pdf', 'History Lesson', VERSES.slice(0, 1));
       await page.goto('/');
-      await page.getByTestId('side-history').click();
-      await expect(page.getByTestId('history-empty')).toBeVisible();
-      await page.getByTestId('history-add').click();
-      await expect(page.getByTestId('teaching-save')).toBeDisabled();
-      await page.getByTestId('teaching-cancel').click();
-      await page.getByTestId('history-add').click();
-      await page.getByTestId('teaching-dialog-close').click();
-      await page.getByTestId('history-add').click();
-      await page.getByTestId('teaching-lesson').selectOption(lesson.id);
-      await expect(page.getByTestId('teaching-prior')).toHaveCount(0);
-      await page.getByTestId('teaching-date').fill('2026-03-01');
-      await page.getByTestId('teaching-place').fill('Sampleville Chapel');
-      await page.getByTestId('teaching-notes').fill('Went well.');
-      await page.getByTestId('teaching-save').click();
-      await expect(page.getByTestId('history-lesson')).toHaveText(lesson.title);
-      await expect(page.getByTestId('history-when')).toContainText('Sampleville Chapel');
-      await expect(page.getByTestId('history-notes')).toHaveText('Went well.');
+      await expect(page.getByTestId('app-shell')).toBeVisible();
+      await expect(page.getByTestId('side-history')).toHaveCount(0);
+      await expect(page.getByText('Teaching History')).toHaveCount(0);
+      await page.getByTestId('lesson-summary-toggle').first().click();
+      await expect(page.getByTestId('lesson-log-teaching')).toHaveCount(0);
+      expect((await page.request.get('/api/teachings')).status()).toBe(404);
 
-      // From the lesson itself: it shows the history, and warns before repeating.
-      await page.getByTestId('side-all').click();
-      await expect(page.getByTestId('lesson-taught')).toContainText('Taught once, last 2026-03-01');
-      await page.getByTestId('lesson-summary-toggle').click();
-      await expect(page.getByTestId('lesson-summary-taught')).toContainText('2026-03-01');
-      await page.getByTestId('lesson-log-teaching').click();
-      await expect(page.getByTestId('teaching-lesson')).toHaveValue(lesson.id);
-      await expect(page.getByTestId('teaching-prior')).toContainText('Sampleville Chapel');
-      await page.getByTestId('teaching-date').fill('2026-04-01');
-      await page.getByTestId('teaching-save').click();
-      await expect(page.getByTestId('lesson-taught')).toContainText('Taught 2 times, last 2026-04-01');
-
-      // It travels with a backup.
-      const backup = await (await page.request.post('/api/backup', { data: { passphrase: TEST_PASSPHRASE } })).body();
-      await page.request.post('/api/reset', { data: { confirm: 'RESET' } });
-      expect(await (await page.request.get('/api/teachings')).json()).toEqual([]);
+      const old = new AdmZip();
+      old.addFile('manifest.json', Buffer.from(JSON.stringify({
+        format: 'lesson-vault-backup',
+        version: 1,
+        tables: { teachings: [{ id: 't', lesson_id: 'l', taught_on: '2026-03-01', place: 'Sampleville', notes: '', created_at: 'now' }] },
+      })));
       const restored = await page.request.post('/api/restore', {
-        multipart: { passphrase: TEST_PASSPHRASE, file: { name: 'b.lvbackup', mimeType: 'application/octet-stream', buffer: backup } },
+        multipart: { passphrase: TEST_PASSPHRASE, file: { name: 'old.lvbackup', mimeType: 'application/octet-stream', buffer: old.toBuffer() } },
       });
-      expect(restored.ok()).toBeTruthy();
-      expect(await (await page.request.get('/api/teachings')).json()).toHaveLength(2);
-
-      await page.goto('/history');
-      await page.getByTestId('history-delete').first().click();
-      await page.getByTestId('confirm-accept').click();
-      await expect(page.getByTestId('history-item')).toHaveCount(1);
-
-      // Deleting a lesson removes its records.
-      await page.request.delete(`/api/lessons/${lesson.id}`);
-      expect(await (await page.request.get('/api/teachings')).json()).toEqual([]);
-      expect((await page.request.post('/api/teachings', { data: { lesson_id: 'nope', taught_on: '2026-01-01', place: '', notes: '' } })).status()).toBe(404);
-      expect((await page.request.post('/api/teachings', { data: { lesson_id: 'nope', taught_on: 'soon', place: '', notes: '' } })).status()).toBe(400);
+      expect(restored.ok(), await restored.text()).toBeTruthy();
     });
   });
 });

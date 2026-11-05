@@ -324,3 +324,13 @@ Added at the project owner's choice: a verse review queue, editable AI context, 
 **Library.** The Bibles Library pages by reference, with book and translation filters. Keeping every verse in memory was kept, since all of it loads in about 70 ms, and search text, sort order and page position are cached in memory only, so nothing readable reaches the disk or the browser's cache.
 
 **Test results:** Rust 79 of 79, Playwright 143 of 143 in one full run, with the new test file run again after one last small fix. Tests use made-up verses and a stand-in for both the model and Google.
+
+### 16. Changes after the first real import (5 November 2026)
+
+**Teaching history was removed at the project owner's request.** The page, the lesson buttons, the API and the table are gone. A backup that still holds records restores without them.
+
+**The sidebar counts now agree.** Bibles Library counted references and Review Verses counted verses, so 680 sat beside 901. Both now count verses, and differ only by how many are verified.
+
+**The Verse column now wins over a number stuck to the text.** This reverses the earlier rule of keeping the number and flagging the row, at the owner's instruction. A number with a space after it still gets flagged, because it may be part of the sentence ("3 days later"). Verses imported before this change are corrected once when the vault opens, unless the user has already changed the text. The original cell is kept unchanged.
+
+**Rows left out are kept for fixing in the app.** They were only listed in the preview, so they were lost once it closed. They now stay in the encrypted vault and travel in backups, and a correction goes through the same checks as the sheet.
