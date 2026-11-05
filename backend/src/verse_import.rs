@@ -277,6 +277,13 @@ fn split_verse_number(text: &str, verse: &str, part: &str) -> (String, LeadingNu
     (rest.trim_start().to_string(), outcome)
 }
 
+/// A left-out row's text as it would be stored, and its verse number.
+pub fn row_text(verse: &str, content: &str) -> Option<(String, String)> {
+    let parts = VERSE.captures(verse.trim())?;
+    let (text, _) = split_verse_number(&strip_invisible(content), &parts[1], parts.get(2).map_or("", |m| m.as_str()));
+    Some((text, parts[1].to_string()))
+}
+
 /// The books a name without its number could be, for the user to choose from.
 pub fn book_choices(name: &str) -> Vec<String> {
     let name = name.trim();
@@ -515,6 +522,14 @@ mod tests {
         let p = plan(&[row(2, "AMP2015", "John", "1", "1", TAGALOG), row(3, "AMP2016", "Peter", "2", "9", TAGALOG)]);
         let kept = p.problems[0].sheet_row.as_ref().unwrap();
         assert_eq!((kept.row, kept.translation.as_str(), kept.book.as_str(), kept.chapter.as_str(), kept.verse.as_str(), kept.content.as_str()), (3, "AMP2015", "Peter", "2", "9", TAGALOG));
+    }
+
+    #[test]
+    fn a_left_out_rows_text_is_read_the_same_way_as_any_row() {
+        for printed in ["21 Ang salita", "21Ang salita"] {
+            assert_eq!(row_text(" 21 ", printed), Some(("Ang salita".to_string(), "21".to_string())), "{printed}");
+        }
+        assert_eq!(row_text("two", "Ang salita"), None);
     }
 
     #[test]

@@ -54,6 +54,14 @@ async function chooseFile(page: Page, name: string, buffer: Buffer) {
 
 const verses = async (page: Page): Promise<any[]> => (await page.request.get('/api/verses')).json();
 const dataDir = join(dirname(fileURLToPath(import.meta.url)), '..', '.tmp-data');
+// The app replaces its temporary file as it saves, so one can vanish between listing and reading.
+const contentsOf = (file: string) => {
+  try {
+    return readFileSync(file);
+  } catch {
+    return Buffer.alloc(0);
+  }
+};
 const everyFile = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? everyFile(join(dir, e.name)) : [join(dir, e.name)]));
 
 test.describe('importing verses', () => {
@@ -165,7 +173,7 @@ test.describe('importing verses', () => {
       await expect(row.getByTestId('fix-row-save'), 'the book has to be chosen').toBeDisabled();
 
       // Sealed on disk, like the verses, and in a backup.
-      for (const file of everyFile(dataDir)) expect(readFileSync(file).includes('walang bilang'), file).toBe(false);
+      for (const file of everyFile(dataDir)) expect(contentsOf(file).includes('walang bilang'), file).toBe(false);
       const backup = await (await page.request.post('/api/backup', { data: { passphrase: TEST_PASSPHRASE } })).body();
       await page.request.post('/api/reset', { data: { confirm: 'RESET' } });
       expect(await (await page.request.get('/api/verses/import/rows')).json()).toEqual([]);
@@ -229,6 +237,29 @@ test.describe('importing verses', () => {
     });
   });
 
+  test('a left-out row the sheet also has under its full reference needs no fixing, and is never saved twice', async ({ page }) => {
+    await withEmptyVault(page, async () => {
+      const send = async (rows: string[][]) => (await page.request.post('/api/verses/import', { multipart: { commit: '1', file: { name: 'made-up.xlsx', mimeType: 'application/octet-stream', buffer: xlsx(rows) } } })).json();
+      const words = tl('parehong salita');
+      const report = await send([HEADER, ['TLB', 'I Peter', '2', '21', `21${words}`], ['TLB', 'Peter', '2', '21', `21 ${words}`], ['TLB', 'Peter', '2', '23', `23${words}`]]);
+      expect(report.problems.map((p: { row: number }) => p.row), 'only the one that really needs a book').toEqual([4]);
+
+      // Saving it as a verse already there does not make a second copy.
+      const [row] = await (await page.request.get('/api/verses/import/rows')).json();
+      await send([HEADER, ['TLB', 'I Peter', '2', '23', `23 ${words}`], ['TLB', 'Peter', '2', '23', `23${words}`]]);
+      expect(await (await page.request.get('/api/verses/import/rows')).json(), 'settled by the sheet').toEqual([]);
+      expect((await verses(page)).filter((v) => v.ref_en === 'I Peter 2:23')).toHaveLength(1);
+      expect(row.choices).toEqual(['I Peter', 'II Peter']);
+
+      await send([HEADER, ['TLB', 'II Timothy', '3', '14', `14 ${words}`], ['TLB', 'Kings', '1', '1', `1${words}`]]);
+      const [kings] = await (await page.request.get('/api/verses/import/rows')).json();
+      const before = (await verses(page)).length;
+      await page.request.post(`/api/verses/import/rows/${kings.id}`, { data: { translation: 'TLB', book: 'II Timothy', chapter: '3', verse: '14', content: `1${words}` } });
+      expect((await verses(page)).length, 'the same words on the same verse are not added again').toBe(before);
+      expect(await (await page.request.get('/api/verses/import/rows')).json()).toEqual([]);
+    });
+  });
+
   test('a file that is not right is refused with a clear reason', async ({ page }) => {
     await withEmptyVault(page, async () => {
       await page.goto('/settings');
@@ -245,7 +276,7 @@ test.describe('importing verses', () => {
       const res = await page.request.post('/api/verses/import', { multipart: { commit: '1', file: { name: 'made-up.xlsx', mimeType: 'application/octet-stream', buffer: xlsx(ROWS) } } });
       expect((await res.json()).new_verses).toBe(6);
       for (const file of everyFile(dataDir)) {
-        expect(readFileSync(file).includes(MARKER), `${file} must not hold readable verse text`).toBe(false);
+        expect(contentsOf(file).includes(MARKER), `${file} must not hold readable verse text`).toBe(false);
         expect(file.toLowerCase()).not.toMatch(/\.xlsx$/);
       }
       const backup = await (await page.request.post('/api/backup', { data: { passphrase: TEST_PASSPHRASE } })).body();

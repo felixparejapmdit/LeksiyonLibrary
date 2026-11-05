@@ -628,14 +628,25 @@ fn import_verse(c: &Connection, user_id: &str, v: &verse_import::ImportVerse, so
 
 fn verse_in_vault(c: &Connection, user_id: &str, v: &verse_import::ImportVerse) -> rusqlite::Result<bool> {
     c.query_row(
-        "SELECT EXISTS(SELECT 1 FROM verses WHERE user_id=?1 AND canonical_key=?2 AND version=?3 AND language=?4 AND ocr_raw=?5)",
-        params![user_id, v.canonical_key, v.version, v.language, v.raw],
+        "SELECT EXISTS(SELECT 1 FROM verses WHERE user_id=?1 AND canonical_key=?2 AND version=?3 AND language=?4 AND (ocr_raw=?5 OR text=?6))",
+        params![user_id, v.canonical_key, v.version, v.language, v.raw, v.text],
         |r| r.get(0),
     )
 }
 
-/// Whether a left-out row has since become a verse, because it was fixed here or in the sheet.
-const ROW_ALREADY_FIXED: &str = "EXISTS(SELECT 1 FROM verses v WHERE v.user_id=?1 AND v.version=?2 AND v.ocr_raw=?3)";
+/// Whether a left-out row needs no fixing, because it was fixed here or in the sheet, or the
+/// sheet also has it under a complete reference: the same translation, chapter, verse and words.
+fn row_in_vault(c: &Connection, user_id: &str, translation: &str, chapter: &str, verse: &str, content: &str) -> rusqlite::Result<bool> {
+    let (text, reference) = match verse_import::row_text(verse, content) {
+        Some((text, number)) => (text, format!("%.{}:{number}", chapter.trim())),
+        None => (String::new(), String::new()),
+    };
+    c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM verses WHERE user_id=?1 AND version=?2 AND (ocr_raw=?3 OR (text=?4 AND canonical_key LIKE ?5)))",
+        params![user_id, translation, content, text, reference],
+        |r| r.get(0),
+    )
+}
 
 /// Saves the plan's verses, and keeps the rows left out so they can be fixed in the app. With
 /// `commit` false it only reports what would happen. All of it goes into the vault's
@@ -658,8 +669,7 @@ async fn apply_import(s: &S, user_id: String, plan: verse_import::Plan, source: 
         let mut problems = Vec::new();
         for issue in &plan.problems {
             let Some(row) = &issue.sheet_row else { continue };
-            let fixed: bool = tx.query_row(&format!("SELECT {ROW_ALREADY_FIXED}"), params![user_id, row.translation, row.content], |r| r.get(0))?;
-            if !fixed {
+            if !row_in_vault(&tx, &user_id, &row.translation, &row.chapter, &row.verse, &row.content)? {
                 problems.push(issue);
             }
         }
@@ -673,10 +683,17 @@ async fn apply_import(s: &S, user_id: String, plan: verse_import::Plan, source: 
                     params![new_id(), user_id, source, row.row as i64, row.translation, row.book, row.chapter, row.verse, row.content, issue.message, ts],
                 )?;
             }
-            tx.execute(
-                "DELETE FROM import_rows_to_fix WHERE user_id=?1 AND EXISTS(SELECT 1 FROM verses v WHERE v.user_id=?1 AND v.version=import_rows_to_fix.translation AND v.ocr_raw=import_rows_to_fix.content)",
-                [&user_id],
-            )?;
+            // Rows kept from another source may be settled by this import too.
+            let waiting: Vec<(String, String, String, String, String)> = {
+                let mut st = tx.prepare("SELECT id,translation,chapter,verse,content FROM import_rows_to_fix WHERE user_id=?1")?;
+                let rows = st.query_map([&user_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?;
+                rows.collect::<rusqlite::Result<_>>()?
+            };
+            for (id, translation, chapter, verse, content) in waiting {
+                if row_in_vault(&tx, &user_id, &translation, &chapter, &verse, &content)? {
+                    tx.execute("DELETE FROM import_rows_to_fix WHERE id=?1", [&id])?;
+                }
+            }
             tx.commit()?;
         }
         let issues = |list: &[verse_import::Issue]| list.iter().map(|i| json!({ "row": i.row, "message": i.message })).collect::<Vec<_>>();
