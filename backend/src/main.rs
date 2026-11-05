@@ -4,9 +4,11 @@ mod backup;
 mod books;
 mod db;
 mod export;
+mod language;
 mod parser;
 mod semantic;
 mod vault;
+mod verse_import;
 
 use axum::http::{header, HeaderValue};
 use std::{
@@ -29,6 +31,7 @@ pub struct Config {
     pub ollama_url: String,
     pub ollama_model: String,
     pub embed_model: String,
+    pub sheets_url: String,
 }
 
 pub struct AppState {
@@ -82,6 +85,7 @@ async fn main() {
         // bge-m3 because it separates related from unrelated questions in Tagalog as well as
         // English. paraphrase-multilingual, tested first, could not do so for Tagalog.
         embed_model: env("LV_OLLAMA_EMBED_MODEL", "bge-m3"),
+        sheets_url: env("LV_SHEETS_URL", "https://docs.google.com"),
     };
 
     // There is no sign-in, so the app must never be reachable from other computers.

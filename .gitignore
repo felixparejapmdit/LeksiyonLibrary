@@ -23,6 +23,9 @@ backend/tests/
 
 # Lesson material and recordings that may be restricted or confidential.
 *.pdf
+*.xlsx
+*.xls
+*.csv
 *.mp4
 backend/tests/fixtures/
 

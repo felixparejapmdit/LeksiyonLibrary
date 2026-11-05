@@ -1,4 +1,4 @@
-use crate::{ai, backup, export, parser, semantic, AppState};
+use crate::{ai, backup, export, parser, semantic, verse_import, AppState};
 use axum::{
     body::Body,
     extract::{DefaultBodyLimit, FromRequestParts, Multipart, Path, Query, State},
@@ -515,7 +515,7 @@ fn verses_for(c: &Connection, user_id: &str) -> rusqlite::Result<Vec<Value>> {
         }
     }
     let mut st = c.prepare(
-        "SELECT id, canonical_key, book_id, ref_printed, ref_en, ref_tl, version, language, text, ocr_raw, status, verified_at, ref_note
+        "SELECT id, canonical_key, book_id, ref_printed, ref_en, ref_tl, version, language, text, ocr_raw, status, verified_at, ref_note, import_source
          FROM verses WHERE user_id=?1 ORDER BY book_id, canonical_key, language DESC, seq",
     )?;
     let rows = st.query_map([user_id], |r| {
@@ -524,7 +524,7 @@ fn verses_for(c: &Connection, user_id: &str) -> rusqlite::Result<Vec<Value>> {
             "ref_printed": r.get::<_, String>(3)?, "ref_en": r.get::<_, String>(4)?, "ref_tl": r.get::<_, String>(5)?,
             "version": r.get::<_, String>(6)?, "language": r.get::<_, String>(7)?, "text": r.get::<_, String>(8)?,
             "ocr_raw": r.get::<_, String>(9)?, "status": r.get::<_, String>(10)?, "verified_at": r.get::<_, Option<String>>(11)?,
-            "ref_note": r.get::<_, String>(12)?,
+            "ref_note": r.get::<_, String>(12)?, "import_source": r.get::<_, String>(13)?,
         }))
     })?;
     let mut out = Vec::new();
@@ -606,6 +606,179 @@ async fn verify_verse(State(s): State<S>, u: User, Path(id): Path<String>) -> Ap
     })
     .await?;
     Ok(Json(row))
+}
+
+// ---------- Importing verses ----------
+
+const MAX_WORKBOOK: usize = 32 * 1024 * 1024;
+const SHEET_SETTING: &str = "import_sheet_id";
+
+fn with_counts(fixes: &[verse_import::Fix]) -> Vec<Value> {
+    fixes.iter().map(|f| json!({ "from": f.from, "to": f.to, "count": f.count })).collect()
+}
+
+/// Saves the plan's verses, or with `commit` false only reports what would happen. Verses go
+/// into the vault's database, so they are sealed with everything else.
+async fn apply_import(s: &S, user_id: String, plan: verse_import::Plan, source: String, commit: bool) -> ApiResult<Value> {
+    let report = with_db(s, move |c| {
+        let tx = c.transaction()?;
+        let (mut added, mut existing) = (0_i64, 0_i64);
+        let ts = now();
+        for v in &plan.verses {
+            let present: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM verses WHERE user_id=?1 AND canonical_key=?2 AND version=?3 AND language=?4 AND ocr_raw=?5)",
+                params![user_id, v.canonical_key, v.version, v.language, v.raw],
+                |r| r.get(0),
+            )?;
+            if present {
+                existing += 1;
+                continue;
+            }
+            added += 1;
+            if commit {
+                tx.execute(
+                    "INSERT INTO verses (id,user_id,canonical_key,book_id,ref_printed,ref_en,ref_tl,version,language,text,text_sha256,ocr_raw,status,ref_note,created_at,import_source)
+                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,'unverified',?13,?14,?15)",
+                    params![new_id(), user_id, v.canonical_key, v.book_id, v.ref_printed, v.ref_en, v.ref_tl, v.version, v.language, v.text, sha_hex(v.text.as_bytes()), v.raw, v.note, ts, format!("{source}, row {}", v.row)],
+                )?;
+            }
+        }
+        if commit {
+            tx.commit()?;
+        }
+        let issues = |list: &[verse_import::Issue]| list.iter().map(|i| json!({ "row": i.row, "message": i.message })).collect::<Vec<_>>();
+        Ok(json!({
+            "file": source,
+            "committed": commit,
+            "rows": plan.rows,
+            "new_verses": added,
+            "already_in_vault": existing,
+            "duplicates_in_file": plan.duplicates,
+            "other_wordings": plan.other_wordings,
+            "tagalog": plan.verses.iter().filter(|v| v.language == "tl").count(),
+            "english": plan.verses.iter().filter(|v| v.language == "en").count(),
+            "translations": plan.translations(),
+            "book_fixes": with_counts(&plan.book_fixes),
+            "translation_fixes": with_counts(&plan.translation_fixes),
+            "problems": issues(&plan.problems),
+            "flagged": issues(&plan.flagged),
+        }))
+    })
+    .await?;
+    if commit {
+        semantic::kick(s.clone());
+    }
+    Ok(report)
+}
+
+/// Reads an Excel file. It is only ever held in memory, and is not kept.
+async fn import_verses(State(s): State<S>, u: User, mut mp: Multipart) -> ApiResult<Json<Value>> {
+    let (mut file, mut file_name, mut commit) = (None::<Vec<u8>>, String::new(), false);
+    while let Some(field) = mp.next_field().await.map_err(|_| ApiError::bad("The file could not be read."))? {
+        match field.name().unwrap_or_default() {
+            "file" => {
+                file_name = field.file_name().unwrap_or("verses.xlsx").to_string();
+                file = Some(field.bytes().await.map_err(|_| ApiError::bad("The file could not be read; it may be too large."))?.to_vec());
+            }
+            "commit" => commit = field.text().await.unwrap_or_default() == "1",
+            _ => {}
+        }
+    }
+    let file = file.ok_or_else(|| ApiError::bad("No file was provided."))?;
+    if file.len() > MAX_WORKBOOK {
+        return Err(ApiError(StatusCode::PAYLOAD_TOO_LARGE, "Excel files are limited to 32 MB.".into()));
+    }
+    let safe_name = std::path::Path::new(&file_name.replace('\\', "/"))
+        .file_name()
+        .map_or_else(|| "verses.xlsx".to_string(), |n| n.to_string_lossy().to_string());
+    let plan = tokio::task::spawn_blocking(move || verse_import::read_workbook(&file).map(|rows| verse_import::plan(&rows)))
+        .await
+        .map_err(|_| ApiError::bad("The file could not be read."))?
+        .map_err(|e| ApiError(StatusCode::UNSUPPORTED_MEDIA_TYPE, e))?;
+    Ok(Json(apply_import(&s, u.id, plan, safe_name, commit).await?))
+}
+
+#[derive(Deserialize)]
+struct SheetBody {
+    /// A link to the sheet, a spreadsheet ID, or the gid of a tab of the last one used.
+    sheet: String,
+    #[serde(default)]
+    commit: bool,
+}
+
+/// Downloads one tab from Google. This is the only thing the app ever sends outside this
+/// computer, and only when asked. The request carries nothing but the sheet's own ID, so
+/// no vault data leaves, and the address is built here, so it can only ever go to Google.
+async fn download_sheet(base_url: &str, id: &str, gid: &str) -> Result<Vec<u8>, ApiError> {
+    const NOT_SHARED: &str = "Google would not share this sheet without signing in. In Google Sheets, choose Share, then General access: Anyone with the link, Viewer. Or download it as .xlsx and use the file option, which keeps it private.";
+    let failed = |e: reqwest::Error| {
+        eprintln!("Google Sheets download failed: {e}");
+        ApiError(StatusCode::BAD_GATEWAY, "Could not reach Google. Check your internet connection and try again.".into())
+    };
+    // Its own client: the app's usual one ignores proxies and gives up quickly, because it
+    // only talks to this computer.
+    let client = reqwest::Client::builder().connect_timeout(std::time::Duration::from_secs(20)).timeout(std::time::Duration::from_secs(120)).build().map_err(failed)?;
+    let url = format!("{}/spreadsheets/d/{id}/export?format=csv&gid={gid}", base_url.trim_end_matches('/'));
+    let mut response = client.get(url).send().await.map_err(failed)?;
+    match response.status() {
+        status if status.is_success() => {}
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => return Err(ApiError::bad(NOT_SHARED)),
+        StatusCode::NOT_FOUND => return Err(ApiError::bad("Google could not find that spreadsheet. Check the link.")),
+        StatusCode::BAD_REQUEST => return Err(ApiError::bad("Google could not find that tab. Check the gid.")),
+        status => {
+            eprintln!("Google Sheets answered {status}");
+            return Err(ApiError(StatusCode::BAD_GATEWAY, "Google could not provide this sheet right now. Try again shortly.".into()));
+        }
+    }
+    // A private sheet answers with a sign-in page, not an error.
+    let is_csv = response.headers().get(header::CONTENT_TYPE).and_then(|t| t.to_str().ok()).is_some_and(|t| t.starts_with("text/csv"));
+    if !is_csv {
+        return Err(ApiError::bad(NOT_SHARED));
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(failed)? {
+        body.extend_from_slice(&chunk);
+        if body.len() > MAX_WORKBOOK {
+            return Err(ApiError(StatusCode::PAYLOAD_TOO_LARGE, "That sheet is larger than 32 MB.".into()));
+        }
+    }
+    Ok(body)
+}
+
+async fn import_google_sheet(State(s): State<S>, u: User, Json(b): Json<SheetBody>) -> ApiResult<Json<Value>> {
+    let remembered: Option<String> = with_db(&s, |c| {
+        Ok(c.query_row("SELECT value FROM app_settings WHERE key=?1", [SHEET_SETTING], |r| r.get(0)).optional()?)
+    })
+    .await?;
+    let (id, gid) = verse_import::sheet_address(&b.sheet, remembered.as_deref()).map_err(ApiError::bad)?;
+    let body = download_sheet(&s.config.sheets_url, &id, &gid).await?;
+    let plan = tokio::task::spawn_blocking(move || verse_import::read_csv(&body).map(|rows| verse_import::plan(&rows)))
+        .await
+        .map_err(|_| ApiError::bad("The sheet could not be read."))?
+        .map_err(ApiError::bad)?;
+    with_db(&s, move |c| {
+        c.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)", params![SHEET_SETTING, id])?;
+        Ok(())
+    })
+    .await?;
+    Ok(Json(apply_import(&s, u.id, plan, "Google Sheet".to_string(), b.commit).await?))
+}
+
+/// Undoes an import. Verses the user has verified, or that a lesson or saved lecture uses,
+/// are kept, so this can never take anything out of their work.
+async fn remove_imported(State(s): State<S>, u: User) -> ApiResult<Json<Value>> {
+    let report = with_db(&s, move |c| {
+        let removed = c.execute(
+            "DELETE FROM verses WHERE user_id=?1 AND import_source<>'' AND status='unverified'
+             AND id NOT IN (SELECT verse_id FROM lecture_verses WHERE user_id=?1)
+             AND id NOT IN (SELECT verse_id FROM lesson_verses WHERE user_id=?1)",
+            [&u.id],
+        )?;
+        let kept: i64 = c.query_row("SELECT count(*) FROM verses WHERE user_id=?1 AND import_source<>''", [&u.id], |r| r.get(0))?;
+        Ok(json!({ "removed": removed, "kept": kept }))
+    })
+    .await?;
+    Ok(Json(report))
 }
 
 // ---------- AI ----------
@@ -746,15 +919,157 @@ struct ScriptureContextBody {
 }
 
 fn valid_scope(scope: &str) -> bool {
-    let id = match (scope.strip_prefix("book:"), scope.strip_prefix("chapter:")) {
-        (Some(book), _) => book,
-        (_, Some(chapter)) => match chapter.split_once('.') {
+    let id = if let Some(book) = scope.strip_prefix("book:").or_else(|| scope.strip_prefix("history:")) {
+        book
+    } else if let Some(chapter) = scope.strip_prefix("chapter:") {
+        match chapter.split_once('.') {
             Some((book, number)) if !number.is_empty() && number.chars().all(|c| c.is_ascii_digit()) => book,
             _ => return false,
-        },
-        _ => return false,
+        }
+    } else {
+        return false;
     };
     id.parse().ok().and_then(crate::books::by_id).is_some()
+}
+
+fn tagalog_for(c: &Connection, user_id: &str) -> rusqlite::Result<serde_json::Map<String, Value>> {
+    let mut st = c.prepare("SELECT item, text, reviewed_at FROM context_tagalog WHERE user_id=?1")?;
+    let rows = st.query_map([user_id], |r| {
+        Ok((r.get::<_, String>(0)?, json!({ "text": r.get::<_, String>(1)?, "reviewed": r.get::<_, Option<String>>(2)?.is_some() })))
+    })?;
+    rows.collect()
+}
+
+/// The English this item's Tagalog translates. Empty when there is none yet.
+fn english_of(c: &Connection, user_id: &str, item: &str) -> rusqlite::Result<String> {
+    let found: Option<String> = if let Some(key) = item.strip_prefix("speaker:") {
+        c.query_row("SELECT speaker FROM verse_context WHERE user_id=?1 AND canonical_key=?2", params![user_id, key], |r| r.get(0)).optional()?
+    } else if let Some(key) = item.strip_prefix("note:") {
+        c.query_row("SELECT context FROM verse_context WHERE user_id=?1 AND canonical_key=?2", params![user_id, key], |r| r.get(0)).optional()?
+    } else {
+        c.query_row("SELECT context FROM scripture_context WHERE user_id=?1 AND scope=?2", params![user_id, item], |r| r.get(0)).optional()?
+    };
+    Ok(found.unwrap_or_default())
+}
+
+fn valid_tagalog_item(c: &Connection, user_id: &str, item: &str) -> rusqlite::Result<bool> {
+    match item.strip_prefix("speaker:").or_else(|| item.strip_prefix("note:")) {
+        Some(key) => c.query_row("SELECT EXISTS(SELECT 1 FROM verses WHERE user_id=?1 AND canonical_key=?2)", params![user_id, key], |r| r.get(0)),
+        None => Ok(valid_scope(item)),
+    }
+}
+
+/// When the English changes, a machine translation of the old wording is out of date. The
+/// user's own Tagalog is theirs to change.
+fn forget_stale_translation(c: &Connection, user_id: &str, item: &str, new_english: &str) -> rusqlite::Result<()> {
+    if english_of(c, user_id, item)? != new_english {
+        c.execute("DELETE FROM context_tagalog WHERE user_id=?1 AND item=?2 AND reviewed_at IS NULL", params![user_id, item])?;
+    }
+    Ok(())
+}
+
+async fn list_context_tagalog(State(s): State<S>, u: User) -> ApiResult<Json<Value>> {
+    let rows = with_db(&s, move |c| Ok(tagalog_for(c, &u.id)?)).await?;
+    Ok(Json(Value::Object(rows)))
+}
+
+#[derive(Deserialize)]
+struct TagalogBody {
+    item: String,
+    text: String,
+}
+
+/// The user's Tagalog wording, marked reviewed. Clearing it lets the AI translate again.
+async fn save_context_tagalog(State(s): State<S>, u: User, Json(b): Json<TagalogBody>) -> ApiResult<Json<Value>> {
+    let text = b.text.trim().to_string();
+    if text.chars().count() > 8000 {
+        return Err(ApiError::bad("That text is too long."));
+    }
+    let rows = with_db(&s, move |c| {
+        if !valid_tagalog_item(c, &u.id, &b.item)? {
+            return Err(ApiError::bad("Unknown context."));
+        }
+        if text.is_empty() {
+            c.execute("DELETE FROM context_tagalog WHERE user_id=?1 AND item=?2", params![u.id, b.item])?;
+        } else {
+            c.execute(
+                "INSERT INTO context_tagalog (user_id, item, text, updated_at, reviewed_at) VALUES (?1,?2,?3,?4,?4)
+                 ON CONFLICT (user_id, item) DO UPDATE SET text=excluded.text, model='', updated_at=excluded.updated_at, reviewed_at=excluded.reviewed_at",
+                params![u.id, b.item, text, now()],
+            )?;
+        }
+        Ok(tagalog_for(c, &u.id)?)
+    })
+    .await?;
+    Ok(Json(Value::Object(rows)))
+}
+
+#[derive(Deserialize)]
+struct TranslateBody {
+    item: String,
+}
+
+/// Translates one context, reading its English here so only what the vault holds is sent.
+/// Done one at a time and only when asked for, because each takes the local model a while.
+async fn translate_context(State(s): State<S>, u: User, Json(b): Json<TranslateBody>) -> ApiResult<Json<Value>> {
+    let (owner, item) = (u.id.clone(), b.item.clone());
+    let (english, known) = with_db(&s, move |c| {
+        if !valid_tagalog_item(c, &owner, &item)? {
+            return Err(ApiError::bad("Unknown context."));
+        }
+        let known: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM context_tagalog WHERE user_id=?1 AND item=?2)", params![owner, item], |r| r.get(0))?;
+        Ok((english_of(c, &owner, &item)?, known))
+    })
+    .await?;
+    let mut available = true;
+    if !known && !english.trim().is_empty() {
+        let translated = if english.trim().eq_ignore_ascii_case("not stated") {
+            Ok(Some("Hindi nakasaad".to_string()))
+        } else {
+            ai::request_tagalog(&s.http, &s.config.ollama_url, &s.config.ollama_model, &english).await
+        };
+        match translated {
+            Ok(Some(text)) => {
+                let (owner, item, model) = (u.id.clone(), b.item, s.config.ollama_model.clone());
+                with_db(&s, move |c| {
+                    // A review made in the meantime wins over what the AI just wrote.
+                    c.execute(
+                        "INSERT INTO context_tagalog (user_id, item, text, model, updated_at) VALUES (?1,?2,?3,?4,?5) ON CONFLICT (user_id, item) DO NOTHING",
+                        params![owner, item, text, model, now()],
+                    )?;
+                    Ok(())
+                })
+                .await?;
+            }
+            Ok(None) => {}
+            Err(e) => {
+                eprintln!("AI translation unavailable: {e}");
+                available = false;
+            }
+        }
+    }
+    let rows = with_db(&s, move |c| Ok(tagalog_for(c, &u.id)?)).await?;
+    Ok(Json(json!({ "available": available, "tagalog": rows })))
+}
+
+#[derive(Deserialize)]
+struct TranslateTextBody {
+    text: String,
+}
+
+/// An AI note lasts only as long as the suggestions it belongs to, so neither it nor its
+/// translation is stored.
+async fn translate_text(State(s): State<S>, _u: User, Json(b): Json<TranslateTextBody>) -> ApiResult<Json<Value>> {
+    if b.text.chars().count() > 1000 {
+        return Err(ApiError::bad("That text is too long."));
+    }
+    match ai::request_tagalog(&s.http, &s.config.ollama_url, &s.config.ollama_model, &b.text).await {
+        Ok(text) => Ok(Json(json!({ "available": true, "text": text }))),
+        Err(e) => {
+            eprintln!("AI translation unavailable: {e}");
+            Ok(Json(json!({ "available": false, "text": null })))
+        }
+    }
 }
 
 /// The user's wording replaces the AI's for every verse in that book or chapter, and later
@@ -768,6 +1083,7 @@ async fn save_scripture_context(State(s): State<S>, u: User, Json(b): Json<Scrip
         return Err(ApiError::bad("That text is too long."));
     }
     let rows = with_db(&s, move |c| {
+        forget_stale_translation(c, &u.id, &b.scope, &text)?;
         if text.is_empty() {
             c.execute("DELETE FROM scripture_context WHERE user_id=?1 AND scope=?2", params![u.id, b.scope])?;
         } else {
@@ -856,6 +1172,8 @@ async fn save_verse_context(State(s): State<S>, u: User, Json(b): Json<ContextBo
         if !known {
             return Err(ApiError::not_found());
         }
+        forget_stale_translation(c, &u.id, &format!("speaker:{}", b.canonical_key), &speaker)?;
+        forget_stale_translation(c, &u.id, &format!("note:{}", b.canonical_key), &context)?;
         if speaker.is_empty() && context.is_empty() {
             c.execute("DELETE FROM verse_context WHERE user_id=?1 AND canonical_key=?2", params![u.id, b.canonical_key])?;
         } else {
@@ -941,11 +1259,12 @@ async fn delete_teaching(State(s): State<S>, u: User, Path(id): Path<String>) ->
 }
 
 async fn status(State(s): State<S>, _u: User) -> ApiResult<Json<Value>> {
-    let last: Option<String> = with_db(&s, |c| {
-        Ok(c.query_row("SELECT value FROM app_settings WHERE key='last_backup_at'", [], |r| r.get(0)).optional()?)
+    let (last, sheet): (Option<String>, Option<String>) = with_db(&s, |c| {
+        let setting = |key: &str| c.query_row("SELECT value FROM app_settings WHERE key=?1", [key], |r| r.get(0)).optional();
+        Ok((setting("last_backup_at")?, setting(SHEET_SETTING)?))
     })
     .await?;
-    Ok(Json(json!({ "last_backup_at": last })))
+    Ok(Json(json!({ "last_backup_at": last, "has_saved_sheet": sheet.is_some() })))
 }
 
 async fn ai_status(State(s): State<S>, _u: User) -> Json<Value> {
@@ -1051,6 +1370,9 @@ struct ExportBody {
     verse_ids: Vec<String>,
     #[serde(default)]
     verse_objectives: Vec<String>,
+    /// "tl" for Tagalog context, wherever a translation exists.
+    #[serde(default)]
+    context_language: String,
 }
 
 /// Verse text and context are read from the database here, so an export can only ever
@@ -1061,8 +1383,23 @@ async fn export_lecture(State(s): State<S>, u: User, Json(b): Json<ExportBody>) 
     }
     let title = b.title.trim().to_string();
     let (doc_title, issue, objective) = (title.clone(), b.issue, b.objective);
+    let tagalog = b.context_language == "tl";
     let items = with_db(&s, move |c| {
         let mut items = Vec::new();
+        // The wording to show and whether the user reviewed that wording.
+        let shown = |item: String, english: Option<(String, bool)>| -> rusqlite::Result<(String, bool)> {
+            let translated: Option<(String, bool)> = if tagalog {
+                c.query_row(
+                    "SELECT text, reviewed_at IS NOT NULL FROM context_tagalog WHERE user_id=?1 AND item=?2",
+                    params![u.id, item],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?
+            } else {
+                None
+            };
+            Ok(translated.or(english).filter(|x| !x.0.is_empty()).unwrap_or((String::new(), true)))
+        };
         for (i, id) in b.verse_ids.iter().enumerate() {
             let row = c
                 .query_row(
@@ -1086,19 +1423,26 @@ async fn export_lecture(State(s): State<S>, u: User, Json(b): Json<ExportBody>) 
                 )
                 .optional()
             };
-            let chapter = scope(format!("chapter:{book}.{chapter_number}"))?;
-            let whole_book = scope(format!("book:{book}"))?;
-            let reviewed = verse_reviewed && chapter.as_ref().is_none_or(|x| x.1) && whole_book.as_ref().is_none_or(|x| x.1);
+            let chapter_item = format!("chapter:{book}.{chapter_number}");
+            let (book_item, history_item) = (format!("book:{book}"), format!("history:{book}"));
+            let chapter = shown(chapter_item.clone(), scope(chapter_item)?)?;
+            let whole_book = shown(book_item.clone(), scope(book_item)?)?;
+            let history = shown(history_item.clone(), scope(history_item)?)?;
+            let speaker = shown(format!("speaker:{key}"), Some((speaker, verse_reviewed)))?;
+            let verse_note = shown(format!("note:{key}"), Some((verse_note, verse_reviewed)))?;
+            let reviewed = [&chapter, &whole_book, &history, &speaker, &verse_note].iter().all(|x| x.1);
             items.push(export::Item {
                 objective: b.verse_objectives.get(i).map_or(String::new(), |o| o.trim().to_string()),
                 reference,
                 version,
                 text,
-                speaker,
-                verse_note,
-                chapter_context: chapter.map_or(String::new(), |x| x.0),
-                book_context: whole_book.map_or(String::new(), |x| x.0),
+                speaker: speaker.0,
+                verse_note: verse_note.0,
+                chapter_context: chapter.0,
+                book_context: whole_book.0,
+                historical_context: history.0,
                 reviewed,
+                tagalog,
             });
         }
         Ok(items)
@@ -1196,7 +1540,9 @@ async fn post_reset(State(s): State<S>, u: User, Json(b): Json<ResetBody>) -> Ap
         backup::wipe(c, &state.vault, &u.id).map_err(|e| {
             eprintln!("reset failed: {e}");
             ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Reset failed.".into())
-        })
+        })?;
+        c.execute("DELETE FROM app_settings WHERE key=?1", [SHEET_SETTING])?;
+        Ok(())
     })
     .await?;
     Ok(Json(json!({ "ok": true })))
@@ -1237,10 +1583,15 @@ pub fn router(state: S) -> Router {
         .route("/folders", get(list_folders).post(create_folder))
         .route("/folders/{id}", axum::routing::delete(delete_folder))
         .route("/verses", get(list_verses))
+        .route("/verses/import", post(import_verses).delete(remove_imported).layer(DefaultBodyLimit::max(MAX_WORKBOOK + 1024 * 1024)))
+        .route("/verses/import/google", post(import_google_sheet))
         .route("/verses/{id}", axum::routing::patch(correct_verse))
         .route("/verses/{id}/verify", post(verify_verse))
         .route("/verse-context", get(list_verse_context).post(save_verse_context))
         .route("/scripture-context", get(list_scripture_context).post(save_scripture_context))
+        .route("/context-tagalog", get(list_context_tagalog).post(save_context_tagalog))
+        .route("/ai/translate", post(translate_context))
+        .route("/ai/translate-text", post(translate_text))
         .route("/ai/status", get(ai_status))
         .route("/ai/suggest", post(ai_suggest))
         .route("/ai/notes", post(ai_notes))

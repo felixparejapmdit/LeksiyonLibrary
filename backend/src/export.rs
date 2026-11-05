@@ -13,8 +13,15 @@ pub struct Item {
     pub verse_note: String,
     pub chapter_context: String,
     pub book_context: String,
+    pub historical_context: String,
     pub reviewed: bool,
+    /// Context is in Tagalog, so its labels are too.
+    pub tagalog: bool,
 }
+
+const ENGLISH_LABELS: &[&str] = &["Speaker", "Verse note", "Chapter context", "Book context", "Historical and political context"];
+const TAGALOG_LABELS: &[&str] = &["Nagsasalita", "Tala sa talata", "Konteksto ng kabanata", "Konteksto ng aklat", "Kontekstong pangkasaysayan at pampulitika"];
+const TAGALOG_AI_WARNING: &str = "Konteksto mula sa AI, hindi Kasulatan. Suriin bago gamitin.";
 
 fn escape(text: &str) -> String {
     // Characters that XML 1.0 forbids would make Word refuse the whole file.
@@ -53,19 +60,17 @@ pub fn document(title: &str, issue: &str, objective: &str, items: &[Item]) -> St
         let version = if item.version.is_empty() { String::new() } else { format!(" ({})", item.version) };
         body += &paragraph(&format!("{}{version}", item.reference), 24, true, false, 60);
         body += &paragraph(&item.text, 24, false, false, 80);
-        let lines: Vec<String> = [
-            ("Speaker", &item.speaker),
-            ("Verse note", &item.verse_note),
-            ("Chapter context", &item.chapter_context),
-            ("Book context", &item.book_context),
-        ]
-        .iter()
-        .filter(|(_, text)| !text.is_empty())
-        .map(|(name, text)| format!("{name}: {text}"))
-        .collect();
+        let labels = if item.tagalog { TAGALOG_LABELS } else { ENGLISH_LABELS };
+        let lines: Vec<String> = [&item.speaker, &item.verse_note, &item.chapter_context, &item.book_context, &item.historical_context]
+            .into_iter()
+            .zip(labels)
+            .filter(|(text, _)| !text.is_empty())
+            .map(|(text, name)| format!("{name}: {text}"))
+            .collect();
         if !lines.is_empty() {
             if !item.reviewed {
-                body += &paragraph("AI context, not scripture. Review before use.", 20, true, true, 40);
+                let warning = if item.tagalog { TAGALOG_AI_WARNING } else { "AI context, not scripture. Review before use." };
+                body += &paragraph(warning, 20, true, true, 40);
             }
             for line in &lines {
                 body += &paragraph(line, 20, false, true, 40);
@@ -98,7 +103,7 @@ mod tests {
     use super::*;
 
     fn item(objective: &str, reference: &str, reviewed: bool) -> Item {
-        Item { objective: objective.into(), reference: reference.into(), version: "ESV".into(), text: "Text & <more>".into(), speaker: "Paul".into(), verse_note: String::new(), chapter_context: "A chapter.".into(), book_context: "A letter.".into(), reviewed }
+        Item { objective: objective.into(), reference: reference.into(), version: "ESV".into(), text: "Text & <more>".into(), speaker: "Paul".into(), verse_note: String::new(), chapter_context: "A chapter.".into(), book_context: "A letter.".into(), historical_context: "Under Rome.".into(), reviewed, tagalog: false }
     }
 
     #[test]
@@ -128,6 +133,18 @@ mod tests {
         assert!(reviewed.contains("Speaker: Paul"));
         assert!(reviewed.contains("Chapter context: A chapter."));
         assert!(reviewed.contains("Book context: A letter."));
+        assert!(reviewed.contains("Historical and political context: Under Rome."));
+    }
+
+    #[test]
+    fn tagalog_context_gets_tagalog_labels_and_keeps_its_warning() {
+        let mut i = item("", "A 1:1", false);
+        i.tagalog = true;
+        let doc = document("T", "", "", &[i]);
+        assert!(doc.contains("Konteksto mula sa AI, hindi Kasulatan"));
+        assert!(doc.contains("Konteksto ng kabanata: A chapter."));
+        assert!(doc.contains("Kontekstong pangkasaysayan at pampulitika: Under Rome."));
+        assert!(!doc.contains("Book context"));
     }
 
     #[test]

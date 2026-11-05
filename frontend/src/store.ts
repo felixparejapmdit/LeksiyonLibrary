@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { api, ApiError, type Category, type Folder, type Lecture, type Lesson, type ScriptureContext, type Teaching, type Verse, type VerseContext } from './api';
+import { api, ApiError, type Category, type Folder, type Language, type Lecture, type Lesson, type ScriptureContext, type TagalogContext, type Teaching, type Verse, type VerseContext } from './api';
 
 export type SortMode = 'newest' | 'oldest' | 'title';
 
@@ -42,6 +42,9 @@ export interface State {
   verses: Verse[];
   contexts: Record<string, VerseContext>;
   scripture: Record<string, ScriptureContext>;
+  tagalog: Record<string, TagalogContext>;
+  contextLanguage: Language;
+  hasSavedSheet: boolean;
   teachings: Teaching[];
   lastBackupAt: string | null;
   teachingDialog: { lessonId: string } | null;
@@ -82,6 +85,9 @@ let state: State = {
   verses: [],
   contexts: {},
   scripture: {},
+  tagalog: {},
+  contextLanguage: stored('lv.contextLanguage', 'en') === 'tl' ? 'tl' : 'en',
+  hasSavedSheet: false,
   teachings: [],
   lastBackupAt: null,
   teachingDialog: null,
@@ -161,11 +167,12 @@ export function errorText(e: unknown) {
 }
 
 export async function refreshAll() {
-  const [lessons, verses, contexts, scripture, folders, lectures, teachings, status] = await Promise.all([
+  const [lessons, verses, contexts, scripture, tagalog, folders, lectures, teachings, status] = await Promise.all([
     api.lessons(),
     api.verses(),
     api.verseContexts(),
     api.scriptureContexts(),
+    api.contextTagalog(),
     api.folders(),
     api.lectures(),
     api.teachings(),
@@ -177,8 +184,10 @@ export async function refreshAll() {
     verses,
     contexts,
     scripture,
+    tagalog,
     teachings,
     lastBackupAt: status.last_backup_at,
+    hasSavedSheet: status.has_saved_sheet,
     folders,
     lectures,
     selectedId: selectedStillExists ? state.selectedId : (newestFirst(lessons)[0]?.id ?? null),
@@ -210,6 +219,15 @@ export function setTheme(theme: 'dark' | 'light') {
     /* private mode: the theme still applies for this session */
   }
   setState({ theme });
+}
+
+export function setContextLanguage(contextLanguage: Language) {
+  try {
+    localStorage.setItem('lv.contextLanguage', contextLanguage);
+  } catch {
+    /* private mode: the choice still applies for this session */
+  }
+  setState({ contextLanguage });
 }
 
 export function setPanelPref(key: 'sidebarOpen' | 'viewerOpen', open: boolean) {

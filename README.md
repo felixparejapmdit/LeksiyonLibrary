@@ -29,7 +29,7 @@ If the port is taken, the server stops with an error instead of moving to anothe
 | `LV_PORT` | 47319 | App port |
 | `LV_DATA` | `data` | Database and PDFs (relative to `backend/`) |
 | `LV_OLLAMA_URL` | http://127.0.0.1:11434 | Local AI service (optional) |
-| `LV_OLLAMA_MODEL` | llama3.2:3b | Model for AI notes |
+| `LV_OLLAMA_MODEL` | llama3.2:3b | Model for AI notes, context and translation |
 
 ## Your data
 
@@ -43,16 +43,32 @@ To move to another computer, including from Windows to a Mac, make an encrypted 
 
 Files you export, such as a downloaded PDF or a copied lecture, are not encrypted.
 
+The app talks only to this computer, with one exception you start yourself: importing from Google Sheets downloads that sheet. It sends nothing from your vault.
+
 ## Lecture Maker
 
 Write one objective per line and choose 3, 4 or 5 verses per objective. Verses come only from your library, shown exactly as stored. If fewer match, the app says so instead of adding unrelated verses.
 
-With the local AI running, each verse also shows who is speaking, a **chapter context** and a **book context**. These are the model's reading, not scripture, and can be wrong, so they are labelled until you review or correct them. Each chapter and book context is written once and shared by all its verses, so a correction applies everywhere and later searches are quicker. Your wording is kept, later AI runs leave it alone, and it never changes the verse.
+With the local AI running, each verse also has details, folded away until you open them: who is speaking, a **chapter context**, a **book context** and a **historical and political context**. These are the model's reading, not scripture, and can be wrong, so they are labelled until you review or correct them. Each context is written once and shared by all its verses, so a correction applies everywhere and later searches are quicker. Your wording is kept, later AI runs leave it alone, and it never changes the verse.
+
+The English and Tagalog switch shows these details in either language. Tagalog is translated by the local model the first time you open them, then kept. It is reviewed separately, so a machine translation stays labelled as AI even when you have reviewed the English. A small model's Tagalog needs checking closely; correct it under Review or correct.
 
 Saved lectures keep each verse under its objective. From the workspace you can copy, print or save as PDF, download a Word file, or present full screen, one reference at a time in both languages (arrow keys to move, Esc to leave). Word files and printouts are not encrypted.
 
+## Importing verses
+
+Settings has an **Import Bible verses** section. The sheet needs these columns in its first row, in any order: Translation (or PET), Book, Chapter, Verse and Content.
+
+- **From an Excel file:** the most private way. The file is read in memory and not kept. The original on your computer is not encrypted, so keep it somewhere safe or delete it afterwards.
+- **From Google Sheets:** paste the link. After that the spreadsheet is remembered, so the `gid` of another tab is enough. The sheet must be shared as Anyone with the link, which means anyone who gets the link can read it. Turn that off again after importing if the verses are sensitive.
+
+You see a preview before anything is saved. Language is read from each row's words, because a translation code does not say what language a row is in. Misspelled books and Excel's drag-fill of a code (AMP2015, AMP2016, ...) are corrected and listed. A book missing its number ("Peter") is left out and listed, because it could be either book. Fix it in the sheet and import again: rows already in the vault are not added twice.
+
+Imported verses are encrypted like the rest of the vault, and stay unverified until you check them. The original cell is kept beside the cleaned text. **Remove imported verses** undoes an import, keeping anything you verified or use in a saved lecture.
+
 ## Other tools
 
+- **Bibles Library:** filter by book, translation, language and status, one page at a time. Extra translations of a reference fold away. Search and filters work from memory, and the app keeps nothing readable on disk or in the browser's cache.
 - **Review Verses:** steps through unverified verses beside the page they came from. Verifying locks a verse permanently.
 - **Find by meaning:** finds verses related to a question even when they share no words, in Tagalog or English. Available in the Lecture Maker, Bibles Library and Search. It suggests from your library only, and falls back to matching words if the model is off.
 - **Teaching History:** records when and where you gave each lesson, and warns before you repeat one.

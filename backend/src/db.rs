@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS verses (
   ref_note TEXT NOT NULL DEFAULT '',
   verified_at TEXT,
   created_at TEXT NOT NULL,
+  import_source TEXT NOT NULL DEFAULT '',
   UNIQUE (user_id, canonical_key, version, language, ocr_raw)
 );
 CREATE INDEX IF NOT EXISTS verses_user ON verses(user_id, canonical_key);
@@ -131,7 +132,7 @@ CREATE TABLE IF NOT EXISTS verse_context (
 );
 
 -- Background on a whole book or chapter, kept once and shared by all its verses.
--- scope is 'book:60' or 'chapter:60.2'.
+-- scope is 'book:60', 'history:60' or 'chapter:60.2'.
 CREATE TABLE IF NOT EXISTS scripture_context (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   scope TEXT NOT NULL,
@@ -140,6 +141,18 @@ CREATE TABLE IF NOT EXISTS scripture_context (
   updated_at TEXT NOT NULL,
   reviewed_at TEXT,
   PRIMARY KEY (user_id, scope)
+);
+
+-- Tagalog wording of a context. item is a scope above, or 'speaker:<key>' or 'note:<key>'.
+-- Reviewed separately: an AI translation of text the user reviewed is still the AI's.
+CREATE TABLE IF NOT EXISTS context_tagalog (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  item TEXT NOT NULL,
+  text TEXT NOT NULL,
+  model TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL,
+  reviewed_at TEXT,
+  PRIMARY KEY (user_id, item)
 );
 
 -- Numbers that represent each verse's meaning. Rebuildable, so not part of backups.
@@ -215,6 +228,7 @@ pub fn init(conn: &Connection) -> rusqlite::Result<()> {
     for (table, column, definition) in [
         ("lecture_verses", "objective", "TEXT NOT NULL DEFAULT ''"),
         ("verse_context", "reviewed_at", "TEXT"),
+        ("verses", "import_source", "TEXT NOT NULL DEFAULT ''"),
     ] {
         let present: bool = conn.query_row(&format!("SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1)"), [column], |r| r.get(0))?;
         if !present {
@@ -269,6 +283,22 @@ mod tests {
         assert_eq!(objective, "");
         c.query_row("SELECT reviewed_at FROM verse_context", [], |_| Ok(())).unwrap_err();
         c.execute("INSERT INTO verse_context (user_id,canonical_key,speaker,context,model,updated_at,reviewed_at) VALUES ('u','k','','','','now','now')", []).unwrap();
+    }
+
+    #[test]
+    fn older_vaults_gain_the_import_column_and_keep_their_verses() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(&SCHEMA.replace("\r\n", "\n").replace("  import_source TEXT NOT NULL DEFAULT '',\n", "")).unwrap();
+        c.execute_batch(
+            "INSERT INTO users VALUES ('u','a@b.c','x','now');
+             INSERT INTO verses (id,user_id,canonical_key,book_id,ref_printed,ref_en,ref_tl,version,language,text,text_sha256,ocr_raw,status,created_at)
+             VALUES ('v','u','10.7:24',10,'r','r','r','ESV','en','kept','h','raw','unverified','now');",
+        )
+        .unwrap();
+        init(&c).unwrap();
+        init(&c).unwrap();
+        let (text, source): (String, String) = c.query_row("SELECT text, import_source FROM verses", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!((text.as_str(), source.as_str()), ("kept", ""));
     }
 
     #[test]

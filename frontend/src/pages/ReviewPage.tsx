@@ -74,7 +74,7 @@ export function ReviewPage() {
   return (
     <div className="grid h-full grid-cols-1 grid-rows-[minmax(0,1fr)_minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_minmax(320px,440px)] lg:grid-rows-1" data-testid="review-page">
       <div className="min-h-0 min-w-0 border-b border-line lg:border-r lg:border-b-0">
-        {lesson ? <PdfViewer lesson={lesson} /> : <p className="p-6 text-center text-[13px] text-muted" data-testid="review-no-source">This verse has no source page.</p>}
+        {lesson ? <PdfViewer lesson={lesson} /> : <p className="p-6 text-center text-[13px] text-muted" data-testid="review-no-source">{verse.import_source ? `Imported from ${verse.import_source}. Compare it with your original.` : 'This verse has no source page.'}</p>}
       </div>
       <div className="scroll-stable min-h-0 space-y-3 p-3" data-testid="review-panel">
         <div className="flex items-center justify-between gap-2">
@@ -93,16 +93,16 @@ export function ReviewPage() {
           <input className="field mt-1" data-testid="review-reference" value={reference} onChange={(e) => setReference(e.target.value)} />
         </label>
         <label className="block text-xs text-muted">
-          Verse text, as printed
+          {verse.import_source ? 'Verse text' : 'Verse text, as printed'}
           <textarea className="field mt-1 min-h-44 !text-[14px] leading-relaxed" data-testid="review-text" value={text} onChange={(e) => setText(e.target.value)} />
         </label>
         <details className="text-xs text-muted">
-          <summary className="cursor-pointer" data-testid="review-raw-toggle">Show what the scan originally read</summary>
+          <summary className="cursor-pointer" data-testid="review-raw-toggle">{verse.import_source ? 'Show the original cell from the sheet' : 'Show what the scan originally read'}</summary>
           <p className="m-0 mt-1 whitespace-pre-wrap" data-testid="review-raw">{verse.ocr_raw}</p>
         </details>
         <label className="flex items-start gap-2 text-[13px]">
           <input type="checkbox" className="mt-1" data-testid="review-compared" checked={compared} onChange={(e) => setCompared(e.target.checked)} />
-          <span>I compared this with the printed page, and it matches exactly.</span>
+          <span>I compared this with {verse.import_source ? 'the original' : 'the printed page'}, and it matches exactly.</span>
         </label>
         <div className="flex flex-wrap gap-1.5">
           <button

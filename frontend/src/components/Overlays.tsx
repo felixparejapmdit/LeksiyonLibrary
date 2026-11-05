@@ -4,7 +4,7 @@ import { BellRing, CheckCircle2, CircleAlert, FileUp, FolderUp, Loader2, UploadC
 import { api, saveFile, type Category, type Language } from '../api';
 import { enqueueFiles, enqueueFolder } from '../ingest';
 import { errorText, refreshAll, setState, toast, useStore } from '../store';
-import { backgroundOf, scopeNames, scopesOf } from './VerseContext';
+import { backgroundOf, ContextLanguageSwitch, scopeNames, tagalogItems } from './VerseContext';
 
 function Modal({ title, subtitle, onClose, children, testId, wide }: { title: string; subtitle?: string; onClose: () => void; children: React.ReactNode; testId: string; wide?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -333,20 +333,33 @@ export function ContextDialog() {
   return key ? <ContextForm key={key} verseKey={key} /> : null;
 }
 
+const CONTEXT_PARTS = ['speaker', 'chapter', 'book', 'history', 'verseNote'] as const;
+type ContextFields = Record<(typeof CONTEXT_PARTS)[number], string>;
+
 // Keyed by verse, so its fields start filled in rather than being filled just after opening.
 function ContextForm({ verseKey: key }: { verseKey: string }) {
   const contexts = useStore((s) => s.contexts);
   const scripture = useStore((s) => s.scripture);
+  const tagalog = useStore((s) => s.tagalog);
+  const startLanguage = useStore((s) => s.contextLanguage);
   const reference = useStore((s) => s.verses.find((v) => v.canonical_key === key)?.ref_en ?? '');
-  const current = backgroundOf({ contexts, scripture }, key);
-  const scopes = scopesOf(key);
+  const current = backgroundOf({ contexts, scripture, tagalog }, key, startLanguage);
+  const english = backgroundOf({ contexts, scripture, tagalog }, key, 'en');
+  const items = tagalogItems(key);
   const names = scopeNames(reference);
-  const [speaker, setSpeaker] = useState(current.speaker);
-  const [note, setNote] = useState(current.verseNote);
-  const [chapter, setChapter] = useState(current.chapter);
-  const [book, setBook] = useState(current.book);
+  const [language, setLanguage] = useState(startLanguage);
+  const [en, setEn] = useState<ContextFields>({ speaker: english.speaker, chapter: english.chapter, book: english.book, history: english.history, verseNote: english.verseNote });
+  const [tl, setTl] = useState<ContextFields>(() => {
+    const text = (part: (typeof CONTEXT_PARTS)[number]) => tagalog[items[part]]?.text ?? '';
+    return { speaker: text('speaker'), chapter: text('chapter'), book: text('book'), history: text('history'), verseNote: text('verseNote') };
+  });
+  // Saving marks wording as reviewed, so only the language the user actually looked at counts.
+  const [seen, setSeen] = useState({ en: startLanguage === 'en', tl: startLanguage === 'tl' });
   const [busy, setBusy] = useState(false);
-  const nothing = !speaker.trim() && !note.trim() && !chapter.trim() && !book.trim();
+  const fields = language === 'tl' ? tl : en;
+  const set = (part: keyof ContextFields, value: string) => (language === 'tl' ? setTl : setEn)((f) => ({ ...f, [part]: value }));
+  const placeholder = (part: keyof ContextFields) => (language === 'tl' ? en[part] : undefined);
+  const nothing = CONTEXT_PARTS.every((p) => !(seen.en ? en[p] : '').trim() && !(seen.tl ? tl[p] : '').trim());
   return (
     <Modal title="Speaker and context" subtitle={reference} onClose={closeContext} testId="context-dialog" wide>
       <form
@@ -355,10 +368,19 @@ function ContextForm({ verseKey: key }: { verseKey: string }) {
           e.preventDefault();
           setBusy(true);
           try {
-            const verse = await api.saveVerseContext(key, speaker, note);
-            await api.saveScriptureContext(scopes.chapter, chapter);
-            const saved = await api.saveScriptureContext(scopes.book, book);
-            setState({ contexts: verse, scripture: saved });
+            if (seen.en) {
+              const verse = await api.saveVerseContext(key, en.speaker, en.verseNote);
+              await api.saveScriptureContext(items.chapter, en.chapter);
+              await api.saveScriptureContext(items.book, en.book);
+              const saved = await api.saveScriptureContext(items.history, en.history);
+              setState({ contexts: verse, scripture: saved });
+            }
+            if (seen.tl) {
+              for (const part of CONTEXT_PARTS) {
+                if (tl[part].trim() || tagalog[items[part]]) await api.saveContextTagalog(items[part], tl[part]);
+              }
+            }
+            setState({ tagalog: await api.contextTagalog() });
             closeContext();
             toast(nothing ? 'Context removed' : 'Saved as reviewed');
           } catch (err) {
@@ -369,23 +391,35 @@ function ContextForm({ verseKey: key }: { verseKey: string }) {
       >
         <div className="scroll-stable min-h-0 space-y-3 p-4">
           {!current.empty && !current.reviewed && <p className="m-0 text-xs text-warn" data-testid="context-ai-note">This was written by the AI and can be wrong. Check it, correct it if needed, then save.</p>}
+          <ContextLanguageSwitch
+            language={language}
+            testId="context-dialog-language"
+            onChange={(l) => {
+              setLanguage(l);
+              setSeen((s) => ({ ...s, [l]: true }));
+            }}
+          />
           <label className="block text-xs text-muted">
             Who is speaking in this verse
-            <input className="field mt-1" maxLength={200} data-testid="context-speaker" value={speaker} onChange={(e) => setSpeaker(e.target.value)} />
+            <input className="field mt-1" maxLength={200} data-testid="context-speaker" placeholder={placeholder('speaker')} value={fields.speaker} onChange={(e) => set('speaker', e.target.value)} />
           </label>
           <label className="block text-xs text-muted">
             Chapter context ({names.chapter}). Used for every verse in this chapter.
-            <textarea className="field mt-1 min-h-24" maxLength={4000} data-testid="context-chapter" value={chapter} onChange={(e) => setChapter(e.target.value)} />
+            <textarea className="field mt-1 min-h-24" maxLength={4000} data-testid="context-chapter" placeholder={placeholder('chapter')} value={fields.chapter} onChange={(e) => set('chapter', e.target.value)} />
           </label>
           <label className="block text-xs text-muted">
             Book context ({names.book}). Used for every verse in this book.
-            <textarea className="field mt-1 min-h-24" maxLength={4000} data-testid="context-book" value={book} onChange={(e) => setBook(e.target.value)} />
+            <textarea className="field mt-1 min-h-24" maxLength={4000} data-testid="context-book" placeholder={placeholder('book')} value={fields.book} onChange={(e) => set('book', e.target.value)} />
+          </label>
+          <label className="block text-xs text-muted">
+            Historical and political context ({names.book}). Used for every verse in this book.
+            <textarea className="field mt-1 min-h-24" maxLength={4000} data-testid="context-history" placeholder={placeholder('history')} value={fields.history} onChange={(e) => set('history', e.target.value)} />
           </label>
           <label className="block text-xs text-muted">
             Your note on this verse (optional)
-            <textarea className="field mt-1 min-h-16" maxLength={2000} data-testid="context-note" value={note} onChange={(e) => setNote(e.target.value)} />
+            <textarea className="field mt-1 min-h-16" maxLength={2000} data-testid="context-note" placeholder={placeholder('verseNote')} value={fields.verseNote} onChange={(e) => set('verseNote', e.target.value)} />
           </label>
-          <p className="m-0 text-xs text-muted">This never changes the verse itself. Clear a field to remove it. A cleared chapter or book context can be written again by the AI.</p>
+          <p className="m-0 text-xs text-muted">This never changes the verse itself. Clear a field to remove it. A cleared context can be written again by the AI. Tagalog you save here is kept even if the English changes later.</p>
         </div>
         <div className="flex justify-end gap-2 border-t border-line px-4 py-3">
           <button type="button" className="btn" data-testid="context-cancel" onClick={closeContext}>Cancel</button>

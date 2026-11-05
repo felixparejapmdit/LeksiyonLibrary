@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Download, Moon, RotateCcw, Sun, Upload } from 'lucide-react';
 import { api } from '../api';
 import { askReset, RestoreInput } from '../components/Header';
+import { VerseImport } from '../components/VerseImport';
 import { setState, setTheme, useStore } from '../store';
 
 export function SettingsPage() {
@@ -53,6 +54,7 @@ export function SettingsPage() {
             <button className="btn" data-testid="settings-reset" onClick={askReset}><RotateCcw size={14} /> Reset vault</button>
           </div>
         </section>
+        <VerseImport />
         <section className="rounded-lg border border-line bg-panel p-3">
           <h2 className="m-0 mb-1 text-[14px] font-semibold">AI assistant</h2>
           <p className="m-0 min-h-5 text-[13px] text-muted" data-testid="settings-ai">

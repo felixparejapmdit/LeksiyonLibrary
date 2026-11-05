@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, Copy, FileDown, FilePlus2, Loader2, Lock, MonitorPlay, PencilLine, Plus, Printer, Save, Sparkles, Trash2, X } from 'lucide-react';
 import { PresentationMode } from '../components/Presentation';
-import { backgroundAsText, backgroundOf, ContextLines } from '../components/VerseContext';
+import { backgroundAsText, backgroundOf, ContextPanel } from '../components/VerseContext';
 import { api, saveFile, type Lecture, type Suggestion, type Verse } from '../api';
 import { askConfirm, errorText, getState, refreshAll, setState, toast, useStore } from '../store';
 
@@ -21,12 +21,22 @@ function ReadOnlyVerse({ verse }: { verse: Verse }) {
         <Lock size={11} />
         <span className="font-semibold text-fg">{verse.language === 'tl' ? 'Tagalog' : 'English'}</span>
         {verse.version && <span>{verse.version}</span>}
-        <span data-testid="suggested-status">{verse.status === 'verified' ? 'Verified' : 'Unverified scan'}</span>
+        <span data-testid="suggested-status">{verse.status === 'verified' ? 'Verified' : verse.import_source ? 'Unverified import' : 'Unverified scan'}</span>
       </div>
       <p className="m-0 text-[13px] leading-relaxed" data-testid="suggested-text">{verse.text || 'Reference only.'}</p>
       {lesson && <p className="m-0 mt-1 text-xs text-muted" data-testid="verse-source">Cited in {lesson.title}, page {source.page}</p>}
     </div>
   );
+}
+
+/** One per language shows first, so a verse held in many translations does not fill the page. */
+function firstOfEachLanguage(items: Verse[]) {
+  const first = new Set<string>();
+  for (const language of ['tl', 'en']) {
+    const v = items.find((x) => x.language === language);
+    if (v) first.add(v.id);
+  }
+  return items.filter((v) => first.has(v.id));
 }
 
 export function LecturePage() {
@@ -46,6 +56,9 @@ export function LecturePage() {
   const [groups, setGroups] = useState<Group[] | null>(null);
   const contexts = useStore((s) => s.contexts);
   const scripture = useStore((s) => s.scripture);
+  const tagalog = useStore((s) => s.tagalog);
+  const contextLanguage = useStore((s) => s.contextLanguage);
+  const [allTranslations, setAllTranslations] = useState<Record<string, boolean>>({});
   const lessons = useStore((s) => s.lessons);
   const [sourceLesson, setSourceLesson] = useState('');
   const [searching, setSearching] = useState(false);
@@ -153,6 +166,7 @@ export function LecturePage() {
 
   const objectiveFor = (id: string) => objectiveOf[id] ?? '';
   const lectureBody = () => ({ title, issue, objective, verse_ids: picked, verse_objectives: picked.map(objectiveFor) });
+  const contextState = { contexts, scripture, tagalog };
   const slides = picked.flatMap((id) => {
     const verse = byId.get(id);
     return verse ? [{ verse, objective: objectiveFor(id) }] : [];
@@ -173,7 +187,7 @@ export function LecturePage() {
           ...heading,
           `${v.ref_printed}${v.version ? ` (${v.version})` : ''}`,
           v.text,
-          ...backgroundAsText(backgroundOf({ contexts, scripture }, v.canonical_key)),
+          ...backgroundAsText(backgroundOf(contextState, v.canonical_key, contextLanguage), contextLanguage),
           '',
         ];
       }),
@@ -181,7 +195,7 @@ export function LecturePage() {
   };
 
   const contextButton = (key: string, testId: string) => {
-    const c = backgroundOf({ contexts, scripture }, key);
+    const c = backgroundOf(contextState, key, contextLanguage);
     return (
       <button className="btn no-print !min-h-7 max-lg:!min-h-11" data-testid={testId} onClick={() => setState({ editingContextKey: key })}>
         <PencilLine size={12} /> {c.empty ? 'Add speaker and context' : c.reviewed ? 'Edit context' : 'Review or correct'}
@@ -240,7 +254,7 @@ export function LecturePage() {
             <section className="no-print space-y-2" aria-label="Suggestions" data-testid="suggestions">
               <div className="flex items-center gap-2 text-xs text-muted">
                 <h2 className="m-0 text-[13px] font-semibold text-fg">Suggestions ({groups.reduce((n, g) => n + g.suggestions.length, 0)})</h2>
-                {groups.some((g) => g.status === 'loading') && <span className="flex items-center gap-1" data-testid="notes-loading"><Loader2 size={12} className="animate-spin" /> Writing AI notes and chapter and book context. This can take a few minutes the first time; keep working.</span>}
+                {groups.some((g) => g.status === 'loading') && <span className="flex items-center gap-1" data-testid="notes-loading"><Loader2 size={12} className="animate-spin" /> Writing AI notes and context. This can take a few minutes the first time; keep working.</span>}
                 {groups.some((g) => g.status === 'offline') && <span data-testid="notes-offline">AI notes and context unavailable</span>}
               </div>
               <p className="m-0 text-xs text-muted" data-testid="match-mode">{usedMeaning ? 'Matched by meaning and words' : 'Matched by words only'}</p>
@@ -259,6 +273,8 @@ export function LecturePage() {
                 )}
               {g.suggestions.map((s) => {
                 const items = s.verse_ids.map((id) => byId.get(id)).filter((v): v is Verse => !!v);
+                const showAll = allTranslations[s.canonical_key] || items.length <= 2;
+                const visible = showAll ? items : firstOfEachLanguage(items);
                 return (
                   <article key={s.canonical_key} className="rounded-lg border border-line bg-panel p-3" data-testid="suggestion" data-key={s.canonical_key}>
                     <div className="mb-2 flex flex-wrap items-baseline gap-x-2">
@@ -267,21 +283,11 @@ export function LecturePage() {
                       {s.matched_terms.length > 0 && <span className="text-xs text-muted">Matches: {s.matched_terms.join(', ')}</span>}
                       {s.meaning && <span className="text-xs text-muted" data-testid="suggestion-meaning">Related in meaning</span>}
                     </div>
-                    {/* Space is reserved so the note and context appearing do not shift the page. */}
-                    <p className="m-0 mb-1 min-h-5 text-xs text-accent2" data-testid="ai-note">
-                      {g.notes[s.canonical_key] && (
-                        <>
-                          <span className="font-semibold">AI note, not scripture. Review before use: </span>
-                          {g.notes[s.canonical_key]}
-                        </>
-                      )}
-                    </p>
-                    <p className="m-0 mb-1 min-h-28 text-xs leading-relaxed text-accent2" data-testid="ai-context">
-                      <ContextLines verseKey={s.canonical_key} reference={s.ref_en} testId="verse-context" />
-                    </p>
-                    <div className="mb-2">{contextButton(s.canonical_key, 'context-edit')}</div>
+                    <ContextPanel verseKey={s.canonical_key} reference={s.ref_en} referenceTl={s.ref_tl} testId="verse-context" note={g.notes[s.canonical_key]}>
+                      <div className="mb-2">{contextButton(s.canonical_key, 'context-edit')}</div>
+                    </ContextPanel>
                     <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-                      {items.map((v) => (
+                      {visible.map((v) => (
                         <div key={v.id} className="flex flex-col gap-1">
                           <ReadOnlyVerse verse={v} />
                           <button
@@ -298,6 +304,11 @@ export function LecturePage() {
                         </div>
                       ))}
                     </div>
+                    {!showAll && visible.length < items.length && (
+                      <button className="btn mt-2 !min-h-8 max-lg:!min-h-11" data-testid="suggestion-more" onClick={() => setAllTranslations((a) => ({ ...a, [s.canonical_key]: true }))}>
+                        Show {items.length - visible.length} more {items.length - visible.length === 1 ? 'translation' : 'translations'}
+                      </button>
+                    )}
                   </article>
                 );
               })}
@@ -339,10 +350,9 @@ export function LecturePage() {
                         </span>
                       </div>
                       <p className="m-0 mt-1 text-[13px] leading-relaxed" data-testid="workspace-text">{v.text}</p>
-                      <p className="m-0 mt-1 text-xs leading-relaxed text-accent2">
-                        <ContextLines verseKey={v.canonical_key} reference={v.ref_en} testId="workspace-context" />
-                      </p>
-                      <div className="mt-1">{contextButton(v.canonical_key, 'workspace-context-edit')}</div>
+                      <ContextPanel verseKey={v.canonical_key} reference={v.ref_en} referenceTl={v.ref_tl} testId="workspace-context">
+                        <div className="mt-1">{contextButton(v.canonical_key, 'workspace-context-edit')}</div>
+                      </ContextPanel>
                       </div>
                     </li>
                   );
@@ -395,7 +405,7 @@ export function LecturePage() {
                 onClick={async () => {
                   setExporting(true);
                   try {
-                    const { blob, name } = await api.exportLecture(lectureBody());
+                    const { blob, name } = await api.exportLecture({ ...lectureBody(), context_language: contextLanguage });
                     saveFile(blob, name);
                     toast('Word file downloaded. It is not encrypted.');
                   } catch (e) {

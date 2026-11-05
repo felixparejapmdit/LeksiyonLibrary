@@ -38,6 +38,8 @@ export interface Verse {
   ref_note: string;
   verified_at: string | null;
   sources: { lesson_id: string; page: number }[];
+  /** Where an imported verse came from, such as "Translations.xlsx, row 17". Empty otherwise. */
+  import_source: string;
 }
 
 export interface Folder {
@@ -85,6 +87,29 @@ export interface VerseContext {
 export interface ScriptureContext {
   context: string;
   reviewed: boolean;
+}
+
+/** A context's Tagalog wording. Reviewed separately from its English. */
+export interface TagalogContext {
+  text: string;
+  reviewed: boolean;
+}
+
+export interface ImportReport {
+  file: string;
+  committed: boolean;
+  rows: number;
+  new_verses: number;
+  already_in_vault: number;
+  duplicates_in_file: number;
+  other_wordings: number;
+  tagalog: number;
+  english: number;
+  translations: string[];
+  book_fixes: { from: string; to: string; count: number }[];
+  translation_fixes: { from: string; to: string; count: number }[];
+  problems: { row: number; message: string }[];
+  flagged: { row: number; message: string }[];
 }
 
 const json = (method: string, body: unknown): RequestInit => ({
@@ -161,13 +186,25 @@ export const api = {
   verses: () => request<Verse[]>('/verses'),
   correctVerse: (id: string, patch: { text?: string; reference?: string }) => request<Verse>(`/verses/${id}`, json('PATCH', patch)),
   verifyVerse: (id: string) => request<Verse>(`/verses/${id}/verify`, { method: 'POST' }),
+  importVerses: (file: File, commit: boolean) => {
+    const form = new FormData();
+    if (commit) form.set('commit', '1');
+    form.set('file', file, file.name);
+    return request<ImportReport>('/verses/import', { method: 'POST', body: form });
+  },
+  importGoogleSheet: (sheet: string, commit: boolean) => request<ImportReport>('/verses/import/google', json('POST', { sheet, commit })),
+  removeImported: () => request<{ removed: number; kept: number }>('/verses/import', { method: 'DELETE' }),
+  contextTagalog: () => request<Record<string, TagalogContext>>('/context-tagalog'),
+  saveContextTagalog: (item: string, text: string) => request<Record<string, TagalogContext>>('/context-tagalog', json('POST', { item, text })),
+  translateContext: (item: string) => request<{ available: boolean; tagalog: Record<string, TagalogContext> }>('/ai/translate', json('POST', { item })),
+  translateText: (text: string) => request<{ available: boolean; text: string | null }>('/ai/translate-text', json('POST', { text })),
   verseContexts: () => request<Record<string, VerseContext>>('/verse-context'),
   saveVerseContext: (canonical_key: string, speaker: string, context: string) =>
     request<Record<string, VerseContext>>('/verse-context', json('POST', { canonical_key, speaker, context })),
   scriptureContexts: () => request<Record<string, ScriptureContext>>('/scripture-context'),
   saveScriptureContext: (scope: string, context: string) => request<Record<string, ScriptureContext>>('/scripture-context', json('POST', { scope, context })),
   searchMeaning: (q: string) => request<{ available: boolean; keys: string[] }>(`/search/meaning?q=${encodeURIComponent(q)}`),
-  status: () => request<{ last_backup_at: string | null }>('/status'),
+  status: () => request<{ last_backup_at: string | null; has_saved_sheet: boolean }>('/status'),
   teachings: () => request<Teaching[]>('/teachings'),
   addTeaching: (t: { lesson_id: string; taught_on: string; place: string; notes: string }) => request<Teaching[]>('/teachings', json('POST', t)),
   deleteTeaching: (id: string) => request<Teaching[]>(`/teachings/${id}`, { method: 'DELETE' }),
@@ -181,7 +218,7 @@ export const api = {
   lectures: () => request<Lecture[]>('/lectures'),
   saveLecture: (l: { id?: string; title: string; issue: string; objective: string; verse_ids: string[]; verse_objectives: string[] }) =>
     request<Lecture>('/lectures', json('POST', l)),
-  exportLecture: (l: { title: string; issue: string; objective: string; verse_ids: string[]; verse_objectives: string[] }) =>
+  exportLecture: (l: { title: string; issue: string; objective: string; verse_ids: string[]; verse_objectives: string[]; context_language: Language }) =>
     fetchFile('/api/lectures/export', l, 'lecture.docx'),
   deleteLecture: (id: string) => request(`/lectures/${id}`, { method: 'DELETE' }),
 

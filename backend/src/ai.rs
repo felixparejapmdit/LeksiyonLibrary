@@ -6,8 +6,9 @@
 //! always read from the database by id. Nothing in this module writes to the
 //! verses table.
 //!
-//! The speaker, chapter context and book context shown beside a verse are the model's
-//! reading, not facts from the library, and are labelled that way until the user reviews them.
+//! The speaker, the chapter, book, and historical and political context shown beside a verse,
+//! and their Tagalog wording, are the model's reading, not facts from the library, and are
+//! labelled that way until the user reviews them.
 
 use regex::Regex;
 use rusqlite::{params, Connection};
@@ -76,7 +77,10 @@ pub fn retrieve(conn: &Connection, user_id: &str, issue: &str, objective: &str, 
         let rows = stmt.query_map(params![q, user_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?)))?;
         for row in rows {
             let (key, bm) = row?;
-            *scores.entry(key).or_default() += 3.0 * -bm;
+            // The best wording counts, so a verse held in many translations does not outrank
+            // one held in a single translation merely for being repeated.
+            let score = scores.entry(key).or_default();
+            *score = score.max(3.0 * -bm);
         }
     }
     // Verses cited by lessons about the same topic are a weaker signal.
@@ -249,6 +253,7 @@ pub fn scope_requests(keys: &[String], known: &HashSet<String>) -> Vec<ScopeRequ
         let Some(book) = crate::books::by_id(book_id) else { continue };
         add(format!("chapter:{book_id}.{chapter}"), format!("chapter {chapter} of the book of {}", book.en));
         add(format!("book:{book_id}"), format!("the book of {}", book.en));
+        add(format!("history:{book_id}"), format!("the historical and political setting of the book of {}", book.en));
     }
     out
 }
@@ -261,6 +266,7 @@ const SPEAKER_SYSTEM: &str = "Reply with JSON only, shaped as {\"speaker\":\"<na
 const SCOPE_SYSTEM: &str = "You give a Bible teacher brief background. Reply with JSON only, shaped as {\"context\":\"<two or three short sentences>\"}. \
     For a book: who wrote it, who it was written to, and why. \
     For a chapter: who is being addressed, what happens or is discussed in that chapter, and its main point. \
+    For a historical and political setting: the period, which nation or empire held power, who ruled, and the circumstances of the people at that time. Leave out any date or ruler you are unsure of. \
     Be specific to that item, and do not describe the whole book when asked about one chapter. \
     State only what is widely accepted, and if you are unsure, say so rather than guessing. \
     Never quote scripture, and never cite chapter and verse numbers.";
@@ -326,6 +332,25 @@ pub async fn request_speaker(client: &reqwest::Client, base_url: &str, model: &s
 pub async fn request_scope(client: &reqwest::Client, base_url: &str, model: &str, label: &str) -> Result<Option<String>, String> {
     let reply = ask_json(client, base_url, model, SCOPE_SYSTEM, &format!("Background on: {label}")).await?;
     Ok(reply.get("context").and_then(|c| c.as_str()).and_then(|t| clean_text(t, MAX_SCOPE_CHARS)))
+}
+
+const TRANSLATE_SYSTEM: &str = "Translate the user's text into Tagalog (Filipino). Reply with JSON only, shaped as {\"tagalog\":\"<translation>\"}. \
+    Translate everything, keep the meaning exactly, and add nothing. Use the Tagalog Bible names of people and books, \
+    such as Pablo for Paul, Pedro for Peter and Colosas for Colossians.";
+
+const MAX_TRANSLATION_CHARS: usize = 8000;
+
+/// A translation is kept only if it reads as Tagalog: small models often answer in English.
+/// Names are too short to tell, so they pass.
+fn clean_translation(reply: &str, source: &str) -> Option<String> {
+    let text = clean_text(reply, MAX_TRANSLATION_CHARS)?;
+    let short = text.split_whitespace().count() <= 3;
+    (short || (crate::language::is_tagalog(&text) && text != source.trim())).then_some(text)
+}
+
+pub async fn request_tagalog(client: &reqwest::Client, base_url: &str, model: &str, text: &str) -> Result<Option<String>, String> {
+    let reply = ask_json(client, base_url, model, TRANSLATE_SYSTEM, &format!("Translate into Tagalog: {text}")).await?;
+    Ok(reply.get("tagalog").and_then(|c| c.as_str()).and_then(|t| clean_translation(t, text)))
 }
 
 pub struct NotesResult {
@@ -402,9 +427,41 @@ mod tests {
         let keys = vec!["60.2:9-10".to_string(), "60.2:11".to_string(), "60.3:1".to_string(), "19.138:7-8,2".to_string(), "bad".to_string(), "999.1:1".to_string()];
         let requests = scope_requests(&keys, &HashSet::from(["book:19".to_string()]));
         let scopes: Vec<&str> = requests.iter().map(|r| r.scope.as_str()).collect();
-        assert_eq!(scopes, vec!["chapter:60.2", "book:60", "chapter:60.3", "chapter:19.138"]);
+        assert_eq!(scopes, vec!["chapter:60.2", "book:60", "history:60", "chapter:60.3", "chapter:19.138", "history:19"]);
         assert!(requests[0].label.starts_with("chapter 2 of the book of "), "{}", requests[0].label);
         assert!(requests[1].label.starts_with("the book of "), "{}", requests[1].label);
+        assert!(requests[2].label.starts_with("the historical and political setting of the book of "), "{}", requests[2].label);
+    }
+
+    #[test]
+    fn a_translation_must_read_as_tagalog_and_cannot_cite_verses() {
+        let source = "The book was written to the church by the apostle.";
+        assert!(clean_translation("Ang aklat ay isinulat para sa iglesia ng apostol.", source).is_some());
+        assert_eq!(clean_translation(source, source), None, "an English reply is not a translation");
+        assert_eq!(clean_translation("The letter was sent to all of the people.", source), None);
+        assert_eq!(clean_translation("Pablo", "Paul").as_deref(), Some("Pablo"), "names are too short to judge");
+        assert_eq!(clean_translation("Ayon sa Juan 3:16 ang aklat ay para sa mga tao.", source), None);
+        assert_eq!(clean_translation("", source), None);
+    }
+
+    #[test]
+    fn repeating_a_verse_in_more_translations_does_not_raise_its_rank() {
+        let c = library();
+        c.execute_batch("DELETE FROM verses;").unwrap();
+        let add = |id: &str, key: &str, version: &str, text: &str| {
+            c.execute(
+                "INSERT INTO verses (id,user_id,canonical_key,book_id,ref_printed,ref_en,ref_tl,version,language,text,text_sha256,ocr_raw,status,created_at)
+                 VALUES (?1,'u',?2,1,'r','r','r',?3,'en',?4,'h',?1,'unverified','now')",
+                params![id, key, version, text],
+            )
+            .unwrap();
+        };
+        add("once", "1.1:1", "A", "election election election of people");
+        for (i, version) in ["B", "C", "D", "E", "F"].iter().enumerate() {
+            add(&format!("rep{i}"), "1.1:2", version, "the election of many other different people written in a longer verse here");
+        }
+        let found = retrieve(&c, "u", "", "election", 5).unwrap();
+        assert_eq!(found[0].canonical_key, "1.1:1", "the closer match wins, not the more repeated one");
     }
 
     #[test]

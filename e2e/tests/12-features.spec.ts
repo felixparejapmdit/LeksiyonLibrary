@@ -34,6 +34,9 @@ async function ask(page: Page, objective: string) {
   await page.getByTestId('lecture-suggest').click();
   await expect(page.getByTestId('suggestions')).toBeVisible();
   await expect(page.getByTestId('notes-loading')).toHaveCount(0, { timeout: 15_000 });
+  // Details stay folded away until asked for.
+  const toggles = page.getByTestId('verse-context-toggle');
+  for (let i = 0; i < (await toggles.count()); i++) await toggles.nth(i).click();
 }
 
 test.describe('review queue', () => {
@@ -150,7 +153,7 @@ test.describe('reviewing AI context', () => {
       await setAiMode('down');
       await ask(page, 'vocation');
       await page.getByTestId('context-edit').click();
-      for (const field of ['context-speaker', 'context-chapter', 'context-book', 'context-note']) await page.getByTestId(field).fill('');
+      for (const field of ['context-speaker', 'context-chapter', 'context-book', 'context-history', 'context-note']) await page.getByTestId(field).fill('');
       await page.getByTestId('context-save').click();
       await expect(page.getByTestId('verse-context')).toHaveCount(0);
       await expect(page.getByTestId('context-edit')).toContainText('Add speaker and context');
@@ -183,7 +186,7 @@ test.describe('reviewing AI context', () => {
       expect(new Set(books).size, 'the same book, the same context').toBe(1);
 
       const stored: any = await (await page.request.get('/api/scripture-context')).json();
-      expect(Object.keys(stored).sort()).toEqual(['book:43', 'chapter:43.3', 'chapter:43.4']);
+      expect(Object.keys(stored).sort()).toEqual(['book:43', 'chapter:43.3', 'chapter:43.4', 'history:43']);
 
       // A correction reaches every verse in that chapter, and no others.
       const john3 = page.getByTestId('suggestion').filter({ hasText: 'John 3:5' });
@@ -245,6 +248,7 @@ test.describe('objective groups', () => {
       await expect(page.getByTestId('workspace-objective')).toHaveText(['planting', 'walking']);
 
       // Context can be reviewed from the workspace too.
+      await page.getByTestId('workspace-context-toggle').first().click();
       await page.getByTestId('workspace-context-edit').first().click();
       await expect(page.getByTestId('context-chapter')).toHaveValue(/STUB-CHAPTER/);
       await page.getByTestId('context-cancel').click();

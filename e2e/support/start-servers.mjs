@@ -27,6 +27,8 @@ function embed(text) {
 
 let mode = 'good';
 let lastPrompt = null;
+// The sheet that the stand-in for Google answers with. Synthetic, like all test data.
+let sheet = { status: 200, type: 'text/csv; charset=utf-8', body: '' };
 
 const stub = createServer((req, res) => {
   let body = '';
@@ -41,6 +43,14 @@ const stub = createServer((req, res) => {
       return send(200, { mode });
     }
     if (req.url === '/__last') return send(200, { lastPrompt });
+    if (req.url === '/__sheet') {
+      sheet = { ...sheet, status: 200, type: 'text/csv; charset=utf-8', ...JSON.parse(body) };
+      return send(200, {});
+    }
+    if (req.url.startsWith('/spreadsheets/d/')) {
+      res.writeHead(sheet.status, { 'Content-Type': sheet.type });
+      return res.end(sheet.body);
+    }
     if (mode === 'down') return req.socket.destroy();
     if (req.url === '/api/tags') return send(200, { models: [{ name: 'llama3.2:3b' }, { name: 'bge-m3:latest' }] });
     if (req.url === '/api/embed') return send(200, { embeddings: JSON.parse(body).input.map(embed) });
@@ -51,9 +61,19 @@ const stub = createServer((req, res) => {
         const speaker = mode === 'hostile' ? 'See John 3:16' : `STUB-SPEAKER-${verse[1].length}`;
         return send(200, { message: { content: JSON.stringify({ speaker }) } });
       }
+      const translation = /Translate into Tagalog: ([^"]+)/.exec(body);
+      if (translation) {
+        if (mode === 'hostile') return send(200, { message: { content: JSON.stringify({ tagalog: 'This reply stayed in English and it is of no use to the people.' }) } });
+        const tagalog = `STUB-TAGALOG ang mga ito ay para sa kanila: ${translation[1]}`;
+        return send(200, { message: { content: JSON.stringify({ tagalog }) } });
+      }
       const scope = /Background on: ([^"]+)/.exec(body);
       if (scope) {
         const isChapter = scope[1].startsWith('chapter');
+        if (scope[1].startsWith('the historical')) {
+          if (mode === 'hostile') return send(200, { message: { content: JSON.stringify({ context: 'See Romans 13:1 for this.' }) } });
+          return send(200, { message: { content: JSON.stringify({ context: `STUB-HISTORY: ${scope[1]}.` }) } });
+        }
         const context =
           mode === 'hostile'
             ? isChapter
@@ -93,6 +113,7 @@ const app = spawn(exe, [], {
     LV_STATIC: join(root, 'frontend', 'dist'),
     LV_OLLAMA_URL: `http://127.0.0.1:${STUB_PORT}`,
     LV_OLLAMA_MODEL: 'llama3.2:3b',
+    LV_SHEETS_URL: `http://127.0.0.1:${STUB_PORT}`,
   },
   stdio: 'inherit',
 });

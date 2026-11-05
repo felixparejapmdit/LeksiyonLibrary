@@ -77,10 +77,12 @@ export function Sidebar() {
       book: g.book,
       lessons: new Set(g.items.flatMap((v) => v.sources.map((x) => x.lesson_id))).size,
     }));
-    return seen.sort((a, b) => a.book - b.book || a.label.localeCompare(b.label, undefined, { numeric: true }));
+    // This list filters lessons, so verses that only came from an import have no place in it.
+    return seen.filter((g) => g.lessons > 0).sort((a, b) => a.book - b.book || a.label.localeCompare(b.label, undefined, { numeric: true }));
   }, [verses]);
 
   const shownGroups = useProgressive(groups, 60);
+  const referenceCount = useMemo(() => new Set(verses.map((v) => v.canonical_key)).size, [verses]);
 
   const allActive = route === '/' && f.category === 'all' && f.year === null && !f.verseKey && !f.folderId && !f.query;
 
@@ -111,7 +113,7 @@ export function Sidebar() {
         </button>
         <button className={rowClass(route === '/bibles')} data-testid="side-bibles" onClick={() => navigate('/bibles')}>
           <BookMarked size={15} className="flex-none" /> Bibles Library
-          <Count n={groups.length} />
+          <Count n={referenceCount} testId="side-bibles-count" />
         </button>
         <button className={rowClass(route === '/lecture')} data-testid="side-lecture" onClick={() => navigate('/lecture')}>
           <Sparkles size={15} className="flex-none" /> Lecture Maker

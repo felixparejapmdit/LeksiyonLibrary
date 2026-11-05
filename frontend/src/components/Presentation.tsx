@@ -2,8 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowLeft, ArrowRight, Info, X } from 'lucide-react';
 import type { Verse } from '../api';
-import { useStore } from '../store';
-import { backgroundOf, scopeNames } from './VerseContext';
+import { setContextLanguage, useStore } from '../store';
+import { backgroundOf, ContextLanguageSwitch, ContextLines } from './VerseContext';
 
 export interface Slide {
   verse: Verse;
@@ -15,6 +15,8 @@ export function PresentationMode({ title, slides, onClose }: { title: string; sl
   const verses = useStore((s) => s.verses);
   const contexts = useStore((s) => s.contexts);
   const scripture = useStore((s) => s.scripture);
+  const tagalog = useStore((s) => s.tagalog);
+  const language = useStore((s) => s.contextLanguage);
   const [index, setIndex] = useState(0);
   const [showContext, setShowContext] = useState(false);
   const next = useCallback(() => setIndex((i) => Math.min(i + 1, slides.length - 1)), [slides.length]);
@@ -45,10 +47,10 @@ export function PresentationMode({ title, slides, onClose }: { title: string; sl
   const slide = slides[index];
   if (!slide) return null;
   const { verse, objective } = slide;
-  // The chosen edition first, then the same reference in the other language.
-  const editions = [verse, ...verses.filter((v) => v.canonical_key === verse.canonical_key && v.language !== verse.language && v.text)];
-  const context = backgroundOf({ contexts, scripture }, verse.canonical_key);
-  const names = scopeNames(verse.ref_en);
+  // The chosen edition first, then one of the same reference in the other language.
+  const other = verses.find((v) => v.canonical_key === verse.canonical_key && v.language !== verse.language && v.text);
+  const editions = other ? [verse, other] : [verse];
+  const context = backgroundOf({ contexts, scripture, tagalog }, verse.canonical_key, language);
 
   return createPortal(
     <div className="fixed inset-0 z-[60] flex flex-col bg-bg text-fg" role="dialog" aria-modal="true" aria-label={`Presenting ${title}`} data-testid="present">
@@ -72,11 +74,10 @@ export function PresentationMode({ title, slides, onClose }: { title: string; sl
           </div>
           {showContext && !context.empty && (
             <div className="mt-8 border-t border-line pt-4 text-lg text-accent2" data-testid="present-context-text">
-              {!context.reviewed && <p className="m-0 mb-1 text-sm font-semibold">AI context, not scripture. Review before use.</p>}
-              {context.speaker && <p className="m-0"><span className="font-semibold">Speaker: </span>{context.speaker}</p>}
-              {context.verseNote && <p className="m-0"><span className="font-semibold">Verse note: </span>{context.verseNote}</p>}
-              {context.chapter && <p className="m-0 mt-2"><span className="font-semibold">Chapter context ({names.chapter}): </span>{context.chapter}</p>}
-              {context.book && <p className="m-0 mt-2"><span className="font-semibold">Book context ({names.book}): </span>{context.book}</p>}
+              <ContextLanguageSwitch language={language} onChange={setContextLanguage} testId="present-context-language" />
+              <div className="[&_span.block]:mt-2">
+                <ContextLines verseKey={verse.canonical_key} reference={verse.ref_en} referenceTl={verse.ref_tl} testId="present-context-lines" />
+              </div>
             </div>
           )}
         </div>

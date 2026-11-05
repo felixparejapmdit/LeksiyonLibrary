@@ -311,3 +311,16 @@ Added at the project owner's choice: a verse review queue, editable AI context, 
 
 **Mac support** wraps the vault key with a master key in the Mac Keychain, as DPAPI does on Windows. The rest of the code was already cross-platform. **It has not been run on a Mac.** It was written on Windows, where only the Mac-specific key code could be type-checked against a Mac target, not built or run. Safari is also untested; Chrome is the tested browser.
 
+### 15. Verse import, three contexts in two languages, a paged library (5 November 2026)
+
+**Import.** Settings takes an Excel file or a Google Sheet, previews what will happen, and saves nothing until confirmed. The existing `verses.version` column holds the translation; a new `import_source` column records the file and row. Language is detected per row from common words, because the sample sheet files Tagalog text under codes such as MSG and AMP. Measured on a real 998-row sheet: 882 new verses, 111 repeated rows skipped, 5 rows left for the owner to fix because a book had no number, 8 flagged because the printed number and the verse disagree. The Excel and Google routes gave identical results. A scan of the vault afterwards found no readable verse text.
+
+**Google Sheets is the one exception to local-only.** It works only for a sheet shared as Anyone with the link, which anyone holding the link can read. Signing in to Google would avoid that, but needs a registered app and stored tokens, so it was not added. Excel remains the private route, and the screen says so.
+
+**Context.** Details are folded until opened, and still print. A historical and political context was added per book. Tagalog wording is stored separately, translated only when first read, and reviewed separately, so a translation of reviewed English stays labelled as AI.
+
+**Accuracy, measured on the real model (`llama3.2:3b`).** It is often wrong on exactly what this feature asks of it. It placed Colossians under Tiberius and described II Samuel's period with Solomon and a divided kingdom. Its Tagalog rendered "letter" as "tulay" (bridge). Everything stays labelled until reviewed, and a stronger model or owner-written text would be needed for this to be relied on.
+
+**Library.** The Bibles Library pages by reference, with book and translation filters. Keeping every verse in memory was kept, since all of it loads in about 70 ms, and search text, sort order and page position are cached in memory only, so nothing readable reaches the disk or the browser's cache.
+
+**Test results:** Rust 79 of 79, Playwright 143 of 143 in one full run, with the new test file run again after one last small fix. Tests use made-up verses and a stand-in for both the model and Google.
