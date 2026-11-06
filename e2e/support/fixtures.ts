@@ -166,6 +166,21 @@ export const test = base.extend<{ errors: string[]; guard: void; app: Page }>({
 export const TEST_PASSPHRASE = 'a long test passphrase';
 
 /** Runs a test on an empty vault, then puts the shared test library back. */
+/** Lesson PDFs are uploaded from the Lesson Library page, which this opens first if needed. */
+export async function openLessonUpload(page: Page) {
+  const button = page.getByTestId('lesson-upload');
+  if (!(await button.isVisible())) {
+    const side = page.getByTestId('side-lessons');
+    if (!(await side.isVisible())) {
+      // On a phone the libraries are in the drawer, which the lesson list opens.
+      if (!(await page.getByTestId('open-drawer').isVisible())) await page.getByTestId('brand').click();
+      await page.getByTestId('open-drawer').click();
+    }
+    await side.click();
+  }
+  await button.click();
+}
+
 export async function withEmptyVault(page: Page, body: () => Promise<void>) {
   const saved = await (await page.request.post('/api/backup', { data: { passphrase: TEST_PASSPHRASE } })).body();
   const wipe = () => page.request.post('/api/reset', { data: { confirm: 'RESET' } });

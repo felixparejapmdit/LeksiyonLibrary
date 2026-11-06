@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import type { Page } from '@playwright/test';
-import { test, expect, row, assertSmooth, resetPerf } from '../support/fixtures';
+import { test, expect, row, assertSmooth, resetPerf, openLessonUpload } from '../support/fixtures';
 import { samples } from '../support/samples';
 import { makePdf, midweekLesson, notAPdf, pastoralLesson, textFile, weekendEnglishLesson } from '../support/pdf';
 
@@ -11,20 +11,21 @@ const waitForFinished = async (page: Page, count: number, timeout = 15_000) => {
 };
 
 test('the upload dialog opens and closes every way', async ({ app: page }) => {
+  await expect(page.getByTestId('header').getByText('Upload PDF'), 'uploading is done in the Lesson Library').toHaveCount(0);
   await page.getByTestId('empty-upload').click();
   await expect(page.getByTestId('upload-dialog')).toBeVisible();
   await page.getByTestId('upload-dialog-close').click();
   await expect(page.getByTestId('upload-dialog')).toHaveCount(0);
 
-  await page.getByTestId('header-upload').click();
+  await openLessonUpload(page);
   await page.keyboard.press('Escape');
   await expect(page.getByTestId('upload-dialog')).toHaveCount(0);
 
-  await page.getByTestId('header-upload').click();
+  await openLessonUpload(page);
   await page.getByTestId('upload-dialog-backdrop').click({ position: { x: 4, y: 4 } });
   await expect(page.getByTestId('upload-dialog')).toHaveCount(0);
 
-  await page.getByTestId('header-upload').click();
+  await openLessonUpload(page);
   const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.getByTestId('upload-browse').click()]);
   expect(chooser.isMultiple()).toBe(true);
   await page.getByTestId('upload-done').click();
@@ -32,7 +33,7 @@ test('the upload dialog opens and closes every way', async ({ app: page }) => {
 });
 
 test('a non-PDF and a corrupt PDF are refused with a clear message', async ({ app: page }) => {
-  await page.getByTestId('header-upload').click();
+  await openLessonUpload(page);
   await page.getByTestId('upload-input').setInputFiles([textFile, notAPdf]);
   await waitForFinished(page, 2);
   const messages = page.getByTestId('upload-message');
@@ -42,10 +43,12 @@ test('a non-PDF and a corrupt PDF are refused with a clear message', async ({ ap
 });
 
 test('digital PDFs are read from their text layer and categorised', async ({ app: page }) => {
-  await page.getByTestId('header-upload').click();
+  await openLessonUpload(page);
   await page.getByTestId('upload-input').setInputFiles([midweekLesson, pastoralLesson, weekendEnglishLesson]);
   await waitForFinished(page, 3);
   await page.getByTestId('upload-done').click();
+  await expect(page.getByTestId('item-count'), 'the Lesson Library leaves out the pastoral visit').toHaveText('2 items');
+  await page.getByTestId('side-all').click();
 
   await expect(page.getByTestId('item-count')).toHaveText('3 items');
   await expect(page.getByTestId('tab-count-midweek')).toHaveText('1');
@@ -58,7 +61,7 @@ test('digital PDFs are read from their text layer and categorised', async ({ app
 });
 
 test('uploading the same PDF twice is refused', async ({ app: page }) => {
-  await page.getByTestId('header-upload').click();
+  await openLessonUpload(page);
   await page.getByTestId('upload-input').setInputFiles([midweekLesson]);
   await waitForFinished(page, 1);
   await expect(page.getByTestId('upload-message')).toContainText('already in your vault');
@@ -67,11 +70,16 @@ test('uploading the same PDF twice is refused', async ({ app: page }) => {
 
 test('real scanned samples go through OCR while the UI stays responsive', async ({ app: page }) => {
   test.setTimeout(420_000);
-  await page.getByTestId('header-upload').click();
+  await openLessonUpload(page);
   await page.getByTestId('upload-input').setInputFiles([samples.pdfs.tl, samples.pdfs.en]);
   await expect(page.getByTestId('upload-message').first()).toContainText('Recognizing text', { timeout: 30_000 });
   await page.getByTestId('upload-done').click();
-  await expect(page.getByTestId('header-upload')).toContainText('Processing');
+  // Files keep processing on any page, and the header says so.
+  await page.getByTestId('side-all').click();
+  await expect(page.getByTestId('header-processing')).toContainText('Processing 2');
+  await page.getByTestId('header-processing').click();
+  await expect(page.getByTestId('upload-dialog')).toBeVisible();
+  await page.getByTestId('upload-done').click();
 
   // Use the app during OCR: nothing may stall while pages are being recognized.
   await resetPerf(page);
@@ -87,7 +95,7 @@ test('real scanned samples go through OCR while the UI stays responsive', async 
 
   await expect(page.getByTestId('toast').filter({ hasText: samples.tl.short })).toBeVisible({ timeout: 240_000 });
   await expect(page.getByTestId('toast').filter({ hasText: samples.en.short })).toBeVisible({ timeout: 240_000 });
-  await expect(page.getByTestId('header-upload')).toContainText('Upload PDF');
+  await expect(page.getByTestId('header-processing')).toHaveCount(0);
 
   await expect(row(page, samples.tl.row)).toContainText(samples.tl.date);
   await expect(row(page, samples.tl.row)).toContainText(samples.author);

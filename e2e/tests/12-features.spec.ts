@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import AdmZip from 'adm-zip';
 import type { Page } from '@playwright/test';
-import { test, expect, setAiMode, withEmptyVault, TEST_PASSPHRASE, fillObjectives } from '../support/fixtures';
+import { test, expect, setAiMode, withEmptyVault, TEST_PASSPHRASE, fillObjectives, openLessonUpload } from '../support/fixtures';
 import { makePdf } from '../support/pdf';
 
 /** A made-up lesson with two printed verses, each on its own citation line. */
@@ -542,7 +542,7 @@ test.describe('folder import', () => {
       // A folder with no PDFs says so.
       const empty = mkdtempSync(join(tmpdir(), 'lv-folder-'));
       writeFileSync(join(empty, 'notes.txt'), 'not a pdf');
-      await page.getByTestId('header-upload').click();
+      await openLessonUpload(page);
       const [again] = await Promise.all([page.waitForEvent('filechooser'), page.getByTestId('upload-folder').click()]);
       await again.setFiles(empty);
       await expect(page.getByTestId('toast').filter({ hasText: 'has no PDF files' })).toBeVisible();

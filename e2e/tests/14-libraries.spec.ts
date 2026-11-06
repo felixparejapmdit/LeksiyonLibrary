@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import { test, expect, setAiMode, withEmptyVault } from '../support/fixtures';
+import { test, expect, setAiMode, withEmptyVault, openLessonUpload } from '../support/fixtures';
 import { midweekLesson } from '../support/pdf';
 import { xlsx } from '../support/xlsx';
 
@@ -31,7 +31,7 @@ test.describe('checking an uploaded lesson', () => {
   test('what was read is compared with the PDF, corrected, and confirmed', async ({ page }) => {
     await withEmptyVault(page, async () => {
       await page.goto('/');
-      await page.getByTestId('header-upload').click();
+      await openLessonUpload(page);
       await page.getByTestId('upload-input').setInputFiles([midweekLesson]);
       await expect(page.getByTestId('upload-item')).toHaveAttribute('data-status', 'done', { timeout: 15_000 });
       const [lesson] = await lessons(page);
@@ -109,7 +109,7 @@ test.describe('checking an uploaded lesson', () => {
       await expect(page.getByTestId('edit-confirm')).toHaveCount(0);
       await expect(dialog).toHaveAccessibleName('Edit lesson details');
       await page.getByTestId('edit-cancel').click();
-      await page.getByTestId('header-upload').click();
+      await openLessonUpload(page);
       await expect(page.getByTestId('upload-checked')).toHaveText('Checked');
       await page.getByTestId('upload-done').click();
     });

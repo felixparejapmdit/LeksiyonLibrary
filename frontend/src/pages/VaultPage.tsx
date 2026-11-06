@@ -106,6 +106,11 @@ export function VaultPage() {
             </button>
           )}
           <h1 className="m-0 min-w-0 truncate text-lg font-semibold" data-testid="list-title">{title}</h1>
+          {scope === 'lessons' && (
+            <button className="btn btn-primary !min-h-[34px] max-lg:!min-h-11" data-testid="lesson-upload" aria-label="Upload PDF" onClick={() => openUpload('lesson')}>
+              <UploadCloud size={14} /> <span className="max-sm:sr-only">Upload PDF</span>
+            </button>
+          )}
           <label className="ml-auto flex items-center gap-1 text-muted">
             <ArrowDownUp size={13} />
             <span className="sr-only">Sort lessons</span>

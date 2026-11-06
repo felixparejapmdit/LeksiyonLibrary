@@ -313,13 +313,13 @@ export function LecturePage() {
               Describe the issue and objective. Suggestions come from the verses in both your Verse Library and your Lesson Library, shown exactly as stored, and each one is labelled with where it came from.
             </p>
           </div>
-          <form className="no-print space-y-2 rounded-lg border border-line bg-panel p-3" onSubmit={suggest}>
+          <form className="no-print space-y-3 rounded-lg border border-line bg-panel p-3" onSubmit={suggest}>
             <label className="block text-xs text-muted">
               Issue or topic
               <textarea className="field mt-1 min-h-16" data-testid="lecture-issue" placeholder="What situation should this lecture address?" value={issue} onChange={(e) => setIssue(e.target.value)} />
             </label>
-            <fieldset className="m-0 space-y-1.5 border-0 p-0" data-testid="lecture-objectives">
-              <legend className="mb-1 p-0 text-xs text-muted">Objectives: up to {MAX_OBJECTIVES}, each given 3 to 5 verses</legend>
+            <fieldset className="m-0 space-y-2 border-0 p-0" data-testid="lecture-objectives">
+              <legend className="mb-1.5 p-0 text-xs text-muted">Objectives: up to {MAX_OBJECTIVES}, each given 3 to 5 verses</legend>
               {objectives.map((o, i) => (
                 <div key={i} className="flex items-center gap-1.5">
                   <span className="w-5 flex-none text-right text-xs text-muted tabular-nums">{i + 1}.</span>
@@ -351,15 +351,15 @@ export function LecturePage() {
               ))}
               <button
                 type="button"
-                className="btn !min-h-8 max-lg:!min-h-11"
+                className="btn ml-[26px] !min-h-8 border-dashed max-lg:!min-h-11"
                 data-testid="lecture-objective-add"
                 disabled={objectives.length >= MAX_OBJECTIVES}
                 onClick={() => setObjectives((all) => [...all, ''])}
               >
-                <Plus size={13} /> Add objective <span className="text-muted tabular-nums">{objectives.length} of {MAX_OBJECTIVES}</span>
+                <Plus size={13} /> Add objective <span className="ml-1 text-xs text-muted tabular-nums">{objectives.length} of {MAX_OBJECTIVES}</span>
               </button>
             </fieldset>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="-mx-3 flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-line px-3 pt-3" data-testid="lecture-actions">
               <button className="btn btn-primary" data-testid="lecture-suggest" disabled={searching || (!issue.trim() && !objective.trim())}>
                 <Sparkles size={14} /> Suggest verses
               </button>

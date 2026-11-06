@@ -69,6 +69,7 @@ test('All Archives, the Lesson Library and Pastoral Visits each list their own l
   await expect(page.getByTestId('item-count')).toHaveText(`${lessons.length - visits} items`);
   await expect(page.getByTestId('tab-pastoral')).toHaveCount(0);
   await expect(page.getByTestId('pv-drop')).toHaveCount(0);
+  await expect(page.getByTestId('lesson-upload')).toBeVisible();
   await page.getByTestId('tab-weekend').click();
   await expect(page.getByTestId('list-title')).toHaveText('Weekend');
 
@@ -78,18 +79,18 @@ test('All Archives, the Lesson Library and Pastoral Visits each list their own l
   await expect(page.getByTestId('item-count')).toHaveText(`${visits} ${visits === 1 ? 'item' : 'items'}`);
   await expect(page.getByTestId('category-tabs')).toHaveCount(0);
   await expect(page.getByTestId('pv-drop')).toContainText('Drop pastoral visit PDFs here');
-  // The header's upload goes to the list that is open.
-  await page.getByTestId('header-upload').click();
-  await expect(page.getByTestId('upload-dialog')).toHaveAccessibleName('Upload Pastoral Visit PDF');
-  await expect(page.getByTestId('upload-target')).toHaveText('Drop pastoral visit PDFs here or browse your device');
-  await page.getByTestId('upload-done').click();
+  await expect(page.getByTestId('lesson-upload'), 'lesson PDFs are uploaded in the Lesson Library').toHaveCount(0);
 
   // All Archives brings them together again.
   await page.getByTestId('side-all').click();
   await expect(page.getByTestId('list-title')).toHaveText('All Archives');
   await expect(page.getByTestId('item-count')).toHaveText(`${lessons.length} items`);
   await expect(page.getByTestId('tab-pastoral')).toBeVisible();
-  await page.getByTestId('header-upload').click();
+  await expect(page.getByTestId('lesson-upload')).toHaveCount(0);
+
+  // The Lesson Library has the upload for lesson PDFs.
+  await page.getByTestId('side-lessons').click();
+  await page.getByTestId('lesson-upload').click();
   await expect(page.getByTestId('upload-dialog')).toHaveAccessibleName('Ingest & Archive Lesson PDF');
   await page.getByTestId('upload-done').click();
 });

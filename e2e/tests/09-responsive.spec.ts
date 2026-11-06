@@ -1,4 +1,4 @@
-import { test, expect, row, resetPerf, assertSmooth, withEmptyVault } from '../support/fixtures';
+import { test, expect, row, resetPerf, assertSmooth, withEmptyVault, openLessonUpload } from '../support/fixtures';
 import { makePdf } from '../support/pdf';
 
 const VIEWPORTS = [
@@ -67,7 +67,7 @@ for (const vp of VIEWPORTS) {
     });
 
     test('dialogs fit the screen', async ({ app: page }) => {
-      await page.getByTestId('header-upload').click();
+      await openLessonUpload(page);
       const box = (await page.getByTestId('upload-dialog').boundingBox())!;
       expect(box.x).toBeGreaterThanOrEqual(0);
       expect(box.x + box.width).toBeLessThanOrEqual(vp.width);
@@ -104,7 +104,7 @@ test('walking through the whole app stays within performance budgets', async ({ 
     await expect(page.getByTestId('settings-page')).toBeVisible();
     await page.getByTestId('brand').click();
     await expect(page.getByTestId('vault-page')).toBeVisible();
-    await page.getByTestId('header-upload').click();
+    await openLessonUpload(page);
     await page.getByTestId('upload-done').click();
   }
   await assertSmooth(page, 'full app walk');

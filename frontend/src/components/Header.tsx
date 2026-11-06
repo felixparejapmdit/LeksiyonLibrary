@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { BookOpen, Download, Moon, PanelLeft, RotateCcw, Search, Settings, Sun, Upload, UploadCloud, X } from 'lucide-react';
+import { BookOpen, Download, Loader2, Moon, PanelLeft, RotateCcw, Search, Settings, Sun, Upload, X } from 'lucide-react';
 import { api } from '../api';
 import { forgetDocuments } from '../pdf';
 import {
@@ -8,7 +8,6 @@ import {
   getState,
   matchesFilters,
   navigate,
-  openUpload,
   refreshAll,
   resetFilters,
   setPanelPref,
@@ -146,10 +145,13 @@ export function Header() {
           <RotateCcw size={14} /> Reset
         </button>
       </div>
-      <button className="btn btn-primary" data-testid="header-upload" aria-label="Upload PDF" onClick={() => openUpload(location.pathname === '/' && getState().filters.scope === 'pastoral' ? 'pastoral' : 'lesson')}>
-        <UploadCloud size={15} />
-        <span className="hidden sm:inline">{uploading ? `Processing ${uploading}` : 'Upload PDF'}</span>
-      </button>
+      {/* Uploading is done in the Lesson Library and Pastoral Visits; files keep processing on any page, so that is shown here. */}
+      {uploading > 0 && (
+        <button className="btn" data-testid="header-processing" aria-label={`Processing ${uploading} ${uploading === 1 ? 'file' : 'files'}. Show progress`} onClick={() => setState({ uploadOpen: true })}>
+          <Loader2 size={14} className="animate-spin text-accent2" />
+          <span className="hidden sm:inline">Processing {uploading}</span>
+        </button>
+      )}
       <button
         className="icon-btn hidden lg:inline-flex"
         aria-label="Settings"
