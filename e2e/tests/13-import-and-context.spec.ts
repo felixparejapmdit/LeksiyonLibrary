@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import AdmZip from 'adm-zip';
 import type { Page } from '@playwright/test';
-import { test, expect, setAiMode, STUB, withEmptyVault, TEST_PASSPHRASE } from '../support/fixtures';
+import { test, expect, setAiMode, STUB, withEmptyVault, TEST_PASSPHRASE, fillObjectives } from '../support/fixtures';
 import { makePdf } from '../support/pdf';
 import { xlsx } from '../support/xlsx';
 
@@ -574,7 +574,7 @@ async function lessonVerse(page: Page) {
 
 async function ask(page: Page, objective = 'vocation') {
   await page.goto('/lecture');
-  await page.getByTestId('lecture-objective').fill(objective);
+  await fillObjectives(page, objective);
   await page.getByTestId('lecture-suggest').click();
   await expect(page.getByTestId('suggestions')).toBeVisible();
   await expect(page.getByTestId('notes-loading')).toHaveCount(0, { timeout: 15_000 });

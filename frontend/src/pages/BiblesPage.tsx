@@ -157,7 +157,7 @@ const startView = (): View => ({ ...NO_FILTERS, layout: storedLayout(), left: 'l
 const savedViews: Record<Library, View> = { verse: startView(), lesson: startView() };
 let importOpen: boolean | null = null;
 
-/** Importing from a sheet is how verses come into the Verse Library, so it is done here. */
+/** Importing from a sheet is one way verses come into the Verse Library, so it is done here. Pastoral visit PDFs are the other. */
 function ImportPanel({ imported, rowsToFix }: { imported: number; rowsToFix: number }) {
   const [open, setOpen] = useState(importOpen ?? imported === 0);
   useEffect(() => {
@@ -383,7 +383,7 @@ function ParallelSide({ verses, side, query, testId }: { verses: Verse[]; side: 
 }
 
 /**
- * One library's verses. The Verse Library holds verses imported from sheets; the
+ * One library's verses. The Verse Library holds verses read from pastoral visits and imported from sheets; the
  * Lesson Library's verses are the ones read from lesson PDFs.
  */
 export function BiblesPage({ library }: { library: Library }) {
@@ -487,8 +487,8 @@ export function BiblesPage({ library }: { library: Library }) {
         <p className="m-0 mt-0.5 mb-3 flex items-start gap-1.5 text-[13px] text-muted" data-testid="bibles-policy">
           <BadgeCheck size={15} className="mt-0.5 flex-none text-ok" />
           {library === 'verse'
-            ? 'Verses imported from your Excel files and Google Sheets. Verses read from lesson PDFs are kept apart, in the Lesson Library.'
-            : 'Verses read from your lesson PDFs, exactly as printed or scanned. Imported verses are kept apart, in the Verse Library.'}{' '}
+            ? 'Verses read from your pastoral visit PDFs and imported from your Excel files and Google Sheets. Verses read from worship service lessons are kept apart, in the Lesson Library.'
+            : 'Verses read from your worship service lesson PDFs, exactly as printed or scanned. Verses from pastoral visits and sheets are kept apart, in the Verse Library.'}{' '}
           Verified text is locked permanently, and the AI can never change it. {stats.verified} of {stats.total} verified.
         </p>
         {library === 'verse' && <ImportPanel imported={imported} rowsToFix={rowsToFix} />}

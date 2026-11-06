@@ -38,13 +38,17 @@ const tabs: { id: Category | 'all'; label: string; icon: typeof Folder }[] = [
   { id: 'pastoral', label: 'Pastoral Visits', icon: MapPin },
 ];
 
+/** All Archives can show each category; the Lesson Library has no pastoral visits, and Pastoral Visits nothing else. */
 export function CategoryTabs({ pool }: { pool: Lesson[] }) {
   const active = useStore((s) => s.filters.category);
+  const scope = useStore((s) => s.filters.scope);
+  if (scope === 'pastoral') return null;
+  const shown = scope === 'lessons' ? tabs.filter((t) => t.id !== 'pastoral') : tabs;
   const counts: Record<string, number> = { all: pool.length, midweek: 0, weekend: 0, pastoral: 0 };
   for (const l of pool) counts[l.category]++;
   return (
     <div className="flex gap-1.5 overflow-x-auto pb-1" role="tablist" aria-label="Lesson category" data-testid="category-tabs">
-      {tabs.map(({ id, label, icon: Icon }) => (
+      {shown.map(({ id, label, icon: Icon }) => (
         <button
           key={id}
           role="tab"

@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import { test, expect, setAiMode, assertSmooth, resetPerf, withEmptyVault } from '../support/fixtures';
+import { test, expect, setAiMode, assertSmooth, resetPerf, withEmptyVault, fillObjectives } from '../support/fixtures';
 import { makePdf } from '../support/pdf';
 
 test.beforeEach(async ({ app: page }) => {
@@ -10,7 +10,7 @@ test.beforeEach(async ({ app: page }) => {
 
 const ask = async (page: Page, issue = 'Members are losing appreciation for their election', objective = 'Teach that God chose his people and we should value this') => {
   await page.getByTestId('lecture-issue').fill(issue);
-  await page.getByTestId('lecture-objective').fill(objective);
+  await fillObjectives(page, objective);
   await page.getByTestId('lecture-suggest').click();
   await expect(page.getByTestId('suggestions')).toBeVisible();
 };
@@ -156,25 +156,41 @@ async function verseCounts(page: Page) {
   return page.getByTestId('objective-group').evaluateAll((els) => els.map((e) => e.querySelectorAll('[data-testid="suggestion"]').length));
 }
 
-test('each objective gets its own group of the chosen number of verses', async ({ page }) => {
-  await page.getByTestId('lecture-issue').fill('Members are losing appreciation for their election');
-  await page.getByTestId('lecture-objective').fill(OBJECTIVES);
-  for (const n of ['3', '4', '5']) {
-    await page.getByTestId('lecture-coverage').selectOption(n);
-    await page.getByTestId('lecture-suggest').click();
-    await expect(page.getByTestId('objective-title')).toHaveText(['Teach that God chose his people', 'Explain how to serve God faithfully']);
-    await expect.poll(async () => (await verseCounts(page)).every((c) => c === Number(n))).toBe(true);
-    await expect(page.getByTestId('objective-shortfall')).toHaveCount(0);
-    await expect(page.getByTestId('notes-loading')).toHaveCount(0, { timeout: 10_000 });
-  }
-});
+const keysOf = (page: Page, group: number) =>
+  page.getByTestId('objective-group').nth(group).getByTestId('suggestion').evaluateAll((els) => els.map((e) => e.getAttribute('data-key')));
 
-test('best matches overall still gives one list', async ({ page }) => {
-  await page.getByTestId('lecture-coverage').selectOption('best');
-  await ask(page);
-  await expect(page.getByTestId('objective-group')).toHaveCount(1);
-  await expect(page.getByTestId('objective-title')).toHaveCount(0);
-  await expect(page.getByTestId('suggestion').first()).toBeVisible();
+test('each objective gets up to five verses, and an objective added later gets its own', async ({ page }) => {
+  await expect(page.getByTestId('lecture-coverage'), 'there is no number of verses to choose').toHaveCount(0);
+  await page.getByTestId('lecture-issue').fill('Members are losing appreciation for their election');
+  await fillObjectives(page, OBJECTIVES);
+  await page.getByTestId('lecture-suggest').click();
+  await expect(page.getByTestId('objective-title')).toHaveText(['Teach that God chose his people', 'Explain how to serve God faithfully']);
+  await expect.poll(async () => (await verseCounts(page)).every((c) => c === 5)).toBe(true);
+  await expect(page.getByTestId('objective-shortfall')).toHaveCount(0);
+  await notesDone(page);
+  const first = await keysOf(page, 0);
+
+  // A third objective gets its own verses; those already found for the others stay.
+  await page.getByTestId('lecture-objective-add').click();
+  await page.getByTestId('lecture-objective').nth(2).fill('Show that God keeps his promises to his people');
+  await page.getByTestId('lecture-suggest').click();
+  await expect(page.getByTestId('objective-title')).toHaveCount(3);
+  await expect(page.getByTestId('objective-title').nth(2)).toHaveText('Show that God keeps his promises to his people');
+  expect(await keysOf(page, 0)).toEqual(first);
+  await notesDone(page);
+
+  // Four objectives at most.
+  await expect(page.getByTestId('lecture-objective-add')).toContainText('3 of 4');
+  await page.getByTestId('lecture-objective-add').click();
+  await expect(page.getByTestId('lecture-objective')).toHaveCount(4);
+  await expect(page.getByTestId('lecture-objective-add')).toBeDisabled();
+
+  // Removing an objective takes its verses away with it.
+  await page.getByTestId('lecture-objective-remove').nth(3).click();
+  await page.getByTestId('lecture-objective-remove').nth(2).click();
+  await expect(page.getByTestId('lecture-objective')).toHaveCount(2);
+  await expect(page.getByTestId('objective-title')).toHaveCount(2);
+  await expect(page.getByTestId('lecture-objective-add')).toBeEnabled();
 });
 
 test('a topic with no objectives still gets a group', async ({ page }) => {
@@ -199,21 +215,21 @@ test('too few matches says so and is not padded with unrelated verses', async ({
     await ask(page, '', 'xylophone\nZephyrword');
     await expect(page.getByTestId('objective-group')).toHaveCount(2);
     const [none, one] = [page.getByTestId('objective-group').nth(0), page.getByTestId('objective-group').nth(1)];
-    await expect(none.getByTestId('objective-shortfall')).toContainText('No verses in your library match this objective');
+    await expect(none.getByTestId('objective-shortfall')).toContainText('No verses in your libraries match this objective');
     await expect(none.getByTestId('suggestion')).toHaveCount(0);
     await expect(one.getByTestId('suggestion')).toHaveCount(1);
-    await expect(one.getByTestId('objective-shortfall')).toContainText('Only 1 of 3 found');
+    await expect(one.getByTestId('objective-shortfall')).toContainText('Only 1 found in your libraries');
     await expect(page.getByTestId('notes-loading')).toHaveCount(0, { timeout: 10_000 });
   });
 });
 
 test('every verse shows who is speaking and its context, labelled as AI', async ({ page }) => {
-  await page.getByTestId('lecture-objective').fill(OBJECTIVES);
+  await fillObjectives(page, OBJECTIVES);
   await page.getByTestId('lecture-suggest').click();
   await notesDone(page);
   const shown = await page.getByTestId('suggestion').count();
-  expect(shown).toBe(6);
-  await expect(page.getByTestId('verse-context')).toHaveCount(6);
+  expect(shown).toBe(10);
+  await expect(page.getByTestId('verse-context')).toHaveCount(10);
   await expect(page.getByTestId('verse-context').first()).toContainText('AI context, not scripture. Review before use.');
   await expect(page.getByTestId('verse-context-speaker').first()).toContainText('Speaker: STUB-SPEAKER-');
   await expect(page.getByTestId('verse-context-chapter').first()).toContainText(/Chapter context \(.+ \d+\): (STUB-CHAPTER|.+)/);
@@ -221,7 +237,7 @@ test('every verse shows who is speaking and its context, labelled as AI', async 
 });
 
 test('the context stays apart from the verse and follows it into the workspace and copy', async ({ page }) => {
-  await page.getByTestId('lecture-objective').fill('Teach that God chose his people');
+  await fillObjectives(page, 'Teach that God chose his people');
   await page.getByTestId('lecture-suggest').click();
   await notesDone(page);
   const stored: any[] = await (await page.request.get('/api/verses')).json();
@@ -256,7 +272,7 @@ test('the context stays apart from the verse and follows it into the workspace a
 test('a hostile model cannot put quotes, other verses or invented speakers in the context', async ({ page }) => {
   await setAiMode('hostile');
   const before: any[] = await (await page.request.get('/api/verses')).json();
-  await page.getByTestId('lecture-objective').fill(OBJECTIVES);
+  await fillObjectives(page, OBJECTIVES);
   await page.getByTestId('lecture-suggest').click();
   await notesDone(page);
   const body = await page.getByTestId('suggestions').textContent();
@@ -277,7 +293,7 @@ test('with the AI offline the verses and their lesson source still show', async 
     await setAiMode('down');
     await page.reload();
     await page.getByTestId('side-lecture').click();
-    await page.getByTestId('lecture-objective').fill('Zephyrword');
+    await fillObjectives(page, 'Zephyrword');
     await page.getByTestId('lecture-suggest').click();
     await expect(page.getByTestId('notes-offline')).toBeVisible();
     await expect(page.getByTestId('notes-loading')).toHaveCount(0);
@@ -288,13 +304,13 @@ test('with the AI offline the verses and their lesson source still show', async 
 });
 
 test('saved context is shown again without waiting for the AI', async ({ page }) => {
-  await page.getByTestId('lecture-objective').fill('Teach that God chose his people');
+  await fillObjectives(page, 'Teach that God chose his people');
   await page.getByTestId('lecture-suggest').click();
   await notesDone(page);
   await setAiMode('down');
   await page.reload();
   await page.getByTestId('side-lecture').click();
-  await page.getByTestId('lecture-objective').fill('Teach that God chose his people');
+  await fillObjectives(page, 'Teach that God chose his people');
   await page.getByTestId('lecture-suggest').click();
   await expect(page.getByTestId('verse-context-speaker').first()).toContainText('STUB-SPEAKER-');
   await setAiMode('good');

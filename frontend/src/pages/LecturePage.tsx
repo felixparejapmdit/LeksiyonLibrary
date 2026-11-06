@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, BookMarked, ChevronDown, Copy, FileDown, FilePlus2, FileText, Loader2, Lock, MonitorPlay, PencilLine, Plus, Printer, Save, Sparkles, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, BookMarked, ChevronDown, Copy, MapPin, FileDown, FilePlus2, FileText, Loader2, Lock, MonitorPlay, PencilLine, Plus, Printer, Save, Sparkles, Trash2, X } from 'lucide-react';
 import { PresentationMode } from '../components/Presentation';
 import { backgroundAsText, backgroundOf, ContextPanel } from '../components/VerseContext';
 import { api, saveFile, type Lecture, type LessonMatch, type Suggestion, type Verse } from '../api';
@@ -9,8 +9,8 @@ type NotesStatus = 'idle' | 'loading' | 'ready' | 'offline';
 type Group = {
   title: string | null;
   objective: string;
-  /** Verses asked for at a time; absent for best matches overall. */
-  count?: number;
+  /** Verses asked for at a time. */
+  count: number;
   logId: string;
   suggestions: Suggestion[];
   status: NotesStatus;
@@ -19,29 +19,40 @@ type Group = {
   exhausted: boolean;
   loadingMore: boolean;
 };
-type Coverage = 'best' | '3' | '4' | '5';
+/** A lecture has up to four objectives, and each is given up to five verses at a time. */
+const MAX_OBJECTIVES = 4;
+const PER_OBJECTIVE = 5;
+/** Fewer than this many found is said, rather than padded with verses that do not match. */
+const MIN_PER_OBJECTIVE = 3;
 
 const objectiveLines = (text: string) => text.split('\n').map((l) => l.trim()).filter(Boolean);
 
 /**
  * Where a verse came from, so verses from the two libraries are never mixed up: the
- * Verse Library (imported from a sheet) or the Lesson Library (read from a lesson PDF).
+ * Verse Library (imported from a sheet or read from a pastoral visit) or the Lesson
+ * Library (read from a worship service lesson PDF).
  */
 export function VerseOrigin({ verse }: { verse: Verse }) {
   const lessons = useStore((s) => s.lessons);
   const cited = verse.sources.flatMap((s) => {
     const lesson = lessons.find((l) => l.id === s.lesson_id);
-    return lesson ? [{ lesson, page: s.page }] : [];
+    return lesson ? [{ lesson, page: s.page, pastoral: s.pastoral }] : [];
   });
+  const visits = cited.filter((c) => c.pastoral);
   const badge = 'inline-flex max-w-full items-center gap-1 rounded border px-1.5 py-px text-[11px] font-medium';
   return (
     <span className="flex min-w-0 flex-wrap gap-1" data-testid="verse-origin">
-      {libraryOf(verse) === 'verse' && (
+      {libraryOf(verse) === 'verse' && (verse.import_source || visits.length === 0) && (
         <span className={`${badge} border-accent2/60 text-accent2`} data-testid="origin-verse-library" title={verse.import_source ? `Imported from ${verse.import_source}` : 'Kept in the Verse Library'}>
           <BookMarked size={11} className="flex-none" /><span className="truncate">Verse Library{verse.import_source ? ` · ${verse.import_source}` : ''}</span>
         </span>
       )}
-      {cited.map(({ lesson, page }) => (
+      {visits.map(({ lesson, page }) => (
+        <span key={lesson.id} className={`${badge} border-accent2/60 text-accent2`} data-testid="origin-pastoral" title={`Read from the pastoral visit ${lesson.title}, page ${page}`}>
+          <MapPin size={11} className="flex-none" /><span className="truncate">Verse Library · Pastoral visit: {lesson.title}, p.{page}</span>
+        </span>
+      ))}
+      {cited.filter((c) => !c.pastoral).map(({ lesson, page }) => (
         <span key={lesson.id} className={`${badge} border-pv/60 text-pv`} data-testid="origin-lesson-library" title={`Read from ${lesson.title}, page ${page}`}>
           <FileText size={11} className="flex-none" /><span className="truncate">Lesson Library · {lesson.title}, p.{page}</span>
         </span>
@@ -58,14 +69,15 @@ function FoundInLessons({ found }: { found: LessonMatch[] }) {
   const lessons = useStore((s) => s.lessons);
   if (found.length === 0) return null;
   return (
-    <ul className="m-0 mb-2 list-none space-y-1 rounded-md border border-pv/40 bg-pv/5 p-2 text-xs" data-testid="suggestion-lessons" aria-label="Found in the Lesson Library">
+    <ul className="m-0 mb-2 list-none space-y-1 rounded-md border border-pv/40 bg-pv/5 p-2 text-xs" data-testid="suggestion-lessons" aria-label="Found in these lessons">
       {found.map((m) => {
         const lesson = lessons.find((l) => l.id === m.lesson_id);
         const part = partName(m.section, lesson?.language ?? 'en', lesson?.objectives.length ?? 0);
         return (
           <li key={m.lesson_id} className="min-w-0" data-testid="suggestion-from-lesson">
             <span className="flex min-w-0 flex-wrap items-center gap-x-1.5">
-              <FileText size={12} className="flex-none text-pv" />
+              {m.pastoral ? <MapPin size={12} className="flex-none text-pv" /> : <FileText size={12} className="flex-none text-pv" />}
+              <span className="text-muted" data-testid="from-lesson-kind">{m.pastoral ? 'Pastoral visit' : 'Lesson'}</span>
               <span className="font-semibold text-fg" data-testid="from-lesson-title">{m.title}</span>
               <span className="text-muted" data-testid="from-lesson-file">{m.file_name}</span>
               {part && <span className="text-pv" data-testid="from-lesson-part">{part}</span>}
@@ -111,14 +123,17 @@ export function LecturePage() {
   const [lectureId, setLectureId] = useState<string | undefined>();
   const [title, setTitle] = useState('');
   const [issue, setIssue] = useState('');
-  const [objective, setObjective] = useState('');
+  const [objectives, setObjectives] = useState<string[]>(['']);
+  // Stored with a lecture as one objective per line.
+  const objective = objectives.map((o) => o.trim()).filter(Boolean).join('\n');
   const [picked, setPicked] = useState<string[]>([]);
   // The objective each picked verse was chosen for, kept when a lecture is saved.
   const [objectiveOf, setObjectiveOf] = useState<Record<string, string>>({});
   const [presenting, setPresenting] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [coverage, setCoverage] = useState<Coverage>('3');
   const [groups, setGroups] = useState<Group[] | null>(null);
+  // The issue the shown suggestions were found for: objectives already answered for it are kept.
+  const groupsIssue = useRef('');
   const contexts = useStore((s) => s.contexts);
   const scripture = useStore((s) => s.scripture);
   const tagalog = useStore((s) => s.tagalog);
@@ -145,32 +160,26 @@ export function LecturePage() {
     const patchGroup = (i: number, p: Partial<Group>) => setGroups((g) => g && g.map((x, n) => (n === i ? { ...x, ...p } : x)));
     try {
       const lines = objectiveLines(objective);
-      const wanted: { title: string | null; objective: string; count?: number }[] =
-        coverage === 'best'
-          ? [{ title: null, objective }]
-          : lines.length > 0
-            ? lines.map((l) => ({ title: l, objective: l, count: Number(coverage) }))
-            : [{ title: issue.trim(), objective: '', count: Number(coverage) }];
+      const wanted: { title: string; objective: string }[] = lines.length > 0 ? lines.map((l) => ({ title: l, objective: l })) : [{ title: issue.trim(), objective: '' }];
+      // An objective added later gets its own verses; those already found for the others stay.
+      const kept = groupsIssue.current === issue.trim() ? (groups ?? []) : [];
+      const reused = wanted.map((w) => kept.find((g) => g.title === w.title && g.objective === w.objective && g.status !== 'loading'));
       // Matches appear right away; AI notes fill in afterwards without moving anything.
-      const found = await Promise.all(wanted.map((w) => api.aiSuggest(issue, w.objective, w.count)));
+      const found = await Promise.all(wanted.map((w, i) => (reused[i] ? null : api.aiSuggest(issue, w.objective, PER_OBJECTIVE))));
       if (seq !== requestSeq.current) return;
-      const next: Group[] = wanted.map((w, i) => ({
-        title: w.title,
-        objective: w.objective,
-        count: w.count,
-        logId: found[i].log_id,
-        suggestions: found[i].suggestions,
-        status: found[i].suggestions.length ? 'loading' : 'idle',
-        notes: {},
-        exhausted: false,
-        loadingMore: false,
-      }));
+      const next: Group[] = wanted.map((w, i) => {
+        const f = found[i];
+        if (!f) return reused[i]!;
+        const fresh: Group = { title: w.title, objective: w.objective, count: PER_OBJECTIVE, logId: f.log_id, suggestions: f.suggestions, status: f.suggestions.length ? 'loading' : 'idle', notes: {}, exhausted: false, loadingMore: false };
+        return fresh;
+      });
+      groupsIssue.current = issue.trim();
       setGroups(next);
-      setUsedMeaning(found.some((f) => f.meaning));
+      if (found.some((f) => f)) setUsedMeaning(found.some((f) => f?.meaning));
       setSearching(false);
       // One objective at a time: the local model can only do one well on a CPU.
       for (let i = 0; i < next.length; i++) {
-        if (next[i].suggestions.length === 0) continue;
+        if (!found[i] || next[i].suggestions.length === 0) continue;
         const n = await api.aiNotes(next[i].logId);
         if (seq !== requestSeq.current) return;
         if (!n.available) {
@@ -220,7 +229,7 @@ export function LecturePage() {
     setLectureId(undefined);
     setTitle('');
     setIssue('');
-    setObjective('');
+    setObjectives(['']);
     setPicked([]);
     setObjectiveOf({});
     setGroups(null);
@@ -230,7 +239,8 @@ export function LecturePage() {
     setLectureId(l.id);
     setTitle(l.title);
     setIssue(l.issue);
-    setObjective(l.objective);
+    const lines = objectiveLines(l.objective);
+    setObjectives(lines.length ? lines : ['']);
     setPicked(l.verse_ids);
     setObjectiveOf(Object.fromEntries(l.verse_ids.map((id, i) => [id, l.verse_objectives[i] ?? ''])));
     setGroups(null);
@@ -298,19 +308,46 @@ export function LecturePage() {
               Issue or topic
               <textarea className="field mt-1 min-h-16" data-testid="lecture-issue" placeholder="What situation should this lecture address?" value={issue} onChange={(e) => setIssue(e.target.value)} />
             </label>
-            <label className="block text-xs text-muted">
-              Objectives (one per line)
-              <textarea className="field mt-1 min-h-16" data-testid="lecture-objective" placeholder="What should listeners understand or do?" value={objective} onChange={(e) => setObjective(e.target.value)} />
-            </label>
-            <label className="flex flex-wrap items-center gap-2 text-xs text-muted">
-              Verses to present
-              <select className="field !min-h-[34px] !w-auto !py-1 !text-xs max-lg:!min-h-11" data-testid="lecture-coverage" value={coverage} onChange={(e) => setCoverage(e.target.value as Coverage)}>
-                <option value="3">3 per objective</option>
-                <option value="4">4 per objective</option>
-                <option value="5">5 per objective</option>
-                <option value="best">Best matches overall</option>
-              </select>
-            </label>
+            <fieldset className="m-0 space-y-1.5 border-0 p-0" data-testid="lecture-objectives">
+              <legend className="mb-1 p-0 text-xs text-muted">Objectives: up to {MAX_OBJECTIVES}, each given 3 to 5 verses</legend>
+              {objectives.map((o, i) => (
+                <div key={i} className="flex items-center gap-1.5">
+                  <span className="w-5 flex-none text-right text-xs text-muted tabular-nums">{i + 1}.</span>
+                  <input
+                    className="field"
+                    data-testid="lecture-objective"
+                    aria-label={`Objective ${i + 1}`}
+                    placeholder={i === 0 ? 'What should listeners understand or do?' : 'Another objective'}
+                    value={o}
+                    onChange={(e) => setObjectives((all) => all.map((x, n) => (n === i ? e.target.value : x)))}
+                  />
+                  {objectives.length > 1 && (
+                    <button
+                      type="button"
+                      className="icon-btn flex-none"
+                      aria-label={`Remove objective ${i + 1}`}
+                      data-testid="lecture-objective-remove"
+                      onClick={() => {
+                        const removed = o.trim();
+                        setObjectives((all) => all.filter((_, n) => n !== i));
+                        setGroups((g) => g && g.filter((x) => x.title !== removed));
+                      }}
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+              ))}
+              <button
+                type="button"
+                className="btn !min-h-8 max-lg:!min-h-11"
+                data-testid="lecture-objective-add"
+                disabled={objectives.length >= MAX_OBJECTIVES}
+                onClick={() => setObjectives((all) => [...all, ''])}
+              >
+                <Plus size={13} /> Add objective <span className="text-muted tabular-nums">{objectives.length} of {MAX_OBJECTIVES}</span>
+              </button>
+            </fieldset>
             <div className="flex flex-wrap items-center gap-2">
               <button className="btn btn-primary" data-testid="lecture-suggest" disabled={searching || (!issue.trim() && !objective.trim())}>
                 <Sparkles size={14} /> Suggest verses
@@ -333,12 +370,12 @@ export function LecturePage() {
               {groups.every((g) => g.suggestions.length === 0) && <p className="m-0 rounded-lg border border-line p-4 text-center text-[13px] text-muted" data-testid="suggestions-empty">No verses in your library match. Try other words, or upload more lessons.</p>}
               {groups.some((g) => g.suggestions.length > 0) && groups.map((g, groupIndex) => (
               <div key={groupIndex} className="space-y-2" data-testid="objective-group">
-                {g.title !== null && (
+                {g.title && (
                   <div className="mt-3 first:mt-0">
                     <h3 className="m-0 text-[13px] font-semibold text-accent2" data-testid="objective-title">{g.title}</h3>
-                    {coverage !== 'best' && g.suggestions.length < Number(coverage) && (
+                    {g.suggestions.length < MIN_PER_OBJECTIVE && (
                       <p className="m-0 text-xs text-muted" data-testid="objective-shortfall">
-                        {g.suggestions.length === 0 ? 'No verses in your library match this objective.' : `Only ${g.suggestions.length} of ${coverage} found in your library.`}
+                        {g.suggestions.length === 0 ? 'No verses in your libraries match this objective.' : `Only ${g.suggestions.length} found in your libraries.`}
                       </p>
                     )}
                   </div>
@@ -388,7 +425,7 @@ export function LecturePage() {
               {g.suggestions.length > 0 && (
                 <div className="flex flex-wrap items-center gap-2">
                   <button className="btn !min-h-8 max-lg:!min-h-11" data-testid="objective-more" disabled={g.loadingMore || g.exhausted} onClick={() => suggestMore(groupIndex)}>
-                    {g.loadingMore ? <Loader2 size={13} className="animate-spin" /> : <ChevronDown size={13} />} Suggest more{g.objective && g.count ? ' for this objective' : ''}
+                    {g.loadingMore ? <Loader2 size={13} className="animate-spin" /> : <ChevronDown size={13} />} Suggest more{g.objective ? ' for this objective' : ''}
                   </button>
                   {g.exhausted && <span className="text-xs text-muted" data-testid="objective-no-more">No more verses in your libraries match. Try other words.</span>}
                 </div>

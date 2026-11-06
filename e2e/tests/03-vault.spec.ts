@@ -55,12 +55,53 @@ test('year folders filter, show a chip, expand, and clear', async ({ app: page }
   await expect(page.getByTestId('tree-lesson')).toHaveCount(0);
 });
 
+test('All Archives, the Lesson Library and Pastoral Visits each list their own lessons', async ({ app: page }) => {
+  const lessons: any[] = await (await page.request.get('/api/lessons')).json();
+  const visits = lessons.filter((l) => l.category === 'pastoral').length;
+  expect(visits).toBeGreaterThan(0);
+  await expect(page.getByTestId('side-all-count')).toHaveText(String(lessons.length));
+  await expect(page.getByTestId('side-lessons-count')).toHaveText(String(lessons.length - visits));
+  await expect(page.getByTestId('side-pv-count')).toHaveText(String(visits));
+
+  // The Lesson Library has no pastoral visits, and no tab for them.
+  await page.getByTestId('side-lessons').click();
+  await expect(page.getByTestId('list-title')).toHaveText('Lesson Library');
+  await expect(page.getByTestId('item-count')).toHaveText(`${lessons.length - visits} items`);
+  await expect(page.getByTestId('tab-pastoral')).toHaveCount(0);
+  await expect(page.getByTestId('pastoral-upload')).toHaveCount(0);
+  await page.getByTestId('tab-weekend').click();
+  await expect(page.getByTestId('list-title')).toHaveText('Weekend');
+
+  // Pastoral Visits lists only them, with its own upload.
+  await page.getByTestId('side-pv').click();
+  await expect(page.getByTestId('list-title')).toHaveText('Pastoral Visits');
+  await expect(page.getByTestId('item-count')).toHaveText(`${visits} ${visits === 1 ? 'item' : 'items'}`);
+  await expect(page.getByTestId('category-tabs')).toHaveCount(0);
+  await page.getByTestId('pastoral-upload').click();
+  await expect(page.getByTestId('upload-dialog')).toHaveAccessibleName('Upload Pastoral Visit PDF');
+  await expect(page.getByTestId('upload-target')).toHaveText('Drop pastoral visit PDFs here or browse your device');
+  await page.getByTestId('upload-done').click();
+  // The header's upload goes to the list that is open.
+  await page.getByTestId('header-upload').click();
+  await expect(page.getByTestId('upload-dialog')).toHaveAccessibleName('Upload Pastoral Visit PDF');
+  await page.getByTestId('upload-done').click();
+
+  // All Archives brings them together again.
+  await page.getByTestId('side-all').click();
+  await expect(page.getByTestId('list-title')).toHaveText('All Archives');
+  await expect(page.getByTestId('item-count')).toHaveText(`${lessons.length} items`);
+  await expect(page.getByTestId('tab-pastoral')).toBeVisible();
+  await page.getByTestId('header-upload').click();
+  await expect(page.getByTestId('upload-dialog')).toHaveAccessibleName('Ingest & Archive Lesson PDF');
+  await page.getByTestId('upload-done').click();
+});
+
 test('pastoral entry filters and expands', async ({ app: page }) => {
   await expect(page.getByTestId('side-pastoral-count')).toHaveText('1');
   await page.getByTestId('side-pastoral').click();
   await expect(page.getByTestId('list-title')).toHaveText('Pastoral Visits');
   await page.getByTestId('side-pastoral').click();
-  await expect(page.getByTestId('list-title')).toHaveText('Lesson Library');
+  await expect(page.getByTestId('list-title')).toHaveText('All Archives');
   await page.getByTestId('pastoral-expand').click();
   await expect(page.getByTestId('tree-lesson')).toHaveCount(1);
   await page.getByTestId('pastoral-expand').click();

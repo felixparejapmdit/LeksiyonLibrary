@@ -40,7 +40,7 @@ export interface Verse {
   ref_note: string;
   verified_at: string | null;
   /** Where it is printed in each lesson: the part of the lesson (see partName) and the question it answers. */
-  sources: { lesson_id: string; page: number; section: number; question: string }[];
+  sources: { lesson_id: string; page: number; section: number; question: string; pastoral: boolean }[];
   /** Where an imported verse came from, such as "Translations.xlsx, row 17". Empty otherwise. */
   import_source: string;
 }
@@ -61,6 +61,9 @@ export interface Lecture {
   verse_objectives: string[];
 }
 
+/** Where a PDF is uploaded: the Lesson Library or Pastoral Visits. */
+export type UploadTarget = 'lesson' | 'pastoral';
+
 export interface Suggestion {
   canonical_key: string;
   ref_en: string;
@@ -80,6 +83,8 @@ export interface LessonMatch {
   section: number;
   objective: string;
   question: string;
+  /** Found in a pastoral visit, whose verses belong to the Verse Library. */
+  pastoral: boolean;
 }
 
 export interface VerseContext {
@@ -190,9 +195,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   lessons: () => request<Lesson[]>('/lessons'),
-  uploadLesson: (file: File, pages: string[], sourceKind: 'text' | 'ocr') => {
+  /** A pastoral visit is uploaded on its own page, and is always filed as one. */
+  uploadLesson: (file: File, pages: string[], sourceKind: 'text' | 'ocr', target: UploadTarget = 'lesson') => {
     const form = new FormData();
     form.set('source_kind', sourceKind);
+    if (target === 'pastoral') form.set('category', 'pastoral');
     form.set('pages', JSON.stringify(pages));
     form.set('file', file, file.name);
     return request<{ lesson: Lesson; verse_count: number }>('/lessons', { method: 'POST', body: form });

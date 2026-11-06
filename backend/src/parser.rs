@@ -23,6 +23,9 @@ pub struct ParsedVerse {
     pub section: u32,
     /// The question the verse answers, when the section asks one before it.
     pub question: String,
+    /// The language of the verse's own wording, which can differ from the lesson's: a
+    /// lesson may print a verse in English followed by its Tagalog translation.
+    pub language: String,
 }
 
 pub const CONCLUSION: u32 = 99;
@@ -80,12 +83,12 @@ re!(LABEL_START, r"^(?:\d+|[SA])\.\s+\S");
 re!(
     REFERENCE,
     r"(?x)
-    (?P<num>\b(?:III|II|I|1|2|3)\s*)?
+    (?P<num>(?:\b(?:III|Ill|lll|II|Il|IL|ll|IT|11|I|1|2|3)|[\[|])\s*)?
     (?P<book>[A-Za-z]+(?:\s+ng\s+mga\s+Awit)?)
     [.,]?\s*
     (?P<ch>\d{1,3}):
-    (?P<vs>\d{1,3}(?:\([a-z]\))?(?:\s*-\s*\d{1,3}(?:\([a-z]\))?)?
-       (?:\s*(?:,|&|\bat\b|\band\b)\s*\d{1,3}(?:\([a-z]\))?(?:\s*-\s*\d{1,3}(?:\([a-z]\))?)?)*)"
+    (?P<vs>\d{1,3}(?:\s?\([a-z]\)|[a-z]\b)?(?:\s*-\s*\d{1,3}(?:\s?\([a-z]\)|[a-z]\b)?)?
+       (?:\s*(?:,|&|\bat\b|\band\b)\s*\d{1,3}(?:\s?\([a-z]\)|[a-z]\b)?(?:\s*-\s*\d{1,3}(?:\s?\([a-z]\)|[a-z]\b)?)?)*)"
 );
 re!(TALATA, r"(?i)^(?:talata|verse|scripture)\s*:\s*");
 re!(
@@ -94,14 +97,19 @@ re!(
 );
 re!(
     STOP_LINE,
-    r"(?i)^(?:[TSQA]\.\s|\d+\.\s|[IVX]+\.\s+[A-Z]{2}|konklusyon\b|conclusion\b|pasimula\b|introduction\b|\(aawitin|\(sing)"
+    r"(?i)^(?:[TSQA]\.\s|\d+\.\s|[IVX]+\.\s+[A-Z]{2}|(?:konklusyon|conclusion|pasimula|introduction)\s*(?::.*)?$|\(aawitin|\(sing)"
 );
+// The signature block at the end of a lesson: "LINGGO: ENERO 10, 2021 BY:".
+re!(SIGNATURE, r"(?i)(?:\bby\s*:\s*$|^by\s*:|^[a-z]+\s*:\s*[a-z]+\s+\d{1,2}(?:/\d{1,2})?,\s*\d{4})");
 re!(
     CITATION,
     r"(?i)^(?:\(?(?:the\s+)?holy bible\b|\((?:the|holy)\b.*\b(?:bible|testament)\b)"
 );
 re!(VERSION_HINT, r"(?i)\b(?:version|bible|translation|edition|bersiyon|biblia)\b");
 re!(VERSION_CODE, r"^[A-Z]{2,6}\d{0,4}$");
+// A version printed alone after a reference standing on its own line, such as "Lamsa".
+re!(VERSION_WORD, r"^[A-Z][A-Za-z]{1,6}\d{0,4}$");
+re!(DATE_PREFIX, r"^(\d{4})(\d{2})(\d{2})_");
 re!(ISSUE_MARK, r"(?i)^(?:isyu|issu[ea]|lssue)\s*:?$");
 re!(OBJECTIVE_MARK, r"(?i)^(?:mga\s+layunin|objectives?)\s*:?$");
 re!(INTRO_MARK, r"(?i)^(?:panimula|exordium)\s*:?$");
@@ -116,7 +124,7 @@ re!(
 re!(BY_LINE, r"(?i)^by\s*:\s*(.+)$");
 re!(BEGIN_MARK, r"(?i)^(?:pasimula|introduction|simula|beginning)\s*(?::\s*(.*))?$");
 re!(ROMAN_HEAD, r"^(IX|IV|VI{0,3}|I{1,3}|X)\s*\.\s+(\S.*)$");
-re!(CONCLUSION_MARK, r"(?i)^(?:konklusyon|conclusion|pangwakas)\b\s*:?\s*(.*)$");
+re!(CONCLUSION_MARK, r"(?i)^(?:konklusyon|conclusion|pangwakas)\s*(?::\s*(.*))?$");
 re!(QUESTION, r"^[QT]\s*\.\s+(\S.*)$");
 re!(ANSWER, r"^[AS]\s*\.\s+\S");
 
@@ -157,7 +165,7 @@ fn section_start(line: &str, current: u32) -> Option<(u32, String)> {
         return None;
     }
     if let Some(c) = CONCLUSION_MARK.captures(line) {
-        return Some((CONCLUSION, c[1].trim().to_string()));
+        return Some((CONCLUSION, c.get(1).map_or("", |m| m.as_str()).trim().to_string()));
     }
     if let Some(c) = BEGIN_MARK.captures(line) {
         // Said again later, it is a word in the lesson, not a new part.
@@ -201,6 +209,10 @@ pub fn normalize_version(raw: &str) -> String {
         if aliases.iter().any(|a| *a == lower) {
             return (*code).to_string();
         }
+    }
+    // An unknown code may be printed in capitals or not ("LAMSA", "Lamsa"): one spelling keeps them together.
+    if VERSION_WORD.is_match(&cleaned) {
+        return cleaned.to_uppercase();
     }
     cleaned
 }
@@ -253,7 +265,8 @@ pub fn find_references(text: &str) -> Vec<Reference> {
         let raw_num = m.name("num").map(|n| n.as_str());
         let raw_book = m.name("book").unwrap().as_str();
         let (num, name) = split_series(raw_num, raw_book);
-        let Some(book) = books::find(num, &name) else {
+        // A stray mark misread as a numeral before a book that has no series.
+        let Some(book) = books::find(num, &name).or_else(|| num.and_then(|_| books::find(None, &name))) else {
             continue;
         };
         let chapter = &m["ch"];
@@ -273,10 +286,11 @@ pub fn find_references(text: &str) -> Vec<Reference> {
 /// Resolves series numbers, including the OCR run-together form "IPed." while
 /// leaving real names such as "Isa." intact.
 fn split_series(raw_num: Option<&str>, raw_book: &str) -> (Option<u32>, String) {
+    // OCR reads II as "Il", "IL", "ll", "IT" or "11", III as "Ill", and I as "[" or "|".
     let to_num = |s: &str| match s.trim() {
-        "I" | "1" => Some(1),
-        "II" | "2" => Some(2),
-        "III" | "3" => Some(3),
+        "I" | "1" | "[" | "|" => Some(1),
+        "II" | "Il" | "IL" | "ll" | "IT" | "11" | "2" => Some(2),
+        "III" | "Ill" | "lll" | "3" => Some(3),
         _ => None,
     };
     if let Some(n) = raw_num {
@@ -297,7 +311,7 @@ fn is_version_continuation(line: &str) -> bool {
 }
 
 fn is_verse_terminator(line: &str) -> bool {
-    BULLET.is_match(line) || STOP_LINE.is_match(line) || CITATION.is_match(line)
+    BULLET.is_match(line) || STOP_LINE.is_match(line) || CITATION.is_match(line) || SIGNATURE.is_match(line)
 }
 
 /// A line that cites a verse printed underneath it: "label ..... II Sam. 7:24 ESV".
@@ -325,7 +339,7 @@ fn citation_ref(line: &str) -> Option<(Reference, String)> {
                 return None;
             }
             let rest = line[first.end..].trim();
-            let is_version_only = rest.is_empty() || is_version_continuation(rest);
+            let is_version_only = rest.is_empty() || is_version_continuation(rest) || VERSION_WORD.is_match(rest);
             return is_version_only.then(|| (first.clone(), rest.to_string()));
         }
     };
@@ -395,6 +409,64 @@ fn month_number(name: &str) -> Option<u32> {
     ];
     let lower = name.to_lowercase();
     MONTHS.iter().find(|(names, _)| names.contains(&lower.as_str())).map(|(_, n)| *n)
+}
+
+/// Small words that only one of the two languages uses, counted to tell them apart.
+const EN_WORDS: &[&str] = &[
+    "the", "of", "and", "to", "that", "is", "we", "god", "for", "with", "you", "your", "will", "be", "are", "they", "in",
+    "not", "shall", "he", "his", "who", "from", "have", "but", "this",
+];
+const TL_WORDS: &[&str] = &[
+    "ang", "ng", "sa", "mga", "na", "ay", "natin", "diyos", "kaya", "kayo", "ako", "siya", "hindi", "ninyo", "nila", "ito",
+    "upang", "kung", "nang", "inyong", "kanilang", "subalit", "ating",
+];
+
+fn word_counts(lines: &[String]) -> (usize, usize) {
+    let (mut en, mut tl) = (0, 0);
+    for line in lines {
+        for w in line.split(|c: char| !c.is_alphabetic()) {
+            let w = w.to_lowercase();
+            if EN_WORDS.contains(&w.as_str()) {
+                en += 1;
+            } else if TL_WORDS.contains(&w.as_str()) {
+                tl += 1;
+            }
+        }
+    }
+    (en, tl)
+}
+
+/// The language of some lines, when it is clear: three in four of their small words are
+/// English or Tagalog. A bracketed English gloss in a Tagalog verse does not change it.
+fn clear_language(lines: &[String]) -> Option<&'static str> {
+    let (en, tl) = word_counts(lines);
+    let total = en + tl;
+    if total < 4 {
+        return None;
+    }
+    if en * 4 >= total * 3 {
+        Some("en")
+    } else if tl * 4 >= total * 3 {
+        Some("tl")
+    } else {
+        None
+    }
+}
+
+/// A verse printed in one language and then translated into the other is two verses: the
+/// lines are split where the language changes, if both parts are clearly in their language.
+fn split_by_language(lines: &[String]) -> Vec<(Option<&'static str>, Vec<String>)> {
+    let lean: Vec<i64> = lines.iter().map(|l| { let (en, tl) = word_counts(std::slice::from_ref(l)); en as i64 - tl as i64 }).collect();
+    let best = (1..lines.len()).max_by_key(|&k| (lean[..k].iter().sum::<i64>() - lean[k..].iter().sum::<i64>()).abs());
+    if let Some(k) = best {
+        let (first, second) = (clear_language(&lines[..k]), clear_language(&lines[k..]));
+        if let (Some(a), Some(b)) = (first, second) {
+            if a != b {
+                return vec![(first, lines[..k].to_vec()), (second, lines[k..].to_vec())];
+            }
+        }
+    }
+    vec![(clear_language(lines), lines.to_vec())]
 }
 
 fn detect_language(text: &str) -> String {
@@ -484,6 +556,14 @@ pub fn parse(pages: &[String], file_name: &str) -> ParsedLesson {
             lesson.year = c[1].parse().ok();
         }
     }
+    // A file named from its date, such as 20210110_Sample Visit.
+    if let (None, Some(c)) = (&lesson.lesson_date, DATE_PREFIX.captures(stem)) {
+        let (year, month, day) = (c[1].parse::<i32>().unwrap_or(0), c[2].parse::<u32>().unwrap_or(0), c[3].parse::<u32>().unwrap_or(0));
+        if (1900..=2200).contains(&year) && (1..=12).contains(&month) && (1..=31).contains(&day) {
+            lesson.lesson_date = Some(format!("{year:04}-{month:02}-{day:02}"));
+            lesson.year = Some(year);
+        }
+    }
     if lesson.content.to_lowercase().contains("pastoral visit") {
         lesson.category = "pastoral".into();
     }
@@ -495,12 +575,16 @@ pub fn parse(pages: &[String], file_name: &str) -> ParsedLesson {
     let issue_at = lines.iter().position(|(_, l)| ISSUE_MARK.is_match(l));
     let obj_at = lines.iter().position(|(_, l)| OBJECTIVE_MARK.is_match(l));
     let intro_at = lines.iter().position(|(_, l)| INTRO_MARK.is_match(l));
+    let begin_at = lines.iter().position(|(_, l)| BEGIN_MARK.is_match(l));
 
     let paksa = lines.iter().find_map(|(_, l)| PAKSA.captures(l).map(|c| c[1].trim().to_string()));
     lesson.title = if let Some(p) = paksa {
         smart_title(&p)
     } else if let Some(i) = issue_at.filter(|i| *i > 0 && *i <= 5) {
         smart_title(&lines[..i].iter().map(|(_, l)| l.as_str()).collect::<Vec<_>>().join(" "))
+    } else if let Some(b) = begin_at.filter(|b| *b > 0 && *b <= 3 && issue_at.is_none()) {
+        // A lesson without an issue, such as a pastoral visit, opens with its title and then the beginning.
+        smart_title(&lines[..b].iter().map(|(_, l)| l.as_str()).collect::<Vec<_>>().join(" "))
     } else if let Some(c) = PV_NAME.captures(stem) {
         c[5].trim().to_string()
     } else {
@@ -552,8 +636,8 @@ pub fn parse(pages: &[String], file_name: &str) -> ParsedLesson {
         let (page, line) = &lines[i];
         if i >= outline_from {
             if let Some((number, heading)) = section_start(line, section) {
-                // A heading on its own line ("PASIMULA:") has nothing to continue.
-                let heading = if heading.is_empty() { heading } else { with_continuation(&lines, i + 1, &heading, true) };
+                // "PASIMULA:" alone on its line is followed by its question, printed in capitals.
+                let heading = with_continuation(&lines, i + 1, &heading, true);
                 section = number;
                 question.clear();
                 lesson.outline.push(Section { number, heading: clip(&heading), questions: vec![] });
@@ -596,19 +680,23 @@ pub fn parse(pages: &[String], file_name: &str) -> ParsedLesson {
                 i += 1;
             }
         }
-        lesson.verses.push(ParsedVerse {
-            canonical_key: reference.canonical_key,
-            book_id: reference.book_id,
-            ref_printed: reference.printed,
-            ref_en: reference.en,
-            ref_tl: reference.tl,
-            version: normalize_version(&version_raw),
-            raw: collected.join("\n"),
-            text: join_verse_lines(&collected),
-            page: *page,
-            section,
-            question: question.clone(),
-        });
+        let version = normalize_version(&version_raw);
+        for (language, part) in split_by_language(&collected) {
+            lesson.verses.push(ParsedVerse {
+                canonical_key: reference.canonical_key.clone(),
+                book_id: reference.book_id,
+                ref_printed: reference.printed.clone(),
+                ref_en: reference.en.clone(),
+                ref_tl: reference.tl.clone(),
+                version: version.clone(),
+                raw: part.join("\n"),
+                text: join_verse_lines(&part),
+                page: *page,
+                section,
+                question: question.clone(),
+                language: language.map_or_else(|| lesson.language.clone(), str::to_string),
+            });
+        }
     }
 
     lesson
@@ -824,6 +912,77 @@ mod tests {
         let page = "I. THE FIRST PART\nJuan 3:5 NIRV\nSome words.\nII. THE SECOND PART\nJuan 3:6 NIRV\nMore words.".to_string();
         let sections: Vec<u32> = parse(&[page], "x.pdf").verses.iter().map(|v| v.section).collect();
         assert_eq!(sections, vec![2, 3]);
+    }
+
+    /// A made-up pastoral visit laid out like the real ones, as read by OCR: a title, the
+    /// beginning, numbered points citing verses, a verse printed in English and then in
+    /// Tagalog, and the signature followed by noise from a blank page.
+    fn pastoral_visit() -> Vec<String> {
+        vec![
+            [
+                "ANG HALIMBAWA NG MGA BANTAY", "PASIMULA:", "ANO ANG DAPAT GAWIN NG MGA BANTAY?",
+                "1. Ang dapat gawin ..........Il Tim. 3:1-5 TPTB",
+                "'But you need to be aware that the watchmen will be awake and they will not sleep.",
+                "They will be faithful to the people of God with all of their strength.",
+                "'Subalit kailangan ninyong malaman na ang mga bantay ay gising at hindi sila natutulog.",
+                "Sila ay tapat sa mga tao ng Diyos sa kanilang buong lakas.",
+                "2. Ang aral ..........Filip. 2:12a at 13 AMP",
+                "Ang mga bantay ay hindi natutulog sa gabi (spiritual maturity) at sila ay laging handa.",
+                "pasimula pa lamang ay gising na ang mga bantay sa pintuan.",
+                "Gawa 20:28 Lamsa",
+                "Ingatan ninyo ang inyong sarili at ang mga bantay sa pintuan.",
+            ]
+            .join("\n"),
+            [
+                "I. ANO ANG TUNGKULIN NG BANTAY?",
+                "1. Ang tungkulin .... [ Sam. 12:22 NABRE",
+                "Ang bantay ay laging nagbabantay at siya ay hindi napapagod sa kaniyang gawain.",
+                "LINGGO: ENERO 10, 2021 BY:",
+                "Garbled noise ng the at sa the of mga",
+            ]
+            .join("\n"),
+        ]
+    }
+
+    #[test]
+    fn a_pastoral_visit_is_read_with_each_verse_in_its_own_language() {
+        let l = parse(&pastoral_visit(), "20210110_Sample Visit.pdf");
+        assert_eq!(l.title, "Ang Halimbawa ng mga Bantay");
+        assert_eq!(l.lesson_date.as_deref(), Some("2021-01-10"));
+        let read: Vec<(&str, &str, &str, u32)> = l.verses.iter().map(|v| (v.canonical_key.as_str(), v.language.as_str(), v.version.as_str(), v.section)).collect();
+        assert_eq!(
+            read,
+            vec![
+                ("55.3:1-5", "en", "TPTB", 1),
+                ("55.3:1-5", "tl", "TPTB", 1),
+                ("50.2:12a,13", "tl", "AMP", 1),
+                ("44.20:28", "tl", "LAMSA", 1),
+                ("9.12:22", "tl", "NABRE", 2),
+            ]
+        );
+        assert!(l.verses[0].text.starts_with("'But you need") && l.verses[0].text.ends_with("their strength."), "{}", l.verses[0].text);
+        assert!(l.verses[1].text.starts_with("'Subalit") && l.verses[1].text.ends_with("buong lakas."), "{}", l.verses[1].text);
+        assert!(l.verses[2].text.ends_with("sa pintuan."), "an ordinary word is not a heading: {}", l.verses[2].text);
+        assert!(l.verses[4].text.ends_with("kaniyang gawain."), "the signature ends the verse: {}", l.verses[4].text);
+    }
+
+    #[test]
+    fn ocr_misreadings_of_references_are_understood() {
+        let cases = [
+            ("Il Tim. 3:1-5", "55.3:1-5"),
+            ("IT Sam. 22:20", "10.22:20"),
+            ("11 Sam, 22:5-7", "10.22:5-7"),
+            ("[ Sam. 12:22", "9.12:22"),
+            ("I Cor. 5:12a at 13", "46.5:12a,13"),
+            ("Isa. 58:8-9 (a) at 11", "23.58:8-9(a),11"),
+            ("Filip. 2:12", "50.2:12"),
+            ("IL COL 1:5", "51.1:5"),
+        ];
+        for (input, key) in cases {
+            let found = find_references(input);
+            assert_eq!(found.first().map(|r| r.canonical_key.as_str()), Some(key), "{input}");
+        }
+        assert!(find_references("Ilog 3:4").is_empty());
     }
 
     #[test]

@@ -366,3 +366,27 @@ Added at the project owner's choice: a verse review queue, editable AI context, 
 **Shown with each suggestion:** for each lesson it was found in (up to three), the lesson title, its PDF file name, the objective and part ("Objective 2 · I."), the lesson's own objective and the question it answers. The lesson check dialog shows each verse's objective and part, so a wrong grouping can be caught.
 
 **Not done:** the meaning model is not used to compare objectives with lesson parts, only words are. Tagalog word forms that change inside the root are not matched.
+
+## 19. Pastoral Visits, All Archives and objective fields (6 November 2026)
+
+**Asked for:** in the Lesson Assistant, no choice of how many verses; instead up to four objectives, each given 3 to 5 verses with Suggest more. Pastoral Visits as its own section with its own PDF upload, whose verses go to the Verse Library (beside the Excel and Google Sheets imports), read according to their language: some sample PDFs print each verse in English and then in Tagalog. All Archives back, combining the Lesson Library and Pastoral Visits.
+
+**The sidebar now has:** All Archives (every lesson, with the four category tabs, and Not checked yet), Lesson Library (worship service lessons, with Verses from lessons), Pastoral Visits (with its own upload, and the Verse Library under it), Lesson Assistant, Review Verses. The list page keeps one address and filters by `scope`, so links into the list still work.
+
+**Uploading a pastoral visit** sends `category=pastoral`, which files it as one whatever its name. The header's Upload button uploads to Pastoral Visits when that list is open.
+
+**Which library a verse is in:** imported verses are in the Verse Library. Otherwise a verse cited by any worship service lesson is in the Lesson Library, and one cited only by pastoral visits, or by nothing, is in the Verse Library. Each verse's sources now say whether the lesson is a pastoral visit.
+
+**Reading pastoral visits.** The three sample PDFs (kept out of the repository) are scans, so they were read with the app's own OCR in a headless browser. The upload request was stopped before it reached the vault. What changed in the parser, each tested on made-up text:
+- A verse whose lines change from English to Tagalog, or the reverse, is split there into two verses, each with its own language, when both parts are clearly in their language (three in four of their small words). A Tagalog verse with an English gloss in brackets is not split. Every verse now has its own language rather than the lesson's.
+- OCR misreadings of series numerals: "Il", "IL", "ll", "IT" and "11" for II, "Ill" for III, "[" and "|" for I. A stray numeral before a book with no series is ignored.
+- Verse letters without brackets ("5:12a") and with a space before them ("8-9 (a)").
+- A version printed alone after a reference on its own line, in any case ("Lamsa"), and unknown codes kept in capitals so the two spellings stay together.
+- An unlisted abbreviation that begins only one book's name ("Filip." for Filipos).
+- The signature at the end ("LINGGO: ENERO 10, 2021 BY:", for example) ends a verse, so OCR noise from a blank last page is not taken as verse text.
+- "Pasimula", "Introduction" and "Konklusyon" are headings only alone on their line or followed by a colon, not as an ordinary word starting a line.
+- The title is read from the heading before PASIMULA when there is no issue; the date from a file name starting with it.
+
+On the three samples, this went from 27 verse records, with English and Tagalog run together, to 44, each in one language. One reference stays unread because OCR garbled it.
+
+**Lesson Assistant:** up to four objective fields with Add objective and remove, five verses asked for each, a note when fewer than three match. Pressing Suggest verses after adding an objective fetches only the new one; those already found stay. Lessons without objectives, such as pastoral visits, are matched as a whole. A suggestion found in a pastoral visit says so.

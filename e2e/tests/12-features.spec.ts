@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import AdmZip from 'adm-zip';
 import type { Page } from '@playwright/test';
-import { test, expect, setAiMode, withEmptyVault, TEST_PASSPHRASE } from '../support/fixtures';
+import { test, expect, setAiMode, withEmptyVault, TEST_PASSPHRASE, fillObjectives } from '../support/fixtures';
 import { makePdf } from '../support/pdf';
 
 /** A made-up lesson with two printed verses, each on its own citation line. */
@@ -30,7 +30,7 @@ const VERSES: [string, string][] = [
 /** Opens the Lecture Maker, asks for one objective, and waits for the AI to finish. */
 async function ask(page: Page, objective: string) {
   await page.goto('/lecture');
-  await page.getByTestId('lecture-objective').fill(objective);
+  await fillObjectives(page, objective);
   await page.getByTestId('lecture-suggest').click();
   await expect(page.getByTestId('suggestions')).toBeVisible();
   await expect(page.getByTestId('notes-loading')).toHaveCount(0, { timeout: 15_000 });
@@ -230,7 +230,7 @@ test.describe('objective groups', () => {
       await addLesson(page, 'groups.pdf', 'Grouped Lesson', VERSES);
       await page.goto('/lecture');
       await page.getByTestId('lecture-issue').fill('A <test> issue & more');
-      await page.getByTestId('lecture-objective').fill('planting\nwalking');
+      await fillObjectives(page, 'planting\nwalking');
       await page.getByTestId('lecture-suggest').click();
       await expect(page.getByTestId('objective-title')).toHaveText(['planting', 'walking']);
       await expect(page.getByTestId('notes-loading')).toHaveCount(0, { timeout: 15_000 });
@@ -317,12 +317,12 @@ test.describe('presentation mode', () => {
       expect(tagalog.ok()).toBeTruthy();
       await page.goto('/lecture');
       await expect(page.getByTestId('lecture-present')).toBeDisabled();
-      await page.getByTestId('lecture-objective').fill('vocation');
+      await fillObjectives(page, 'vocation');
       await page.getByTestId('lecture-suggest').click();
       await expect(page.getByTestId('notes-loading')).toHaveCount(0, { timeout: 15_000 });
       await expect(page.getByTestId('suggestion').first()).toBeVisible();
       await page.getByTestId('suggestion-add').first().click();
-      await page.getByTestId('lecture-objective').fill('planting');
+      await fillObjectives(page, 'planting');
       await page.getByTestId('lecture-suggest').click();
       await expect(page.getByTestId('objective-title')).toHaveText('planting');
       await expect(page.getByTestId('notes-loading')).toHaveCount(0, { timeout: 15_000 });

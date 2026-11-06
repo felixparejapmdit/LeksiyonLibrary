@@ -47,19 +47,21 @@ The app talks only to this computer, with one exception you start yourself: impo
 
 ## How it is organised
 
-The app has three parts. They are kept separate, and they work together:
+The parts are kept separate, and they work together:
 
-- **Lesson Library:** your worship service lessons. Drop PDFs in, and the title, issue, objectives and verses are read from each one. Every upload is then checked by hand: **Check what was read** opens the PDF beside what was read, where you correct anything wrong, remove anything that is not a verse of the lesson, and confirm. Lessons not checked yet are marked **Check**, and listed under **Not checked yet**. **Verses from lessons** lists the verses read from your PDFs.
-- **Verse Library:** verses imported from Excel files and Google Sheets, imported on that page.
-- **Lesson Assistant** (the Lecture Maker): builds lectures from the verses in both libraries. Every verse is labelled with where it came from: **Verse Library** and the sheet row, or **Lesson Library** and the lesson and page.
+- **All Archives:** every lesson in one list, worship service lessons and pastoral visits together, with tabs for Midweek, Weekend and Pastoral Visits. **Not checked yet** lists every upload still to check.
+- **Lesson Library:** your worship service lessons. Drop PDFs in, and the title, issue, objectives and verses are read from each one. Every upload is then checked by hand: **Check what was read** opens the PDF beside what was read, where you correct anything wrong, remove anything that is not a verse of the lesson, and confirm. Lessons not checked yet are marked **Check**. **Verses from lessons** lists the verses read from these PDFs.
+- **Pastoral Visits:** your pastoral visit PDFs, with their own upload button. Everything uploaded there is filed as a pastoral visit, whatever the file is called. The title is read from the heading, the date from a file name starting with it (20210110_...), and the verses from the numbered points. A verse printed in English and then in Tagalog, or the other way round, is kept as two verses, one in each language.
+- **Verse Library** (under Pastoral Visits): the verses read from pastoral visit PDFs, and verses imported from Excel files and Google Sheets, imported on that page.
+- **Lesson Assistant** (the Lecture Maker): builds lectures from the verses in both libraries. Every verse is labelled with where it came from: **Verse Library** with the sheet row or the pastoral visit and page, or **Lesson Library** with the lesson and page.
 
-A verse that no lesson cites any more, such as one you verified before deleting its lesson, is kept in the Verse Library.
+A verse cited by a worship service lesson belongs to the Lesson Library, even if a pastoral visit cites it too. A verse that no lesson cites any more, such as one you verified before deleting its lesson, is kept in the Verse Library.
 
 ## Lesson Assistant
 
-Write one objective per line and choose 3, 4 or 5 verses per objective. Verses come only from your two libraries, shown exactly as stored. If fewer match, the app says so instead of adding unrelated verses. If none of them suit you, **Suggest more** brings the next matches for that objective, never repeating one already shown, until nothing else matches.
+Write up to four objectives, one in each field; **Add objective** adds a field. Each objective is given up to five verses, without choosing how many. An objective added later gets its own verses when you press Suggest verses again, and those already found for the others stay. Verses come only from your two libraries, shown exactly as stored. If fewer than three match, the app says so instead of adding unrelated verses. If none of them suit you, **Suggest more** brings the next matches for that objective, never repeating one already shown, until nothing else matches.
 
-Verses from the Lesson Library follow how a lesson is built. A lesson teaches its first objective in the beginning (Pasimula or Introduction), its second in part I., its third in II., and so on, and each part asks questions with verses under them. Your objective is compared with every lesson's own objectives, together with each part's heading and questions, and only the verses printed in a part that matches are suggested, those answering a matching question first. One objective can draw verses from several lessons. If you enter only an issue or topic, it is compared with whole lessons instead, and their verses come from across each lesson. Each such suggestion shows the lesson, its PDF file, the objective and part it was found under, and the question it answers there. Verse Library verses are matched by their wording.
+Verses from the Lesson Library follow how a lesson is built. A lesson teaches its first objective in the beginning (Pasimula or Introduction), its second in part I., its third in II., and so on, and each part asks questions with verses under them. Your objective is compared with every lesson's own objectives, together with each part's heading and questions, and only the verses printed in a part that matches are suggested, those answering a matching question first. One objective can draw verses from several lessons. A lesson without objectives, such as a pastoral visit, is compared as a whole. If you enter only an issue or topic, it is compared with whole lessons instead, and their verses come from across each lesson. Each such suggestion shows the lesson, its PDF file, the objective and part it was found under, and the question it answers there. Verse Library verses are matched by their wording.
 
 When you check an uploaded lesson, each verse shows the objective and part it was read under, so a wrong grouping can be caught.
 

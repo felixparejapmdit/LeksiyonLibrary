@@ -8,6 +8,7 @@ import {
   getState,
   matchesFilters,
   navigate,
+  openUpload,
   refreshAll,
   resetFilters,
   setPanelPref,
@@ -73,7 +74,7 @@ export function RestoreInput({ inputRef }: { inputRef: React.RefObject<HTMLInput
 function SearchBox() {
   const query = useStore((s) => s.filters.query);
   const route = useRoute();
-  const count = useStore((s) => (s.filters.query.trim() ? s.lessons.filter((l) => matchesFilters(l, { ...s.filters, category: 'all', year: null, folderId: null, verseKey: null, toCheck: false }, s.contentMatches)).length : 0));
+  const count = useStore((s) => (s.filters.query.trim() ? s.lessons.filter((l) => matchesFilters(l, { ...s.filters, scope: 'all', category: 'all', year: null, folderId: null, verseKey: null, toCheck: false }, s.contentMatches)).length : 0));
   const total = useStore((s) => s.lessons.length);
   return (
     <div className="relative mx-4 hidden w-full max-w-md lg:block">
@@ -145,7 +146,7 @@ export function Header() {
           <RotateCcw size={14} /> Reset
         </button>
       </div>
-      <button className="btn btn-primary" data-testid="header-upload" aria-label="Upload PDF" onClick={() => setState({ uploadOpen: true })}>
+      <button className="btn btn-primary" data-testid="header-upload" aria-label="Upload PDF" onClick={() => openUpload(location.pathname === '/' && getState().filters.scope === 'pastoral' ? 'pastoral' : 'lesson')}>
         <UploadCloud size={15} />
         <span className="hidden sm:inline">{uploading ? `Processing ${uploading}` : 'Upload PDF'}</span>
       </button>

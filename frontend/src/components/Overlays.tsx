@@ -66,6 +66,7 @@ const closeUpload = () => setState({ uploadOpen: false });
 export function UploadDialog() {
   const open = useStore((s) => s.uploadOpen);
   const uploads = useStore((s) => s.uploads);
+  const pastoral = useStore((s) => s.uploadTarget === 'pastoral');
   const inputRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -75,7 +76,12 @@ export function UploadDialog() {
   const toCheck = uploads.filter((u) => u.attention).length;
   const failed = uploads.filter((u) => u.status === 'error').length;
   return (
-    <Modal title="Ingest & Archive Lesson PDF" subtitle="Reads scanned and digital PDFs, then indexes the lesson and its verses." onClose={closeUpload} testId="upload-dialog">
+    <Modal
+      title={pastoral ? 'Upload Pastoral Visit PDF' : 'Ingest & Archive Lesson PDF'}
+      subtitle={pastoral ? 'Reads scanned and digital pastoral visit PDFs. Their verses go to the Verse Library.' : 'Reads scanned and digital PDFs, then indexes the lesson and its verses.'}
+      onClose={closeUpload}
+      testId="upload-dialog"
+    >
       <div className="scroll-stable min-h-0 p-4">
         <div
           data-testid="drop-zone"
@@ -92,8 +98,12 @@ export function UploadDialog() {
           }}
         >
           <UploadCloud size={30} className="text-accent2" />
-          <p className="m-0 mt-2 font-semibold">Drop lesson PDFs here or browse your device</p>
-          <p className="m-0 mt-1 mb-3 text-xs text-muted">Midweek, Weekend and Pastoral Visit lessons, in Tagalog or English, up to 64 MB each.</p>
+          <p className="m-0 mt-2 font-semibold" data-testid="upload-target">{pastoral ? 'Drop pastoral visit PDFs here or browse your device' : 'Drop lesson PDFs here or browse your device'}</p>
+          <p className="m-0 mt-1 mb-3 text-xs text-muted">
+            {pastoral
+              ? 'Every file added here is filed under Pastoral Visits. A verse printed in English and in Tagalog is kept as two verses, one in each language. Up to 64 MB each.'
+              : 'Midweek and Weekend worship service lessons, in Tagalog or English, up to 64 MB each. Pastoral visits have their own upload.'}
+          </p>
           <input
             ref={inputRef}
             type="file"

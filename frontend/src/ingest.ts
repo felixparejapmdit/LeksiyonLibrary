@@ -1,4 +1,4 @@
-import { api, ApiError, type Lesson } from './api';
+import { api, ApiError, type Lesson, type UploadTarget } from './api';
 import { loadPdfjs, openPdf, renderToCanvas } from './pdf';
 import { getState, refreshAll, selectLesson, setState, toast, type UploadItem } from './store';
 
@@ -42,7 +42,7 @@ function patch(id: number, p: Partial<UploadItem>) {
 }
 
 /** A folder can hold anything, so only its PDFs are taken. */
-export function enqueueFolder(files: Iterable<File>) {
+export function enqueueFolder(files: Iterable<File>, target: UploadTarget = getState().uploadTarget) {
   const all = [...files];
   const pdfs = all.filter((f) => /\.pdf$/i.test(f.name));
   const others = all.length - pdfs.length;
@@ -51,23 +51,25 @@ export function enqueueFolder(files: Iterable<File>) {
     return;
   }
   toast(`Adding ${pdfs.length} PDF ${pdfs.length === 1 ? 'file' : 'files'}${others ? `, skipping ${others} other ${others === 1 ? 'file' : 'files'}` : ''}`);
-  enqueueFiles(pdfs);
+  enqueueFiles(pdfs, target);
 }
 
 /** What was missing after reading a lesson, so it can be checked by hand. */
 function needsAttention(lesson: Lesson, verseCount: number) {
   const missing = [
     ...(verseCount === 0 ? ['no verses'] : []),
-    ...(!lesson.issue && lesson.objectives.length === 0 ? ['no issue or objectives'] : []),
+    // A pastoral visit has no issue or objectives printed.
+    ...(lesson.category !== 'pastoral' && !lesson.issue && lesson.objectives.length === 0 ? ['no issue or objectives'] : []),
     ...(!lesson.lesson_date && !lesson.date_label ? ['no date'] : []),
   ];
   return missing.length ? `Check this lesson: ${missing.join(', ')} found.` : undefined;
 }
 
-export function enqueueFiles(files: Iterable<File>) {
+/** Files go where the upload dialog was opened from: the Lesson Library or Pastoral Visits. */
+export function enqueueFiles(files: Iterable<File>, target: UploadTarget = getState().uploadTarget) {
   const items: UploadItem[] = [];
   for (const file of files) {
-    const item: UploadItem = { id: ++nextId, name: file.name, status: 'queued', message: 'Waiting', progress: 0 };
+    const item: UploadItem = { id: ++nextId, name: file.name, status: 'queued', message: 'Waiting', progress: 0, target };
     items.push(item);
     pending.push({ item, file });
   }
@@ -80,7 +82,7 @@ async function run() {
   running = true;
   while (pending.length) {
     const job = pending.shift()!;
-    await ingest(job.item.id, job.file);
+    await ingest(job.item.id, job.file, job.item.target);
   }
   running = false;
   releaseWorkerSoon();
@@ -130,7 +132,7 @@ async function pageImageForOcr(doc: Awaited<ReturnType<typeof openPdf>>, n: numb
   return new Promise<Blob>((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Could not read page image'))), 'image/png'));
 }
 
-async function ingest(id: number, file: File) {
+async function ingest(id: number, file: File, target: UploadTarget) {
   try {
     if (!/\.pdf$/i.test(file.name) && file.type !== 'application/pdf') {
       throw new ApiError('Only PDF files can be added.', 415);
@@ -164,12 +166,12 @@ async function ingest(id: number, file: File) {
 
     patch(id, { message: 'Saving to vault', progress: 0.94 });
     const firstLesson = getState().lessons.length === 0;
-    const { lesson, verse_count } = await api.uploadLesson(file, pages, usedOcr ? 'ocr' : 'text');
+    const { lesson, verse_count } = await api.uploadLesson(file, pages, usedOcr ? 'ocr' : 'text', target);
     await refreshAll();
     if (firstLesson) selectLesson(lesson.id);
     const found = verse_count === 1 ? '1 verse' : `${verse_count} verses`;
     patch(id, { status: 'done', progress: 1, message: `Added "${lesson.title}" with ${found}`, attention: needsAttention(lesson, verse_count), lessonId: lesson.id });
-    toast(`Added "${lesson.title}" (${found}). Check what was read before relying on it.`);
+    toast(`Added "${lesson.title}" to ${target === 'pastoral' ? 'Pastoral Visits' : 'the Lesson Library'} (${found}). Check what was read before relying on it.`);
   } catch (e) {
     const message = e instanceof ApiError ? e.message : 'This PDF could not be processed.';
     patch(id, { status: 'error', message, progress: 1 });

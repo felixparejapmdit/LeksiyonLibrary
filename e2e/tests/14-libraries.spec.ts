@@ -202,7 +202,6 @@ test.describe('the Verse Library and the Lesson Library', () => {
       await expect(page.getByTestId('lecture-intro')).toContainText('both your Verse Library and your Lesson Library');
       await expect(page.getByTestId('lecture-from-lesson')).toHaveCount(0);
       await page.getByTestId('lecture-issue').fill(words);
-      await page.getByTestId('lecture-coverage').selectOption('best');
       await page.getByTestId('lecture-suggest').click();
       const fromSheet = page.getByTestId('suggested-verse').filter({ has: page.getByTestId('origin-verse-library') });
       const fromLesson = page.getByTestId('suggested-verse').filter({ has: page.getByTestId('origin-lesson-library') });

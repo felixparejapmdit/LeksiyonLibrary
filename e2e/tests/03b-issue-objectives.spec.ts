@@ -1,4 +1,4 @@
-import { test, expect, row, setAiMode, withEmptyVault } from '../support/fixtures';
+import { test, expect, row, setAiMode, withEmptyVault, fillObjectives } from '../support/fixtures';
 import { samples } from '../support/samples';
 import { makePdf } from '../support/pdf';
 
@@ -81,12 +81,14 @@ test("the Lesson Assistant takes a lesson's objectives typed in, and says which 
   await page.getByTestId('side-lecture').click();
   await expect(page.getByTestId('lecture-from-lesson'), 'the lesson picker was removed').toHaveCount(0);
   await page.getByTestId('lecture-issue').fill(lesson.issue);
-  await page.getByTestId('lecture-objective').fill(lesson.objectives.slice(0, 2).join('\n'));
-  await page.getByTestId('lecture-coverage').selectOption('3');
+  await fillObjectives(page, lesson.objectives.slice(0, 2).join('\n'));
   await page.getByTestId('lecture-suggest').click();
   await expect(page.getByTestId('objective-title')).toHaveText(lesson.objectives.slice(0, 2));
-  await expect(page.getByTestId('objective-group').nth(0).getByTestId('suggestion')).toHaveCount(3);
-  await expect(page.getByTestId('objective-group').nth(1).getByTestId('suggestion')).toHaveCount(3);
+  // Three to five verses for each objective, found without being asked how many.
+  for (const n of [0, 1]) {
+    await expect.poll(() => page.getByTestId('objective-group').nth(n).getByTestId('suggestion').count()).toBeGreaterThanOrEqual(3);
+    expect(await page.getByTestId('objective-group').nth(n).getByTestId('suggestion').count()).toBeLessThanOrEqual(5);
+  }
   // Only lessons are in this vault, so every suggested verse says it is from the Lesson Library.
   const verses = page.getByTestId('suggested-verse');
   expect(await verses.count()).toBeGreaterThan(0);

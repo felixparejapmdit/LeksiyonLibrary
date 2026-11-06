@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import { test, expect, row, setAiMode, withEmptyVault } from '../support/fixtures';
+import { test, expect, row, setAiMode, withEmptyVault, fillObjectives } from '../support/fixtures';
 import { makePdf } from '../support/pdf';
 import { xlsx } from '../support/xlsx';
 
@@ -52,7 +52,7 @@ test.describe('verses suggested for each objective', () => {
       expect(keys).toEqual(expect.arrayContaining(['43.3:6', '41.4:3']));
       for (const other of ['43.3:5', '43.3:7', '43.3:8', '41.4:1', '41.4:2']) expect(keys, `${other} is in another part`).not.toContain(other);
       expect(found.find((s) => s.canonical_key === '43.3:6').from_lessons).toEqual([
-        { lesson_id: expect.any(String), title: 'Ang Tapat na Bantay', file_name: '2025_Wk01a.pdf', section: 2, objective: 'Makilala ang mga bantay na tapat.', question: 'Sino ang tapat?' },
+        { lesson_id: expect.any(String), title: 'Ang Tapat na Bantay', file_name: '2025_Wk01a.pdf', section: 2, objective: 'Makilala ang mga bantay na tapat.', question: 'Sino ang tapat?', pastoral: false },
       ]);
       expect(found.find((s) => s.canonical_key === '41.4:3').from_lessons[0]).toMatchObject({ file_name: '2025_Wk02a.pdf', section: 3 });
       const sheetVerse = found.find((s) => s.canonical_key === '51.3:12');
@@ -62,7 +62,7 @@ test.describe('verses suggested for each objective', () => {
       expect(more.filter((s) => keys.includes(s.canonical_key)), 'nothing already shown comes back').toEqual([]);
 
       await page.goto('/lecture');
-      await page.getByTestId('lecture-objective').fill('Makilala ang mga bantay na tapat\nMaitaguyod ang pagbabantay sa gabi');
+      await fillObjectives(page, 'Makilala ang mga bantay na tapat\nMaitaguyod ang pagbabantay sa gabi');
       await page.getByTestId('lecture-suggest').click();
       const [first, second] = [page.getByTestId('objective-group').nth(0), page.getByTestId('objective-group').nth(1)];
       await expect(first.getByTestId('objective-title')).toHaveText('Makilala ang mga bantay na tapat');
@@ -96,14 +96,14 @@ test.describe('verses suggested for each objective', () => {
       await expect(second.getByTestId('suggestion')).toHaveCount(secondCount);
 
       // An issue on its own draws on the whole lesson that matches it.
-      await page.getByTestId('lecture-objective').fill('');
+      await fillObjectives(page, '');
       await page.getByTestId('lecture-issue').fill('nakakalimot magbantay');
       await page.getByTestId('lecture-suggest').click();
       const topic = page.getByTestId('objective-group');
       await expect(topic).toHaveCount(1);
-      await expect(topic.getByTestId('suggestion')).toHaveCount(3);
+      await expect(topic.getByTestId('suggestion')).toHaveCount(4);
       const parts = await topic.getByTestId('from-lesson-part').allTextContents();
-      expect(new Set(parts).size, `verses from across the lesson: ${parts}`).toBe(3);
+      expect(new Set(parts).size, `verses from across the lesson: ${parts}`).toBe(4);
       await expect(topic.getByTestId('from-lesson-file').first()).toHaveText('2025_Wk01a.pdf');
       await expect(topic.getByTestId('objective-more')).toHaveText('Suggest more');
 

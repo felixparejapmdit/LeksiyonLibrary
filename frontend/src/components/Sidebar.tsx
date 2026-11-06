@@ -1,5 +1,5 @@
 import { memo, useMemo, useState } from 'react';
-import { Archive, BookMarked, BookText, ChevronDown, ChevronRight, ClipboardCheck, Folder, FolderPlus, ListChecks, MapPin, Sparkles, Trash2 } from 'lucide-react';
+import { Archive, BookMarked, BookOpen, BookText, ChevronDown, ChevronRight, ClipboardCheck, Folder, FolderPlus, ListChecks, MapPin, Sparkles, Trash2 } from 'lucide-react';
 import { api } from '../api';
 import { useProgressive } from './Layout';
 import {
@@ -7,8 +7,8 @@ import {
   errorText,
   getState,
   navigate,
+  openScope,
   refreshAll,
-  resetFilters,
   selectLesson,
   setState,
   sortLessons,
@@ -96,7 +96,8 @@ export function Sidebar() {
   const unverified = counts.verseToReview + counts.lessonToReview;
   const toCheck = useMemo(() => lessons.filter((l) => l.needs_check).length, [lessons]);
 
-  const allActive = route === '/' && f.category === 'all' && f.year === null && !f.verseKey && !f.folderId && !f.query && !f.toCheck;
+  const plain = route === '/' && f.category === 'all' && f.year === null && !f.verseKey && !f.folderId && !f.query && !f.toCheck;
+  const allActive = plain && f.scope === 'all';
 
   const toggle = (k: string) => setExpanded((e) => ({ ...e, [k]: !e[k] }));
   const goVault = () => {
@@ -119,22 +120,30 @@ export function Sidebar() {
   return (
     <nav className="flex h-full min-w-0 flex-col overflow-hidden bg-panel" aria-label="Library" data-testid="sidebar">
       <div className="flex-none space-y-0.5 p-2">
-        <button className={rowClass(allActive)} data-testid="side-all" title="Worship service lessons uploaded as PDFs" onClick={() => { resetFilters(); goVault(); }}>
-          <Archive size={15} className="flex-none" /> Lesson Library
+        <button className={rowClass(allActive)} data-testid="side-all" title="Every lesson: worship service lessons and pastoral visits" onClick={() => openScope('all')}>
+          <Archive size={15} className="flex-none" /> All Archives
           <Count n={lessons.length} testId="side-all-count" />
         </button>
         {toCheck > 0 && (
-          <button className={`${rowClass(route === '/' && f.toCheck)} !pl-7`} data-testid="side-to-check" onClick={() => { resetFilters(); updateFilters({ toCheck: true }); goVault(); }}>
+          <button className={`${rowClass(route === '/' && f.toCheck)} !pl-7`} data-testid="side-to-check" onClick={() => { openScope('all'); updateFilters({ toCheck: true }); }}>
             <ClipboardCheck size={14} className="flex-none text-warn" /> Not checked yet
             <Count n={toCheck} testId="side-to-check-count" />
           </button>
         )}
+        <button className={rowClass(plain && f.scope === 'lessons')} data-testid="side-lessons" title="Worship service lessons uploaded as PDFs" onClick={() => openScope('lessons')}>
+          <BookOpen size={15} className="flex-none" /> Lesson Library
+          <Count n={lessons.length - pastoralCount} testId="side-lessons-count" />
+        </button>
         <button className={`${rowClass(route === '/lesson-verses')} !pl-7`} data-testid="side-lesson-verses" onClick={() => navigate('/lesson-verses')}>
           <BookText size={14} className="flex-none" /> Verses from lessons
           <Count n={counts.lesson} testId="side-lesson-verses-count" title={`${counts.lesson} verses read from lesson PDFs: ${counts.lesson - counts.lessonToReview} verified, ${counts.lessonToReview} to review`} />
         </button>
-        <button className={rowClass(route === '/bibles')} data-testid="side-bibles" title="Verses imported from Excel or Google Sheets" onClick={() => navigate('/bibles')}>
-          <BookMarked size={15} className="flex-none" /> Verse Library
+        <button className={rowClass(plain && f.scope === 'pastoral')} data-testid="side-pv" title="Pastoral visits, with their own upload" onClick={() => openScope('pastoral')}>
+          <MapPin size={15} className="flex-none text-pv" /> Pastoral Visits
+          <Count n={pastoralCount} testId="side-pv-count" />
+        </button>
+        <button className={`${rowClass(route === '/bibles')} !pl-7`} data-testid="side-bibles" title="Verses read from pastoral visit PDFs and imported from Excel or Google Sheets" onClick={() => navigate('/bibles')}>
+          <BookMarked size={14} className="flex-none" /> Verse Library
           <Count n={counts.verse} testId="side-bibles-count" title={`${counts.verse} verses: ${counts.verse - counts.verseToReview} verified, ${counts.verseToReview} to review`} />
         </button>
         <button className={rowClass(route === '/lecture')} data-testid="side-lecture" title="Lecture Maker: builds a lecture from the verses in both libraries" onClick={() => navigate('/lecture')}>
@@ -222,7 +231,7 @@ export function Sidebar() {
                 <button className="icon-btn !h-8 !w-6 max-lg:!h-11 max-lg:!w-8" aria-label={`${expanded.pv ? 'Collapse' : 'Expand'} Pastoral Visits`} aria-expanded={!!expanded.pv} data-testid="pastoral-expand" onClick={() => toggle('pv')}>
                   {expanded.pv ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
                 </button>
-                <button className={rowClass(f.category === 'pastoral')} data-testid="side-pastoral" onClick={() => { updateFilters({ category: f.category === 'pastoral' ? 'all' : 'pastoral' }); goVault(); }}>
+                <button className={rowClass(f.scope === 'all' && f.category === 'pastoral')} data-testid="side-pastoral" onClick={() => { updateFilters({ scope: 'all', category: f.category === 'pastoral' ? 'all' : 'pastoral' }); goVault(); }}>
                   <MapPin size={14} className="flex-none text-pv" /> Pastoral Visits
                   <Count n={pastoralCount} testId="side-pastoral-count" />
                 </button>

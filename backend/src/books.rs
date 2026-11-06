@@ -108,11 +108,23 @@ pub fn find(num: Option<u32>, name: &str) -> Option<&'static Book> {
         Some(k) => format!("{k}{n}"),
         None => n,
     };
-    BOOKS.iter().find(|b| {
+    let exact = BOOKS.iter().find(|b| {
         norm_full(b.en) == key
             || norm_full(b.tl) == key
             || b.aliases.iter().any(|a| norm(a) == key)
-    })
+    });
+    if exact.is_some() {
+        return exact;
+    }
+    // An abbreviation not listed, such as "Filip." for Filipos, if it begins only one book's name.
+    if key.trim_start_matches(|c: char| c.is_ascii_digit()).chars().count() < 4 {
+        return None;
+    }
+    let mut starts = BOOKS.iter().filter(|b| norm_full(b.en).starts_with(&key) || norm_full(b.tl).starts_with(&key));
+    match (starts.next(), starts.next()) {
+        (Some(only), None) => Some(only),
+        _ => None,
+    }
 }
 
 fn norm_full(s: &str) -> String {

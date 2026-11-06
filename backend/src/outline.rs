@@ -44,6 +44,8 @@ pub struct LessonMatch {
     /// The lesson's own objective for that part, when it has one.
     pub objective: String,
     pub question: String,
+    /// The lesson is a pastoral visit, whose verses belong to the Verse Library.
+    pub pastoral: bool,
 }
 
 pub struct LessonHit {
@@ -146,6 +148,7 @@ struct Lesson {
     issue: String,
     objectives: Vec<String>,
     outline: Vec<Section>,
+    pastoral: bool,
 }
 
 struct Verse {
@@ -174,12 +177,13 @@ impl Lesson {
             section: v.section,
             objective: self.objective(v.section),
             question: v.question.clone(),
+            pastoral: self.pastoral,
         }
     }
 }
 
 fn load(conn: &Connection, user_id: &str) -> rusqlite::Result<(Vec<Lesson>, HashMap<String, Vec<Verse>>)> {
-    let mut st = conn.prepare("SELECT id, title, file_name, issue, objectives, outline FROM lessons WHERE user_id = ?1 ORDER BY lesson_date DESC, id")?;
+    let mut st = conn.prepare("SELECT id, title, file_name, issue, objectives, outline, category = 'pastoral' FROM lessons WHERE user_id = ?1 ORDER BY lesson_date DESC, id")?;
     let lessons = st
         .query_map([user_id], |r| {
             Ok(Lesson {
@@ -189,6 +193,7 @@ fn load(conn: &Connection, user_id: &str) -> rusqlite::Result<(Vec<Lesson>, Hash
                 issue: r.get(3)?,
                 objectives: serde_json::from_str(&r.get::<_, String>(4)?).unwrap_or_default(),
                 outline: serde_json::from_str(&r.get::<_, String>(5)?).unwrap_or_default(),
+                pastoral: r.get(6)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -377,6 +382,7 @@ mod tests {
                 section: 2,
                 objective: "Makilala ang mga bantay na tapat.".into(),
                 question: "Sino ang tapat?".into(),
+                pastoral: false,
             }]
         );
         let other = hits.iter().find(|h| h.canonical_key == "41.4:3").unwrap();

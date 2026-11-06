@@ -170,6 +170,8 @@ const MAX_PDF: usize = 64 * 1024 * 1024;
 
 async fn upload_lesson(State(s): State<S>, u: User, mut mp: Multipart) -> ApiResult<Json<Value>> {
     let (mut file, mut file_name, mut pages, mut source_kind) = (None::<Vec<u8>>, String::new(), Vec::<String>::new(), "text".to_string());
+    // Pastoral visits have their own upload: everything added there is one.
+    let mut pastoral = false;
     while let Some(field) = mp.next_field().await.map_err(|_| ApiError::bad("The upload could not be read."))? {
         match field.name().unwrap_or_default() {
             "file" => {
@@ -181,6 +183,7 @@ async fn upload_lesson(State(s): State<S>, u: User, mut mp: Multipart) -> ApiRes
                 pages = serde_json::from_str(&raw).map_err(|_| ApiError::bad("Extracted text is malformed."))?;
             }
             "source_kind" => source_kind = field.text().await.unwrap_or_default(),
+            "category" => pastoral = field.text().await.unwrap_or_default() == "pastoral",
             _ => {}
         }
     }
@@ -199,7 +202,10 @@ async fn upload_lesson(State(s): State<S>, u: User, mut mp: Multipart) -> ApiRes
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "lesson.pdf".into());
     let sha = sha_hex(&file);
-    let parsed = parser::parse(&pages, &safe_name);
+    let mut parsed = parser::parse(&pages, &safe_name);
+    if pastoral {
+        parsed.category = "pastoral".into();
+    }
     let id = new_id();
     let byte_size = file.len() as i64;
     let (state, target) = (s.clone(), id.clone());
@@ -226,7 +232,7 @@ async fn upload_lesson(State(s): State<S>, u: User, mut mp: Multipart) -> ApiRes
             let existing: Option<String> = tx
                 .query_row(
                     "SELECT id FROM verses WHERE user_id=?1 AND canonical_key=?2 AND version=?3 AND language=?4 AND ocr_raw=?5",
-                    params![uid, v.canonical_key, v.version, parsed.language, v.raw],
+                    params![uid, v.canonical_key, v.version, v.language, v.raw],
                     |r| r.get(0),
                 )
                 .optional()?;
@@ -237,7 +243,7 @@ async fn upload_lesson(State(s): State<S>, u: User, mut mp: Multipart) -> ApiRes
                     tx.execute(
                         "INSERT INTO verses (id,user_id,canonical_key,book_id,ref_printed,ref_en,ref_tl,version,language,text,text_sha256,ocr_raw,status,created_at)
                          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,'unverified',?13)",
-                        params![vid, uid, v.canonical_key, v.book_id, v.ref_printed, v.ref_en, v.ref_tl, v.version, parsed.language, v.text, sha_hex(v.text.as_bytes()), v.raw, ts],
+                        params![vid, uid, v.canonical_key, v.book_id, v.ref_printed, v.ref_en, v.ref_tl, v.version, v.language, v.text, sha_hex(v.text.as_bytes()), v.raw, ts],
                     )?;
                     vid
                 }
@@ -531,13 +537,13 @@ async fn delete_folder(State(s): State<S>, u: User, Path(id): Path<String>) -> A
 fn verses_for(c: &Connection, user_id: &str) -> rusqlite::Result<Vec<Value>> {
     let mut sources: HashMap<String, Vec<Value>> = HashMap::new();
     {
-        let mut st = c.prepare("SELECT lv.verse_id, lv.lesson_id, lv.page, lv.section, lv.question FROM lesson_verses lv WHERE lv.user_id=?1 ORDER BY lv.ordinal")?;
-        for row in st.query_map([user_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, i64>(3)?, r.get::<_, String>(4)?)))? {
-            let (v, l, p, section, question) = row?;
+        let mut st = c.prepare("SELECT lv.verse_id, lv.lesson_id, lv.page, lv.section, lv.question, l.category = 'pastoral' FROM lesson_verses lv JOIN lessons l ON l.id = lv.lesson_id WHERE lv.user_id=?1 ORDER BY lv.ordinal")?;
+        for row in st.query_map([user_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, i64>(3)?, r.get::<_, String>(4)?, r.get::<_, bool>(5)?)))? {
+            let (v, l, p, section, question, pastoral) = row?;
             let list = sources.entry(v).or_default();
             // Printed twice in one lesson, it is listed once, where it first appears.
             if !list.iter().any(|x| x["lesson_id"] == l.as_str()) {
-                list.push(json!({ "lesson_id": l, "page": p, "section": section, "question": question }));
+                list.push(json!({ "lesson_id": l, "page": p, "section": section, "question": question, "pastoral": pastoral }));
             }
         }
     }

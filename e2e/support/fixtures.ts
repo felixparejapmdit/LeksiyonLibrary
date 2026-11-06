@@ -244,4 +244,15 @@ export async function watchFrames(page: Page, action: () => Promise<unknown>) {
   });
 }
 
+/** Fills the Lesson Assistant's objective fields, one per line, adding or clearing fields as needed. */
+export async function fillObjectives(page: Page, text: string) {
+  const lines = text.split('\n');
+  const fields = page.getByTestId('lecture-objective');
+  for (let i = 0; i < lines.length; i++) {
+    if ((await fields.count()) <= i) await page.getByTestId('lecture-objective-add').click();
+    await fields.nth(i).fill(lines[i]);
+  }
+  while ((await fields.count()) > Math.max(lines.length, 1)) await page.getByTestId('lecture-objective-remove').last().click();
+}
+
 export { expect };

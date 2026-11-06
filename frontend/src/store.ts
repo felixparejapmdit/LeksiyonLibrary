@@ -1,9 +1,18 @@
 import { useSyncExternalStore } from 'react';
-import { api, ApiError, type Category, type Folder, type Language, type Lecture, type Lesson, type RowToFix, type ScriptureContext, type TagalogContext, type Verse, type VerseContext } from './api';
+import { api, ApiError, type Category, type Folder, type Language, type Lecture, type Lesson, type RowToFix, type ScriptureContext, type TagalogContext, type UploadTarget, type Verse, type VerseContext } from './api';
 
 export type SortMode = 'newest' | 'oldest' | 'title';
 
+/**
+ * Which lessons the list shows: All Archives has every lesson, the Lesson Library the
+ * worship service lessons, and Pastoral Visits the pastoral visits.
+ */
+export type Scope = 'all' | 'lessons' | 'pastoral';
+
+export const scopeTitle: Record<Scope, string> = { all: 'All Archives', lessons: 'Lesson Library', pastoral: 'Pastoral Visits' };
+
 export interface Filters {
+  scope: Scope;
   category: Category | 'all';
   year: number | null;
   folderId: string | null;
@@ -28,6 +37,7 @@ export interface UploadItem {
   progress: number;
   /** The lesson it became, so what was read can be checked. */
   lessonId?: string;
+  target: UploadTarget;
 }
 
 export interface Confirmation {
@@ -63,6 +73,8 @@ export interface State {
   viewerOpen: boolean;
   drawerOpen: boolean;
   uploadOpen: boolean;
+  /** Where files added in the upload dialog go. */
+  uploadTarget: UploadTarget;
   backupOpen: boolean;
   uploads: UploadItem[];
   editingLessonId: string | null;
@@ -71,7 +83,7 @@ export interface State {
   theme: 'dark' | 'light';
 }
 
-const emptyFilters: Filters = { category: 'all', year: null, folderId: null, verseKey: null, query: '', toCheck: false };
+const emptyFilters: Filters = { scope: 'all', category: 'all', year: null, folderId: null, verseKey: null, query: '', toCheck: false };
 
 function stored(key: string, fallback: string): string {
   try {
@@ -105,6 +117,7 @@ let state: State = {
   viewerOpen: stored('lv.viewer', '1') !== '0',
   drawerOpen: false,
   uploadOpen: false,
+  uploadTarget: 'lesson',
   backupOpen: false,
   uploads: [],
   editingLessonId: null,
@@ -249,6 +262,18 @@ export function resetFilters() {
   setState({ filters: { ...emptyFilters }, contentMatches: null });
 }
 
+/** Opens one of the three lesson lists with no other filter. */
+export function openScope(scope: Scope) {
+  resetFilters();
+  updateFilters({ scope });
+  if (location.pathname !== '/') navigate('/');
+  setState({ drawerOpen: false });
+}
+
+export function openUpload(target: UploadTarget) {
+  setState({ uploadOpen: true, uploadTarget: target });
+}
+
 export function selectLesson(id: string, page = 1) {
   setState({ selectedId: id, viewerPage: page });
 }
@@ -276,6 +301,8 @@ export function setQuery(query: string) {
 }
 
 export function matchesFilters(l: Lesson, f: Filters, contentMatches: string[] | null, ignoreCategory = false) {
+  if (f.scope === 'lessons' && l.category === 'pastoral') return false;
+  if (f.scope === 'pastoral' && l.category !== 'pastoral') return false;
   if (!ignoreCategory && f.category !== 'all' && l.category !== f.category) return false;
   if (f.year !== null && l.year !== f.year) return false;
   if (f.folderId !== null && l.folder_id !== f.folderId) return false;
@@ -316,11 +343,12 @@ export function verseGroups(verses: Verse[]) {
 export type Library = 'verse' | 'lesson';
 
 /**
- * Which library a verse belongs to. The Verse Library holds verses imported from a sheet,
- * and also keeps any verse no lesson cites any more. The Lesson Library holds verses read
- * from lesson PDFs.
+ * Which library a verse belongs to. The Verse Library holds verses read from pastoral visit
+ * PDFs and imported from a sheet, and keeps any verse no lesson cites any more. The Lesson
+ * Library holds verses read from worship service lesson PDFs, including one a pastoral visit
+ * cites as well.
  */
-export const libraryOf = (v: Verse): Library => (v.import_source || v.sources.length === 0 ? 'verse' : 'lesson');
+export const libraryOf = (v: Verse): Library => (!v.import_source && v.sources.some((s) => !s.pastoral) ? 'lesson' : 'verse');
 
 export const libraryName: Record<Library, string> = { verse: 'Verse Library', lesson: 'Lesson Library' };
 

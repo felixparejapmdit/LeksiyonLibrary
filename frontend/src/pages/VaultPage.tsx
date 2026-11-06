@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowDownUp, FolderSearch, FolderTree, PanelRight, UploadCloud } from 'lucide-react';
+import { ArrowDownUp, FolderSearch, FolderTree, MapPin, PanelRight, UploadCloud } from 'lucide-react';
 import { ResizeHandle, useIsDesktop } from '../components/Layout';
 import { CategoryTabs, FilterChips, LessonRows, useVisibleLessons } from '../components/LessonList';
 import { PdfViewer } from '../components/PdfViewer';
 import { Sidebar } from '../components/Sidebar';
-import { categoryLabel, getState, resetFilters, selectLesson, setPanelPref, setState, useStore, type SortMode } from '../store';
+import { categoryLabel, getState, openUpload, resetFilters, scopeTitle, selectLesson, setPanelPref, setState, updateFilters, useStore, type SortMode } from '../store';
 
 const DESKTOP = '(min-width: 1024px)';
 
@@ -13,9 +13,13 @@ export function VaultPage() {
   const { pool, visible } = useVisibleLessons();
   const sort = useStore((s) => s.sort);
   const category = useStore((s) => s.filters.category);
+  const scope = useStore((s) => s.filters.scope);
   const total = useStore((s) => s.lessons.length);
   const selectedId = useStore((s) => s.selectedId);
-  const selected = useStore((s) => s.lessons.find((l) => l.id === s.selectedId) ?? null);
+  const chosen = useStore((s) => s.lessons.find((l) => l.id === s.selectedId) ?? null);
+  // Pastoral Visits shows only pastoral visits, and the Lesson Library none: a lesson open from another list is not shown.
+  const scopeOf = useStore((s) => s.filters.scope);
+  const selected = chosen && (scopeOf === 'all' || (scopeOf === 'pastoral') === (chosen.category === 'pastoral')) ? chosen : null;
   const viewerOpen = useStore((s) => s.viewerOpen);
   const sidebarOpen = useStore((s) => s.sidebarOpen);
   const drawerOpen = useStore((s) => s.drawerOpen);
@@ -34,21 +38,38 @@ export function VaultPage() {
     if (visible.length && !visible.some((l) => l.id === getState().selectedId)) selectLesson(visible[0].id);
   }, [visible]);
 
-  const title = category === 'all' ? 'Lesson Library' : categoryLabel[category];
+  const title = category === 'all' || scope === 'pastoral' ? scopeTitle[scope] : categoryLabel[category];
+  const target = scope === 'pastoral' ? 'pastoral' : 'lesson';
 
   const emptyState =
     total === 0 ? (
       <div className="flex flex-col items-center px-4 py-16 text-center" data-testid="empty-vault">
         <UploadCloud size={32} className="text-accent2" />
         <h2 className="m-0 mt-3 text-base font-semibold">Your vault is empty</h2>
-        <p className="m-0 mt-1 mb-4 max-w-xs text-[13px] text-muted">Upload a lesson PDF to index the lesson and collect its verses.</p>
-        <button className="btn btn-primary" data-testid="empty-upload" onClick={() => setState({ uploadOpen: true })}>Upload PDF</button>
+        <p className="m-0 mt-1 mb-4 max-w-xs text-[13px] text-muted">{scope === 'pastoral' ? 'Upload a pastoral visit PDF to collect its verses in the Verse Library.' : 'Upload a lesson PDF to index the lesson and collect its verses.'}</p>
+        <button className="btn btn-primary" data-testid="empty-upload" onClick={() => openUpload(target)}>Upload PDF</button>
+      </div>
+    ) : pool.length === 0 && scope === 'pastoral' && category === 'all' ? (
+      <div className="flex flex-col items-center px-4 py-16 text-center" data-testid="empty-pastoral">
+        <MapPin size={30} className="text-pv" />
+        <h2 className="m-0 mt-3 text-base font-semibold">No pastoral visits yet</h2>
+        <p className="m-0 mt-1 mb-4 max-w-xs text-[13px] text-muted">Upload a pastoral visit PDF. Its verses go to the Verse Library.</p>
       </div>
     ) : (
       <div className="flex flex-col items-center px-4 py-16 text-center" data-testid="empty-filter">
         <FolderSearch size={30} className="text-muted" />
         <h2 className="m-0 mt-3 text-base font-semibold">No lessons match</h2>
-        <button className="btn mt-3" data-testid="empty-reset" onClick={resetFilters}>Reset Filters</button>
+        <button
+          className="btn mt-3"
+          data-testid="empty-reset"
+          onClick={() => {
+            // Clears the filters, staying in the list that is open.
+            resetFilters();
+            updateFilters({ scope });
+          }}
+        >
+          Reset Filters
+        </button>
       </div>
     );
 
@@ -62,6 +83,11 @@ export function VaultPage() {
             </button>
           )}
           <h1 className="m-0 min-w-0 truncate text-lg font-semibold" data-testid="list-title">{title}</h1>
+          {scope === 'pastoral' && (
+            <button className="btn btn-primary !min-h-[34px] max-lg:!min-h-11" data-testid="pastoral-upload" onClick={() => openUpload('pastoral')}>
+              <UploadCloud size={14} /> <span className="max-sm:sr-only">Upload pastoral visit</span>
+            </button>
+          )}
           <label className="ml-auto flex items-center gap-1 text-muted">
             <ArrowDownUp size={13} />
             <span className="sr-only">Sort lessons</span>
