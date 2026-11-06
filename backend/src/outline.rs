@@ -27,6 +27,9 @@ const FILLER: &[&str] = &[
 
 /// Share of the objective's weight a part must cover to count as a match.
 const MIN_MATCH: f64 = 0.34;
+/// Each part of a lesson teaches its own objective, so within one lesson only the part that
+/// matches best counts, and any part that matches nearly as well.
+const NEAR_BEST: f64 = 0.75;
 /// Lessons a suggestion lists as its sources, best match first.
 const MAX_SOURCES: usize = 3;
 
@@ -234,9 +237,14 @@ pub fn for_objective(conn: &Connection, user_id: &str, issue: &str, objective: &
     let issue_docs: Vec<HashSet<String>> = lessons.iter().map(|l| words(&format!("{} {}", l.title, l.issue)).into_iter().collect()).collect();
     let issue_scores = coverage(&issue_terms, &issue_docs);
 
+    let mut best: HashMap<usize, f64> = HashMap::new();
+    for ((lesson, _), score) in parts.iter().zip(&scores) {
+        let b = best.entry(*lesson).or_default();
+        *b = b.max(*score);
+    }
     let mut hits = Hits::default();
     for ((lesson, n), score) in parts.iter().zip(scores) {
-        if score < MIN_MATCH {
+        if score < MIN_MATCH || score < NEAR_BEST * best[lesson] {
             continue;
         }
         let l = &lessons[*lesson];
@@ -373,6 +381,14 @@ mod tests {
         );
         let other = hits.iter().find(|h| h.canonical_key == "41.4:3").unwrap();
         assert_eq!((other.sources[0].file_name.as_str(), other.sources[0].section), ("2025_Wk02a.pdf", 3));
+    }
+
+    #[test]
+    fn within_one_lesson_only_the_part_that_matches_best_counts() {
+        let c = vault();
+        // Objective 3 of the first lesson, with a word of its objective 1 added.
+        let hits = for_objective(&c, "u", "", "Malaman ang tungkulin ng bantay sa pintuan at ang tawag", 10).unwrap();
+        assert_eq!(keys(&hits), vec!["43.3:7"]);
     }
 
     #[test]
