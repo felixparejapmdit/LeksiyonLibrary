@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CheckCircle2, Download, ExternalLink, Loader2, Moon, PartyPopper, RefreshCw, RotateCcw, Sun, Upload, X } from 'lucide-react';
+import { Bot, CheckCircle2, Database, Download, ExternalLink, Loader2, Moon, Palette, PartyPopper, RefreshCw, RotateCcw, Settings, Sun, Upload, X } from 'lucide-react';
 import { api, type AiStatus, type ModelPull } from '../api';
 import { askReset, RestoreInput } from '../components/Header';
+import { PAGE, PageHeader } from '../components/PageHeader';
 import { errorText, setState, setTheme, setWelcomePref, toast, useStore } from '../store';
 
 /** Download sizes of the app's own models, as Ollama's library lists them. */
@@ -87,10 +88,10 @@ function AiCard() {
   const ready = !!ai && ai.available && ai.meaning;
   const missing = ai ? [...(ai.available ? [] : [ai.model]), ...(ai.meaning ? [] : [ai.embed_model])] : [];
   return (
-    <section className="rounded-lg border border-line bg-panel p-3" data-testid="settings-ai-card">
+    <section className="card p-4" data-testid="settings-ai-card">
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
-          <h2 className="m-0 mb-1 text-[14px] font-semibold">AI assistant</h2>
+          <h2 className="card-head"><Bot size={15} className="text-muted" /> AI assistant</h2>
           <p className="m-0 min-h-5 text-[13px] text-muted" data-testid="settings-ai">
             {ai === null ? 'Checking' : ai.available ? `Connected to local model ${ai.model}.` : ai.reachable ? `Local AI is running, but model ${ai.model} is not installed.` : 'Local AI is offline. Verse matching still works without it.'}
           </p>
@@ -149,10 +150,11 @@ export function SettingsPage() {
 
   return (
     <div className="scroll-stable h-full" data-testid="settings-page">
-      <div className="mx-auto max-w-2xl space-y-3 p-3 lg:p-4">
-        <h1 className="m-0 text-lg font-semibold">Settings</h1>
-        <section className="rounded-lg border border-line bg-panel p-3">
-          <h2 className="m-0 mb-2 text-[14px] font-semibold">Appearance</h2>
+      <div className={`${PAGE} max-w-3xl`}>
+        <PageHeader icon={Settings} tone="archive" title="Settings" description="How the app looks, your encrypted data and backups, and the local AI." />
+        <div className="space-y-4">
+        <section className="card p-4">
+          <h2 className="card-head mb-3"><Palette size={15} className="text-muted" /> Appearance</h2>
           <div className="flex gap-1.5" role="group" aria-label="Theme">
             <button className={`btn ${theme === 'dark' ? 'border-accent2!' : ''}`} aria-pressed={theme === 'dark'} data-testid="settings-dark" onClick={() => setTheme('dark')}>
               <Moon size={14} /> Dark
@@ -171,8 +173,8 @@ export function SettingsPage() {
             </button>
           </div>
         </section>
-        <section className="rounded-lg border border-line bg-panel p-3">
-          <h2 className="m-0 mb-1 text-[14px] font-semibold">Your data</h2>
+        <section className="card p-4">
+          <h2 className="card-head"><Database size={15} className="text-muted" /> Your data</h2>
           <p className="m-0 mb-2 text-[13px] text-muted" data-testid="settings-stats">
             {lessons} {lessons === 1 ? 'lesson' : 'lessons'}, {verses.length} verse {verses.length === 1 ? 'record' : 'records'}, {verses.filter((v) => v.status === 'verified').length} verified.
           </p>
@@ -190,6 +192,7 @@ export function SettingsPage() {
           </div>
         </section>
         <AiCard />
+        </div>
       </div>
     </div>
   );

@@ -128,7 +128,7 @@ function translate(item: string) {
 }
 
 /** Fetches Tagalog for what is on screen. Nothing is translated until someone wants to read it. */
-function useTagalog(items: string[], active: boolean) {
+export function useTagalog(items: string[], active: boolean) {
   const [busy, setBusy] = useState(false);
   const [offline, setOffline] = useState(false);
   const wanted = items.join('|');

@@ -1,7 +1,8 @@
 import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
-import { BadgeCheck, Check, ChevronDown, ChevronLeft, ChevronRight, Columns2, Copy, FileSearch, FileSpreadsheet, FileText, LayoutList, ListChecks, Lock, Loader2, PencilLine, Search, ShieldAlert, Sparkles, Table2, X } from 'lucide-react';
+import { BadgeCheck, BookMarked, BookText, Check, ChevronDown, ChevronLeft, ChevronRight, Columns2, Copy, FileSearch, FileSpreadsheet, FileText, LayoutList, ListChecks, Lock, Loader2, PencilLine, Search, ShieldAlert, Sparkles, Table2, X } from 'lucide-react';
 import { api, type Verse } from '../api';
 import { VerseCorrectionDialog } from '../components/Overlays';
+import { PAGE, PageHeader } from '../components/PageHeader';
 import { Highlight } from '../components/LessonList';
 import { scopeNames } from '../components/VerseContext';
 import { openReview } from './ReviewPage';
@@ -473,35 +474,45 @@ export function BiblesPage({ library }: { library: Library }) {
   return (
     <div className="scroll-stable h-full" data-testid="bibles-page">
       <div ref={top} />
-      <div className="mx-auto max-w-6xl p-3 lg:p-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <h1 className="m-0 text-lg font-semibold" data-testid="bibles-title">{library === 'verse' ? 'Verse Library' : 'Verses from lessons'}</h1>
-          {library === 'verse' && (
-            <button className="btn ml-auto !min-h-[34px] max-lg:!min-h-11" data-testid="bibles-import" onClick={() => navigate('/import')}>
-              <FileSpreadsheet size={14} /> Import from Excel
-            </button>
-          )}
-        </div>
-        <p className="m-0 mt-0.5 mb-3 flex items-start gap-1.5 text-[13px] text-muted" data-testid="bibles-policy">
-          <BadgeCheck size={15} className="mt-0.5 flex-none text-ok" />
-          {library === 'verse'
-            ? 'Verses read from your pastoral visit PDFs and imported from your Excel files. Verses read from worship service lessons are kept apart, in the Lesson Library.'
-            : 'Verses read from your worship service lesson PDFs, exactly as printed or scanned. Verses from pastoral visits and Excel files are kept apart, in the Verse Library.'}{' '}
-          Verified text is locked permanently, and the AI can never change it. {stats.verified} of {stats.total} verified.
-        </p>
-        {library === 'verse' && stats.total > 0 && (
-          <p className="m-0 -mt-1.5 mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted" data-testid="bibles-origin-counts">
+      <div className={`${PAGE} max-w-6xl`}>
+        <PageHeader
+          icon={library === 'verse' ? BookMarked : BookText}
+          tone={library === 'verse' ? 'pv' : 'lessons'}
+          title={library === 'verse' ? 'Verse Library' : 'Verses from lessons'}
+          titleTestId="bibles-title"
+          descriptionTestId="bibles-policy"
+          description={
+            <>
+              {library === 'verse'
+                ? 'Verses read from your pastoral visit PDFs and imported from your Excel files. Verses read from worship service lessons are kept apart, in the Lesson Library.'
+                : 'Verses read from your worship service lesson PDFs, exactly as printed or scanned. Verses from pastoral visits and Excel files are kept apart, in the Verse Library.'}{' '}
+              Verified text is locked permanently, and the AI can never change it.
+              <span className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+                <span className="inline-flex items-center gap-1"><BadgeCheck size={13} className="text-ok" /> {stats.verified} of {stats.total} verified</span>
+                {library === 'verse' && stats.total > 0 && (
+                  <span className="inline-flex flex-wrap items-center gap-x-4 gap-y-1" data-testid="bibles-origin-counts">
             <span className="inline-flex items-center gap-1"><FileText size={12} className="text-pv" /> {stats.total - stats.imported} read from uploaded PDFs</span>
             <span className="inline-flex items-center gap-1"><FileSpreadsheet size={12} className="text-ok" /> {stats.imported} imported from Excel</span>
-          </p>
-        )}
+                  </span>
+                )}
+              </span>
+            </>
+          }
+          actions={
+            library === 'verse' ? (
+              <button className="btn" data-testid="bibles-import" onClick={() => navigate('/import')}>
+                <FileSpreadsheet size={14} /> Import from Excel
+              </button>
+            ) : undefined
+          }
+        />
         {rowsToFix > 0 && (
-          <p className="m-0 mb-3 flex flex-wrap items-center gap-2 rounded-md border border-line bg-panel px-3 py-2 text-[13px] text-warn" data-testid="bibles-rows-to-fix">
+          <p className="m-0 mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-warn/40 bg-warn/5 px-3 py-2 text-[13px] text-warn" data-testid="bibles-rows-to-fix">
             {rowsToFix} imported {rowsToFix === 1 ? 'row was' : 'rows were'} left out and {rowsToFix === 1 ? 'needs' : 'need'} fixing.
             <button className="btn !min-h-8 max-lg:!min-h-11" data-testid="bibles-rows-to-fix-open" onClick={() => navigate('/import#rows-to-fix')}>Fix them</button>
           </p>
         )}
-        <div className="z-10 -mx-3 mb-3 border-b border-line bg-bg px-3 pb-2 lg:sticky lg:top-0 lg:-mx-4 lg:px-4 lg:pt-1" data-testid="bibles-toolbar">
+        <div className="z-10 -mx-4 mb-4 border-b border-line bg-bg px-4 pt-1 pb-3 lg:sticky lg:-top-6 lg:-mx-6 lg:px-6 lg:pt-3" data-testid="bibles-toolbar">
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative min-w-52 flex-1">
               <Search size={15} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted" />

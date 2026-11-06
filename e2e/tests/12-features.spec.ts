@@ -258,7 +258,8 @@ test.describe('objective groups', () => {
       await page.getByTestId('lecture-copy').click();
       const clip = await page.evaluate(() => navigator.clipboard.readText());
       expect(clip.indexOf('planting')).toBeLessThan(clip.indexOf('walking'));
-      expect(clip).not.toContain('Objective:');
+      expect(clip).toContain('Introduction: PLANTING');
+      expect(clip).toContain('I. WALKING');
 
       const [download] = await Promise.all([page.waitForEvent('download'), page.getByTestId('lecture-export-word').click()]);
       expect(download.suggestedFilename()).toBe('Grouped Lecture.docx');
@@ -267,12 +268,10 @@ test.describe('objective groups', () => {
       const doc = zip.readAsText('word/document.xml');
       expect(doc).toContain('Grouped Lecture');
       expect(doc).toContain('A &lt;test&gt; issue &amp; more');
-      expect(doc.indexOf('>planting<')).toBeGreaterThan(-1);
-      expect(doc.indexOf('>planting<')).toBeLessThan(doc.indexOf('>walking<'));
+      expect(doc.indexOf('>Introduction: planting<')).toBeGreaterThan(-1);
+      expect(doc.indexOf('>Introduction: planting<')).toBeLessThan(doc.indexOf('>I. walking<'));
       expect(doc).toContain(VERSES[1][1]);
-      expect(doc).toContain('AI context, not scripture');
-      expect(doc).toContain('Chapter context: STUB-CHAPTER');
-      expect(doc).toContain('Book context: STUB-BOOK');
+      expect(doc, 'AI context is left out unless asked for').not.toContain('STUB-CHAPTER');
 
       // Narrowing the window must not lose the lecture being worked on.
       await page.setViewportSize({ width: 800, height: 900 });
@@ -281,11 +280,11 @@ test.describe('objective groups', () => {
       await page.setViewportSize({ width: 1440, height: 900 });
       await expect(page.getByTestId('workspace-objective')).toHaveText(['planting', 'walking']);
 
-      // The print view keeps the same order and hides the controls.
+      // The print view is the outline alone, in the same order, with no controls.
       const pdf = await page.pdf({ format: 'A4' });
       expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
       await page.emulateMedia({ media: 'print' });
-      await expect(page.getByTestId('workspace-objective').first()).toBeVisible();
+      await expect(page.getByTestId('print-doc').getByTestId('doc-part-heading')).toHaveText(['Introduction: planting', 'I. walking']);
       await expect(page.getByTestId('lecture-save')).toBeHidden();
       await expect(page.getByTestId('workspace-context-edit').first()).toBeHidden();
       await page.emulateMedia({ media: 'screen' });
@@ -303,65 +302,78 @@ test.describe('objective groups', () => {
   });
 });
 
-test.describe('presentation mode', () => {
-  test('shows one reference at a time in both languages, by button and keyboard', async ({ page }) => {
+test.describe('lecture outline and preview', () => {
+  test('the outline follows a lesson: title, issue, objectives, then a part for each objective', async ({ page }) => {
     await setAiMode('good');
     await withEmptyVault(page, async () => {
-      await addLesson(page, 'present-en.pdf', 'Present Lesson', VERSES.slice(0, 2));
-      const tagalog = await page.request.post('/api/lessons', {
-        multipart: {
-          source_kind: 'text',
-          pages: JSON.stringify(['Sabado/Linggo: Marso 3/4, 2001\nPaksa: Halimbawang Aralin\nS. Isang punto ..... Juan 3:5 NIRV\nAng unang halimbawang talata.\nB Susunod']),
-          file: { name: 'present-tl.pdf', mimeType: 'application/pdf', buffer: makePdf([['tl']]) },
-        },
-      });
-      expect(tagalog.ok()).toBeTruthy();
+      await addLesson(page, 'outline.pdf', 'Outline Lesson', VERSES);
       await page.goto('/lecture');
-      await expect(page.getByTestId('lecture-present')).toBeDisabled();
-      await fillObjectives(page, 'vocation');
+      await expect(page.getByTestId('workspace-head-empty')).toContainText('up to 4 objectives');
+      await expect(page.getByTestId('lecture-preview'), 'a title is needed first').toBeDisabled();
+      await page.getByTestId('lecture-issue').fill('A made-up issue');
+      await fillObjectives(page, 'vocation\nplanting');
       await page.getByTestId('lecture-suggest').click();
       await expect(page.getByTestId('notes-loading')).toHaveCount(0, { timeout: 15_000 });
-      await expect(page.getByTestId('suggestion').first()).toBeVisible();
-      await page.getByTestId('suggestion-add').first().click();
-      await fillObjectives(page, 'planting');
-      await page.getByTestId('lecture-suggest').click();
-      await expect(page.getByTestId('objective-title')).toHaveText('planting');
-      await expect(page.getByTestId('notes-loading')).toHaveCount(0, { timeout: 15_000 });
-      await page.getByTestId('suggestion').filter({ hasText: 'planting in spring' }).getByTestId('suggestion-add').click();
-      await page.getByTestId('lecture-title').fill('Presented');
+      await page.getByTestId('objective-group').nth(0).getByTestId('suggestion-add').first().click();
+      await page.getByTestId('objective-tab').nth(1).click();
+      await page.getByTestId('objective-group').nth(1).getByTestId('suggestion-add').first().click();
+      await expect(page.getByTestId('lecture-title-needed')).toBeVisible();
 
-      await page.getByTestId('lecture-present').click();
-      await expect(page.getByTestId('present-count')).toHaveText('1 / 2');
-      await expect(page.getByTestId('present-title')).toHaveText('Presented');
-      await expect(page.getByTestId('present-objective')).toHaveText('vocation');
-      await expect(page.getByTestId('present-edition')).toHaveCount(2);
-      await expect(page.locator('[data-testid="present-edition"][data-language="tl"]')).toContainText('Ang unang halimbawang talata');
-      await expect(page.locator('[data-testid="present-edition"][data-language="en"]')).toContainText(VERSES[0][1]);
-      await expect(page.getByTestId('present-prev')).toBeDisabled();
+      // The workspace shows the outline: the issue and objectives, then each part with its verses lettered.
+      await expect(page.getByTestId('workspace-issue')).toContainText('A made-up issue');
+      await expect(page.getByTestId('workspace-objective-item')).toHaveText(['vocation', 'planting']);
+      await expect(page.getByTestId('workspace-part')).toHaveText(['Introduction', 'I.']);
+      await expect(page.getByTestId('workspace-objective')).toHaveText(['vocation', 'planting']);
+      await page.getByTestId('lecture-title').fill('Outlined');
+      await expect(page.getByTestId('lecture-title-needed')).toHaveCount(0);
 
-      await expect(page.getByTestId('present-context-text')).toHaveCount(0);
-      await page.getByTestId('present-context').click();
-      await expect(page.getByTestId('present-context-text')).toContainText('AI context, not scripture');
-      await expect(page.getByTestId('present-context-text')).toContainText('Chapter context (John 3): STUB-CHAPTER');
-      await expect(page.getByTestId('present-context-text')).toContainText('Book context (John): STUB-BOOK');
-      await page.getByTestId('present-context').click();
-      await expect(page.getByTestId('present-context-text')).toHaveCount(0);
+      await page.getByTestId('lecture-preview').click();
+      const preview = page.getByTestId('preview-dialog');
+      await expect(preview).toBeVisible();
+      await expect(page.getByTestId('lecture-present')).toHaveCount(0);
+      await expect(preview.getByTestId('doc-title')).toHaveText('Outlined');
+      await expect(preview.getByTestId('doc-issue')).toContainText('A made-up issue');
+      await expect(preview.getByTestId('doc-objective')).toHaveText(['vocation', 'planting']);
+      await expect(preview.getByTestId('doc-part-heading')).toHaveText(['Introduction: vocation', 'I. planting']);
+      await expect(preview.getByTestId('doc-ref').first()).toContainText('A.');
+      await expect(preview.getByTestId('preview-summary')).toHaveText('2 objectives · 2 verses');
+      // AI context is left out unless it is wanted.
+      await expect(preview.getByTestId('doc-context')).toHaveCount(0);
+      await page.getByTestId('preview-context').click();
+      await expect(page.getByTestId('preview-context')).toHaveAttribute('aria-checked', 'true');
+      await expect(preview.getByTestId('doc-context').first()).toContainText('AI context, not scripture');
+      await expect(preview.getByTestId('doc-context').first()).toContainText('Chapter context: STUB-CHAPTER');
+      await page.getByTestId('preview-language').click();
+      await expect(preview.getByTestId('doc-part-heading').first()).toHaveText('Pasimula: vocation');
+      await page.getByTestId('preview-language').click();
 
-      await page.getByTestId('present-next').click();
-      await expect(page.getByTestId('present-count')).toHaveText('2 / 2');
-      await expect(page.getByTestId('present-text')).toHaveText(VERSES[1][1]);
-      await expect(page.getByTestId('present-next')).toBeDisabled();
-      await page.getByTestId('present-prev').click();
-      await page.keyboard.press('ArrowRight');
-      await expect(page.getByTestId('present-count')).toHaveText('2 / 2');
-      await page.keyboard.press('ArrowLeft');
-      await expect(page.getByTestId('present-count')).toHaveText('1 / 2');
+      const [download] = await Promise.all([page.waitForEvent('download'), page.getByTestId('preview-word').click()]);
+      const doc = new AdmZip(readFileSync(await download.path())).readAsText('word/document.xml');
+      expect(doc.indexOf('>Introduction: vocation<')).toBeGreaterThan(doc.indexOf('>Objectives<'));
+      expect(doc).toContain('>I. planting<');
+      expect(doc).toContain('Chapter context: STUB-CHAPTER');
+
+      await page.evaluate(() => {
+        (window as any).__printed = 0;
+        window.print = () => {
+          (window as any).__printed++;
+        };
+      });
+      await page.getByTestId('preview-print').click();
+      expect(await page.evaluate(() => (window as any).__printed)).toBe(1);
       await page.keyboard.press('Escape');
-      await expect(page.getByTestId('present')).toHaveCount(0);
-      await page.getByTestId('lecture-present').click();
-      await page.getByTestId('present-exit').click();
-      await expect(page.getByTestId('present')).toHaveCount(0);
-      await expect(page.getByTestId('workspace-verse')).toHaveCount(2);
+      await expect(preview).toHaveCount(0);
+      await page.getByTestId('lecture-preview').click();
+      await page.getByTestId('preview-close').click();
+      await expect(preview).toHaveCount(0);
+
+      // Printing gives only the lecture, never the app around it.
+      await page.emulateMedia({ media: 'print' });
+      await expect(page.getByTestId('print-doc')).toBeVisible();
+      await expect(page.getByTestId('print-doc').getByTestId('doc-title')).toHaveText('Outlined');
+      await expect(page.getByTestId('app-shell')).toBeHidden();
+      await page.emulateMedia({ media: 'screen' });
+      await expect(page.getByTestId('print-doc')).toBeHidden();
     });
   });
 });

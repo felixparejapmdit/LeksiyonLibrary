@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, ArrowRight, CheckCircle2, Lock, Save, ShieldAlert } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CheckCircle2, FileSpreadsheet, FileText, ListChecks, Lock, Save, ShieldAlert } from 'lucide-react';
 import { api, type Verse } from '../api';
 import { PdfViewer } from '../components/PdfViewer';
 import { errorText, getState, libraryName, libraryOf, navigate, selectLesson, setState, toast, useStore, type Library } from '../store';
@@ -124,20 +124,38 @@ export function ReviewPage() {
   return (
     <div className="grid h-full grid-cols-1 grid-rows-[minmax(0,1fr)_minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_minmax(320px,440px)] lg:grid-rows-1" data-testid="review-page">
       <div className="min-h-0 min-w-0 border-b border-line lg:border-r lg:border-b-0">
-        {lesson ? <PdfViewer lesson={lesson} mark={source && verse.text.trim() ? { text: verse.text, page: source.page } : null} /> : <p className="p-6 text-center text-[13px] text-muted" data-testid="review-no-source">{verse.import_source ? `Imported from ${verse.import_source}. Compare it with your original.` : 'This verse has no source page.'}</p>}
+        {lesson ? (
+          <PdfViewer lesson={lesson} mark={source && verse.text.trim() ? { text: verse.text, page: source.page } : null} />
+        ) : (
+          <div className="flex h-full items-center justify-center overflow-auto p-6">
+            <div className="card w-full max-w-lg p-5 text-center">
+              <span className={`page-tile mx-auto ${verse.import_source ? 'tone-review' : 'tone-archive'}`} aria-hidden="true">
+                {verse.import_source ? <FileSpreadsheet size={19} /> : <FileText size={19} />}
+              </span>
+              <p className="m-0 mt-3 text-[14px] font-semibold" data-testid="review-no-source">
+                {verse.import_source ? `Imported from ${verse.import_source}.` : 'This verse has no source page.'}
+              </p>
+              <p className="m-0 mt-1 text-[13px] text-muted">{verse.import_source ? 'Compare it with your original. The cell as it was in the sheet:' : 'Compare it with where you found it.'}</p>
+              {verse.import_source && verse.ocr_raw && (
+                <p className="m-0 mt-3 rounded-lg border border-line bg-bg/60 px-3 py-2.5 text-left text-[13px] leading-relaxed whitespace-pre-wrap" data-testid="review-original">{verse.ocr_raw}</p>
+              )}
+            </div>
+          </div>
+        )}
       </div>
-      <div className="scroll-stable min-h-0 space-y-3 p-3" data-testid="review-panel">
+      <div className="scroll-stable min-h-0 space-y-4 bg-panel/40 p-4" data-testid="review-panel">
         <LibraryTabs library={library} counts={counts} onChange={setLibrary} />
-        <div className="flex items-center justify-between gap-2">
-          <h1 className="m-0 text-lg font-semibold">Review verses</h1>
-          <span className="text-xs text-muted tabular-nums" data-testid="review-progress" title={`In the ${libraryName[library]}`}>{position + 1} of {queue.length} to review</span>
+        <div className="flex items-center gap-3">
+          <span className="page-tile tone-review !h-9 !w-9" aria-hidden="true"><ListChecks size={17} /></span>
+          <h1 className="m-0 min-w-0 flex-1 text-lg font-semibold">Review verses</h1>
+          <span className="rounded-full bg-raised px-2 py-0.5 text-xs text-muted tabular-nums" data-testid="review-progress" title={`In the ${libraryName[library]}`}>{position + 1} of {queue.length} to review</span>
         </div>
-        <p className="m-0 text-xs text-muted">
-          {verse.language === 'tl' ? 'Tagalog' : 'English'}
-          {verse.version ? ` · ${verse.version}` : ''}
-          {source ? ` · page ${source.page}` : ''}
-          {lesson ? ` · ${lesson.title}` : ''}
-        </p>
+        <div className="flex flex-wrap items-center gap-1.5 text-xs" data-testid="review-meta">
+          <span className="rounded-full border border-line px-2 py-0.5 font-medium">{verse.language === 'tl' ? 'Tagalog' : 'English'}</span>
+          {verse.version && <span className="rounded-full border border-line px-2 py-0.5 text-muted">{verse.version}</span>}
+          {source && <span className="rounded-full border border-line px-2 py-0.5 text-muted">Page {source.page}</span>}
+          {lesson && <span className="min-w-0 truncate text-muted" title={lesson.title}>{lesson.title}</span>}
+        </div>
         {verse.ref_note && <p className="m-0 flex items-start gap-1 text-xs text-warn" data-testid="review-note"><ShieldAlert size={13} className="mt-0.5 flex-none" /> {verse.ref_note}</p>}
         <label className="block text-xs text-muted">
           Reference
@@ -151,6 +169,7 @@ export function ReviewPage() {
           <summary className="cursor-pointer" data-testid="review-raw-toggle">{verse.import_source ? 'Show the original cell from the sheet' : 'Show what the scan originally read'}</summary>
           <p className="m-0 mt-1 whitespace-pre-wrap" data-testid="review-raw">{verse.ocr_raw}</p>
         </details>
+        <div className="space-y-3 rounded-xl border border-line bg-bg/40 p-3">
         <label className="flex items-start gap-2 text-[13px]">
           <input type="checkbox" className="mt-1" data-testid="review-compared" checked={compared} onChange={(e) => setCompared(e.target.checked)} />
           <span>I compared this with {verse.import_source ? 'the original' : 'the printed page'}, and it matches exactly.</span>
@@ -184,8 +203,9 @@ export function ReviewPage() {
             <Save size={14} /> Save correction
           </button>
         </div>
-        <p className="m-0 text-xs text-muted">Verifying locks this verse permanently. It can never be edited again, by you or by the AI.</p>
-        <div className="flex justify-between gap-1.5 border-t border-line pt-3">
+        <p className="m-0 flex items-start gap-1.5 text-xs text-muted"><Lock size={12} className="mt-0.5 flex-none" /> Verifying locks this verse permanently. It can never be edited again, by you or by the AI.</p>
+        </div>
+        <div className="flex justify-between gap-1.5 border-t border-line pt-4">
           <button className="btn" data-testid="review-prev" disabled={position === 0} onClick={() => setIndex(position - 1)}><ArrowLeft size={14} /> Previous</button>
           <button className="btn" data-testid="review-skip" disabled={position >= queue.length - 1} onClick={() => setIndex(position + 1)}>Skip <ArrowRight size={14} /></button>
         </div>

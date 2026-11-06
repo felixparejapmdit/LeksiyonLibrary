@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, BookMarked, ChevronDown, Copy, MapPin, FileDown, FilePlus2, FileText, Loader2, Lock, MonitorPlay, PencilLine, Plus, Printer, Save, Sparkles, Trash2, X } from 'lucide-react';
-import { PresentationMode } from '../components/Presentation';
-import { backgroundAsText, backgroundOf, ContextPanel } from '../components/VerseContext';
+import { ArrowDown, ArrowUp, BookMarked, ChevronDown, Copy, Eye, MapPin, FileDown, FilePlus2, FileText, ListTree, Loader2, Lock, PencilLine, Plus, Printer, Save, Sparkles, Trash2, X } from 'lucide-react';
+import { LecturePreview, PrintCopy } from '../components/LectureDocument';
+import { PAGE, PageHeader } from '../components/PageHeader';
+import { backgroundOf, ContextPanel } from '../components/VerseContext';
+import { letter, OUTLINE_WORDS, outlineParts, outlineText, type Outline } from '../lectureOutline';
 import { api, saveFile, type Lecture, type LessonMatch, type Suggestion, type Verse } from '../api';
 import { askConfirm, errorText, getState, libraryOf, partName, refreshAll, setState, toast, useStore } from '../store';
 
@@ -20,7 +22,7 @@ type Group = {
   loadingMore: boolean;
 };
 /** A lecture has up to four objectives, and each is given up to five verses at a time. */
-const MAX_OBJECTIVES = 4;
+export const MAX_OBJECTIVES = 4;
 const PER_OBJECTIVE = 5;
 /** Fewer than this many found is said, rather than padded with verses that do not match. */
 const MIN_PER_OBJECTIVE = 3;
@@ -129,7 +131,23 @@ export function LecturePage() {
   const [picked, setPicked] = useState<string[]>([]);
   // The objective each picked verse was chosen for, kept when a lecture is saved.
   const [objectiveOf, setObjectiveOf] = useState<Record<string, string>>({});
-  const [presenting, setPresenting] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+  // Whether AI context is printed under each verse. Only this choice is stored.
+  const [withContext, setWithContextState] = useState(() => {
+    try {
+      return localStorage.getItem('lv.lectureContext') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const setWithContext = (on: boolean) => {
+    setWithContextState(on);
+    try {
+      localStorage.setItem('lv.lectureContext', on ? '1' : '0');
+    } catch {
+      /* private mode: it still applies for this session */
+    }
+  };
   const [exporting, setExporting] = useState(false);
   const [groups, setGroups] = useState<Group[] | null>(null);
   // With more than one objective, each has its own tab, so switching never needs scrolling.
@@ -253,41 +271,44 @@ export function LecturePage() {
     setGroups(null);
   };
 
-  const move = (i: number, d: number) =>
-    setPicked((p) => {
-      const n = [...p];
-      [n[i], n[i + d]] = [n[i + d], n[i]];
-      return n;
-    });
-
   const objectiveFor = (id: string) => objectiveOf[id] ?? '';
-  const lectureBody = () => ({ title, issue, objective, verse_ids: picked, verse_objectives: picked.map(objectiveFor) });
   const contextState = { contexts, scripture, tagalog };
-  const slides = picked.flatMap((id) => {
-    const verse = byId.get(id);
-    return verse ? [{ verse, objective: objectiveFor(id) }] : [];
-  });
+  const present = picked.filter((id) => byId.has(id));
+  const objectiveList = objectiveLines(objective);
+  // The outline the workspace, the preview, printing, copying and Word all share.
+  const parts = outlineParts(objectiveList, present, objectiveFor, contextLanguage);
+  const outline: Outline = { title, issue, objectives: objectiveList, parts };
+  const words = OUTLINE_WORDS[contextLanguage];
+  const titled = !!title.trim();
+  // In outline order, so a saved lecture and a Word file follow what is shown.
+  const ordered = parts.flatMap((p) => p.ids);
+  const lectureBody = () => ({ title, issue, objective, verse_ids: ordered, verse_objectives: ordered.map(objectiveFor) });
+  const asText = () => outlineText(outline, byId, contextLanguage, withContext ? contextState : null);
 
-  const asText = () => {
-    const grouped = picked.some((id) => objectiveFor(id));
-    return [
-      title,
-      ...(issue ? [`Issue: ${issue}`] : []),
-      ...(objective && !grouped ? [`Objective: ${objective}`] : []),
-      '',
-      ...picked.flatMap((id, i) => {
-        const v = byId.get(id);
-        if (!v) return [];
-        const heading = objectiveFor(id) && objectiveFor(id) !== objectiveFor(picked[i - 1]) ? [objectiveFor(id), ''] : [];
-        return [
-          ...heading,
-          `${v.ref_printed}${v.version ? ` (${v.version})` : ''}`,
-          v.text,
-          ...backgroundAsText(backgroundOf(contextState, v.canonical_key, contextLanguage), contextLanguage),
-          '',
-        ];
-      }),
-    ].join('\n');
+  /** Moves a verse up or down within its part. */
+  const moveWithin = (id: string, d: number) => {
+    const part = parts.find((p) => p.ids.includes(id));
+    const other = part?.ids[part.ids.indexOf(id) + d];
+    if (!other) return;
+    setPicked((list) => {
+      const next = [...list];
+      const a = next.indexOf(id);
+      const b = next.indexOf(other);
+      [next[a], next[b]] = [next[b], next[a]];
+      return next;
+    });
+  };
+
+  const exportWord = async () => {
+    setExporting(true);
+    try {
+      const { blob, name } = await api.exportLecture({ ...lectureBody(), context_language: contextLanguage, include_context: withContext });
+      saveFile(blob, name);
+      toast('Word file downloaded. It is not encrypted.');
+    } catch (e) {
+      toast(errorText(e), 'error');
+    }
+    setExporting(false);
   };
 
   const contextButton = (key: string, testId: string) => {
@@ -304,16 +325,22 @@ export function LecturePage() {
 
   return (
     <div className="scroll-stable h-full" data-testid="lecture-page">
-      {presenting && <PresentationMode title={title || 'Lecture'} slides={slides} onClose={() => setPresenting(false)} />}
-      <div className="mx-auto grid max-w-7xl grid-cols-1 gap-4 p-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] lg:p-4">
-        <div className="min-w-0 space-y-3">
-          <div className="no-print">
-            <h1 className="m-0 text-lg font-semibold">Lesson Assistant <span className="text-[13px] font-normal text-muted">· Lecture Maker</span></h1>
-            <p className="m-0 mt-0.5 text-[13px] text-muted" data-testid="lecture-intro">
-              Describe the issue and objective. Suggestions come from the verses in both your Verse Library and your Lesson Library, shown exactly as stored, and each one is labelled with where it came from.
-            </p>
-          </div>
-          <form className="no-print space-y-3 rounded-lg border border-line bg-panel p-3" onSubmit={suggest}>
+      {previewing && <LecturePreview outline={outline} byId={byId} withContext={withContext} onContext={setWithContext} onClose={() => setPreviewing(false)} onWord={exportWord} exporting={exporting} />}
+      {titled && <PrintCopy outline={outline} byId={byId} withContext={withContext} />}
+      <div className={`${PAGE} max-w-7xl`}>
+        <div className="no-print">
+          <PageHeader
+            icon={Sparkles}
+            tone="assist"
+            title="Lesson Assistant"
+            subtitle="Lecture Maker"
+            descriptionTestId="lecture-intro"
+            description="Describe the issue and objective. Suggestions come from the verses in both your Verse Library and your Lesson Library, shown exactly as stored, and each one is labelled with where it came from."
+          />
+        </div>
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
+        <div className="min-w-0 space-y-4">
+          <form className="no-print card space-y-3 p-4" onSubmit={suggest}>
             <label className="block text-xs text-muted">
               Issue or topic
               <textarea className="field mt-1 min-h-16" data-testid="lecture-issue" placeholder="What situation should this lecture address?" value={issue} onChange={(e) => setIssue(e.target.value)} />
@@ -359,7 +386,7 @@ export function LecturePage() {
                 <Plus size={13} /> Add objective <span className="ml-1 text-xs text-muted tabular-nums">{objectives.length} of {MAX_OBJECTIVES}</span>
               </button>
             </fieldset>
-            <div className="-mx-3 flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-line px-3 pt-3" data-testid="lecture-actions">
+            <div className="-mx-4 flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-line px-4 pt-3" data-testid="lecture-actions">
               <button className="btn btn-primary" data-testid="lecture-suggest" disabled={searching || (!issue.trim() && !objective.trim())}>
                 <Sparkles size={14} /> Suggest verses
               </button>
@@ -444,7 +471,7 @@ export function LecturePage() {
                 const showAll = allTranslations[s.canonical_key] || items.length <= 2;
                 const visible = showAll ? items : firstOfEachLanguage(items);
                 return (
-                  <article key={s.canonical_key} className="rounded-lg border border-line bg-panel p-3" data-testid="suggestion" data-key={s.canonical_key}>
+                  <article key={s.canonical_key} className="card p-4" data-testid="suggestion" data-key={s.canonical_key}>
                     <div className="mb-2 flex flex-wrap items-baseline gap-x-2">
                       <h3 className="m-0 text-[14px] font-semibold" data-testid="suggestion-ref">{s.ref_en}</h3>
                       {s.ref_tl !== s.ref_en && <span className="text-xs text-muted">{s.ref_tl}</span>}
@@ -495,53 +522,103 @@ export function LecturePage() {
           )}
         </div>
 
-        <div className="min-w-0 space-y-3 lg:sticky lg:top-4 lg:self-start">
-          <section className="rounded-lg border border-line bg-panel p-3" aria-label="Lecture workspace" data-testid="workspace">
-            <div className="no-print mb-2 flex items-center justify-between gap-2">
-              <h2 className="m-0 text-[14px] font-semibold">Workspace</h2>
-              <button className="btn !min-h-8 max-lg:!min-h-11" data-testid="lecture-new" onClick={newLecture}>
+        <div className="min-w-0 space-y-4 lg:sticky lg:top-0 lg:self-start">
+          <section className="card" aria-label="Lecture outline" data-testid="workspace">
+            <div className="flex items-start justify-between gap-2 border-b border-line px-4 py-3">
+              <div className="min-w-0">
+                <h2 className="m-0 flex items-center gap-1.5 text-[15px] font-semibold"><ListTree size={16} className="text-accent2" /> Lecture outline</h2>
+                <p className="m-0 mt-0.5 text-xs text-muted">Built like your lesson PDFs: the title, the issue and objectives, then a part for each objective.</p>
+              </div>
+              <button className="btn !min-h-8 flex-none max-lg:!min-h-11" data-testid="lecture-new" onClick={newLecture}>
                 <FilePlus2 size={13} /> New
               </button>
             </div>
-            <label className="block text-xs text-muted">
-              Lecture title
-              <input className="field mt-1" data-testid="lecture-title" value={title} onChange={(e) => setTitle(e.target.value)} />
-            </label>
-            {picked.length === 0 ? (
-              <p className="mt-3 mb-1 text-center text-[13px] text-muted" data-testid="workspace-empty">Added verses appear here.</p>
-            ) : (
-              <ol className="m-0 mt-3 list-none space-y-2 p-0" data-testid="workspace-list">
-                {picked.map((id, i) => {
-                  const v = byId.get(id);
-                  if (!v) return null;
-                  return (
-                    <li key={id}>
-                      {objectiveFor(id) && objectiveFor(id) !== objectiveFor(picked[i - 1]) && <h3 className="m-0 mb-1 text-[13px] font-semibold text-accent2" data-testid="workspace-objective">{objectiveFor(id)}</h3>}
-                      <div className="rounded-md border border-line p-2" data-testid="workspace-verse" data-verse-id={id}>
-                      <div className="flex items-center gap-1">
-                        <span className="min-w-0 flex-1 truncate text-[13px] font-semibold">{v.ref_printed}{v.version ? ` (${v.version})` : ''}</span>
-                        <span className="no-print flex flex-none">
-                          <button className="icon-btn" aria-label={`Move ${v.ref_printed} up`} data-testid="workspace-up" disabled={i === 0} onClick={() => move(i, -1)}><ArrowUp size={14} /></button>
-                          <button className="icon-btn" aria-label={`Move ${v.ref_printed} down`} data-testid="workspace-down" disabled={i === picked.length - 1} onClick={() => move(i, 1)}><ArrowDown size={14} /></button>
-                          <button className="icon-btn" aria-label={`Remove ${v.ref_printed}`} data-testid="workspace-remove" onClick={() => setPicked((p) => p.filter((x) => x !== id))}><X size={14} /></button>
-                        </span>
-                      </div>
-                      <div className="no-print mt-1"><VerseOrigin verse={v} /></div>
-                      <p className="m-0 mt-1 text-[13px] leading-relaxed" data-testid="workspace-text">{v.text}</p>
-                      <ContextPanel verseKey={v.canonical_key} reference={v.ref_en} referenceTl={v.ref_tl} testId="workspace-context">
-                        <div className="mt-1">{contextButton(v.canonical_key, 'workspace-context-edit')}</div>
-                      </ContextPanel>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ol>
-            )}
-            <div className="no-print mt-3 flex flex-wrap gap-1.5">
+
+            <div className="space-y-4 px-4 py-4">
+              <label className="block text-xs font-medium text-muted">
+                Title <span className="text-danger" aria-hidden="true">*</span>
+                <input className="field mt-1 !text-[14px] font-semibold" data-testid="lecture-title" required aria-required="true" placeholder="The lecture's title" value={title} onChange={(e) => setTitle(e.target.value)} />
+                {!titled && (picked.length > 0 || objectiveList.length > 0) && <span className="mt-1 block font-normal text-warn" data-testid="lecture-title-needed">A title is needed to save, preview, print or export.</span>}
+              </label>
+
+              {issue.trim() || objectiveList.length ? (
+                <div className="space-y-3 rounded-lg bg-raised/50 px-3 py-2.5" data-testid="workspace-head">
+                  {issue.trim() && (
+                    <div data-testid="workspace-issue">
+                      <h3 className="m-0 text-[11px] font-semibold tracking-wider text-muted uppercase">{words.issue}</h3>
+                      <p className="m-0 mt-0.5 text-[13px] leading-relaxed">{issue.trim()}</p>
+                    </div>
+                  )}
+                  {objectiveList.length > 0 && (
+                    <div data-testid="workspace-objectives">
+                      <h3 className="m-0 text-[11px] font-semibold tracking-wider text-muted uppercase">{words.objectives}</h3>
+                      <ol className="m-0 mt-0.5 list-decimal space-y-0.5 pl-5 text-[13px] leading-relaxed marker:text-muted">
+                        {objectiveList.map((o, i) => <li key={i} data-testid="workspace-objective-item">{o}</li>)}
+                      </ol>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="m-0 text-xs text-muted" data-testid="workspace-head-empty">The issue and objectives written in the form appear here. Both are optional; a lecture has up to {MAX_OBJECTIVES} objectives.</p>
+              )}
+
+              {present.length === 0 ? (
+                <p className="m-0 rounded-lg border border-dashed border-line px-3 py-6 text-center text-[13px] text-muted" data-testid="workspace-empty">
+                  Added verses appear here, each under its objective.
+                </p>
+              ) : (
+                <div className="space-y-4" data-testid="workspace-list">
+                  {parts.map((part, p) => (
+                    <section key={p} className="space-y-2" data-testid="workspace-part-block">
+                      {part.label && (
+                        <h3 className="m-0 flex items-baseline gap-1.5 text-[13px] leading-snug font-semibold">
+                          <span className="flex-none text-accent2" data-testid="workspace-part">{part.label}</span>
+                          {part.objective && <span className="min-w-0" data-testid="workspace-objective">{part.objective}</span>}
+                        </h3>
+                      )}
+                      {part.ids.length === 0 ? (
+                        <p className="m-0 pl-6 text-xs text-muted" data-testid="workspace-part-empty">No verses added for this objective yet.</p>
+                      ) : (
+                        <ol className="m-0 list-none space-y-2 p-0">
+                          {part.ids.map((id, i) => {
+                            const v = byId.get(id)!;
+                            return (
+                              <li key={id} className="flex gap-2" data-testid="workspace-verse" data-verse-id={id}>
+                                <span className="w-4 flex-none pt-2 text-right text-[13px] font-semibold text-muted tabular-nums">{letter(i)}.</span>
+                                <div className="min-w-0 flex-1 rounded-lg border border-line bg-bg/40 px-3 py-2">
+                                  <div className="flex items-center gap-1">
+                                    <span className="min-w-0 flex-1 truncate text-[13px] font-semibold">
+                                      {v.ref_printed}
+                                      {v.version && <span className="font-normal text-muted"> · {v.version}</span>}
+                                    </span>
+                                    <span className="no-print -mr-1.5 flex flex-none">
+                                      <button className="icon-btn !h-7 !w-7 max-lg:!h-11 max-lg:!w-11" aria-label={`Move ${v.ref_printed} up`} data-testid="workspace-up" disabled={i === 0} onClick={() => moveWithin(id, -1)}><ArrowUp size={14} /></button>
+                                      <button className="icon-btn !h-7 !w-7 max-lg:!h-11 max-lg:!w-11" aria-label={`Move ${v.ref_printed} down`} data-testid="workspace-down" disabled={i === part.ids.length - 1} onClick={() => moveWithin(id, 1)}><ArrowDown size={14} /></button>
+                                      <button className="icon-btn !h-7 !w-7 max-lg:!h-11 max-lg:!w-11" aria-label={`Remove ${v.ref_printed}`} data-testid="workspace-remove" onClick={() => setPicked((all) => all.filter((x) => x !== id))}><X size={14} /></button>
+                                    </span>
+                                  </div>
+                                  <p className="m-0 mt-1 text-[13px] leading-relaxed" data-testid="workspace-text">{v.text}</p>
+                                  <div className="no-print mt-1.5"><VerseOrigin verse={v} /></div>
+                                  <ContextPanel verseKey={v.canonical_key} reference={v.ref_en} referenceTl={v.ref_tl} testId="workspace-context">
+                                    <div className="mt-1">{contextButton(v.canonical_key, 'workspace-context-edit')}</div>
+                                  </ContextPanel>
+                                </div>
+                              </li>
+                            );
+                          })}
+                        </ol>
+                      )}
+                    </section>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="no-print flex flex-wrap items-center gap-1.5 border-t border-line px-4 py-3" data-testid="workspace-actions">
               <button
                 className="btn btn-primary"
                 data-testid="lecture-save"
-                disabled={saving || !title.trim()}
+                disabled={saving || !titled}
                 onClick={async () => {
                   setSaving(true);
                   try {
@@ -557,10 +634,13 @@ export function LecturePage() {
               >
                 <Save size={14} /> {saving ? 'Saving' : 'Save'}
               </button>
+              <button className="btn" data-testid="lecture-preview" disabled={!titled} title={titled ? undefined : 'Give the lecture a title first'} onClick={() => setPreviewing(true)}>
+                <Eye size={14} /> Preview Lecture
+              </button>
               <button
                 className="btn"
                 data-testid="lecture-copy"
-                disabled={picked.length === 0}
+                disabled={present.length === 0}
                 onClick={async () => {
                   try {
                     await navigator.clipboard.writeText(asText());
@@ -572,35 +652,16 @@ export function LecturePage() {
               >
                 <Copy size={14} /> Copy
               </button>
-              <button className="btn" data-testid="lecture-print" disabled={picked.length === 0} onClick={() => window.print()}>
-                <Printer size={14} /> Print or save as PDF
+              <button className="btn" data-testid="lecture-print" disabled={present.length === 0 || !titled} title={titled ? undefined : 'Give the lecture a title first'} onClick={() => window.print()}>
+                <Printer size={14} /> Print
               </button>
-              <button
-                className="btn"
-                data-testid="lecture-export-word"
-                disabled={picked.length === 0 || !title.trim() || exporting}
-                title={title.trim() ? undefined : 'Give the lecture a title first'}
-                onClick={async () => {
-                  setExporting(true);
-                  try {
-                    const { blob, name } = await api.exportLecture({ ...lectureBody(), context_language: contextLanguage });
-                    saveFile(blob, name);
-                    toast('Word file downloaded. It is not encrypted.');
-                  } catch (e) {
-                    toast(errorText(e), 'error');
-                  }
-                  setExporting(false);
-                }}
-              >
+              <button className="btn" data-testid="lecture-export-word" disabled={present.length === 0 || !titled || exporting} title={titled ? undefined : 'Give the lecture a title first'} onClick={exportWord}>
                 <FileDown size={14} /> Word
-              </button>
-              <button className="btn" data-testid="lecture-present" disabled={slides.length === 0} onClick={() => setPresenting(true)}>
-                <MonitorPlay size={14} /> Present
               </button>
             </div>
           </section>
-          <section className="no-print rounded-lg border border-line bg-panel p-3" aria-label="Saved lectures" data-testid="saved-lectures">
-            <h2 className="m-0 mb-2 text-[14px] font-semibold">Saved lectures ({lectures.length})</h2>
+          <section className="no-print card p-4" aria-label="Saved lectures" data-testid="saved-lectures">
+            <h2 className="card-head mb-2">Saved lectures ({lectures.length})</h2>
             {lectures.length === 0 && <p className="m-0 text-[13px] text-muted" data-testid="saved-empty">Nothing saved yet.</p>}
             <ul className="m-0 list-none space-y-1 p-0">
               {lectures.map((l) => (
@@ -632,6 +693,7 @@ export function LecturePage() {
             </ul>
           </section>
         </div>
+      </div>
       </div>
     </div>
   );

@@ -70,7 +70,9 @@ With the local AI running, each verse also has details, folded away until you op
 
 The English and Tagalog switch shows these details in either language. Tagalog is translated by the local model the first time you open them, then kept. It is reviewed separately, so a machine translation stays labelled as AI even when you have reviewed the English. A small model's Tagalog needs checking closely; correct it under Review or correct.
 
-Saved lectures keep each verse under its objective. From the workspace you can copy, print or save as PDF, download a Word file, or present full screen, one reference at a time in both languages (arrow keys to move, Esc to leave). Word files and printouts are not encrypted.
+The **Lecture outline** beside the form is built like your lesson PDFs: the title (required), the issue and up to four objectives (both optional), then a part for each objective. As in a lesson, the first objective is taught in the Introduction (Pasimula), the second in part I., the third in II., and so on, and each part's verses are lettered A., B., C. Verses move up and down within their part.
+
+**Preview Lecture** shows the outline as it will print: a clean page like a lesson, with headings in English or Tagalog and, if you want it, the AI context under each verse (off by default). From there, or from the outline, you can print or save as PDF (only the lecture prints, never the app), download a Word file laid out the same way, or copy it as text. Saved lectures keep each verse under its objective. Word files and printouts are not encrypted.
 
 ## Importing verses
 

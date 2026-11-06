@@ -706,13 +706,13 @@ test.describe('verse details', () => {
       await page.getByTestId('suggestion-add').first().click();
       await page.getByTestId('lecture-title').fill('Made up');
 
-      await page.getByTestId('lecture-present').click();
-      await page.getByTestId('present-context').click();
-      const panel = page.getByTestId('present-context-text');
-      await expect(panel).toContainText('Historical and political context (John): STUB-HISTORY');
-      await page.getByTestId('present-context-language').click();
-      await expect(panel).toContainText('Kontekstong pangkasaysayan at pampulitika (Juan): STUB-TAGALOG');
-      await page.getByTestId('present-exit').click();
+      await page.getByTestId('lecture-preview').click();
+      await page.getByTestId('preview-context').click();
+      const panel = page.getByTestId('doc-context').first();
+      await expect(panel).toContainText('Historical and political context: STUB-HISTORY');
+      await page.getByTestId('preview-language').click();
+      await expect(panel).toContainText('Kontekstong pangkasaysayan at pampulitika: STUB-TAGALOG', { timeout: 15_000 });
+      await page.getByTestId('preview-close').click();
 
       const body = { title: 'Made up', issue: '', objective: '', verse_ids: (await verses(page)).map((v) => v.id), verse_objectives: [] };
       const word = async (context_language: string) => {

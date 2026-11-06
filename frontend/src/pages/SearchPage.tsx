@@ -2,6 +2,7 @@ import { useCallback, useMemo, useRef, useEffect, useState } from 'react';
 import { Loader2, Search, Sparkles, X } from 'lucide-react';
 import { api } from '../api';
 import { LessonRows, useVisibleLessons } from '../components/LessonList';
+import { PAGE, PageHeader } from '../components/PageHeader';
 import { errorText, navigate, selectLesson, setQuery, setState, toast, updateFilters, useStore, verseGroups } from '../store';
 
 export function SearchPage() {
@@ -54,8 +55,9 @@ export function SearchPage() {
   }, [verses, query]);
 
   return (
-    <div className="scroll-stable mx-auto h-full max-w-3xl p-3" data-testid="search-page">
-      <h1 className="m-0 mb-2 text-lg font-semibold">Search</h1>
+    <div className="scroll-stable h-full" data-testid="search-page">
+      <div className={`${PAGE} max-w-3xl`}>
+      <PageHeader icon={Search} tone="lessons" title="Search" description="Lesson titles, lesson text, places, references and verse wording, all searched on this computer." />
       <div className="relative">
         <Search size={16} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted" />
         <input ref={inputRef} className="field !pr-11 !pl-9" placeholder="Search lessons, verses, places" aria-label="Search lessons and verses" data-testid="page-search-input" value={query} onChange={(e) => setQuery(e.target.value)} />
@@ -66,12 +68,12 @@ export function SearchPage() {
         )}
       </div>
       {!query.trim() ? (
-        <p className="mt-6 text-center text-[13px] text-muted" data-testid="search-hint">Search lesson titles, lesson text, places, references and verse wording.</p>
+        <p className="mt-8 text-center text-[13px] text-muted" data-testid="search-hint">Type a word, a place or a reference, such as John 3:16.</p>
       ) : (
         <>
-          <h2 className="mt-4 mb-1 text-xs font-medium text-muted" data-testid="search-lessons-heading">Lessons ({visible.length})</h2>
+          <h2 className="mt-6 mb-2 text-xs font-semibold tracking-wider text-muted uppercase" data-testid="search-lessons-heading">Lessons ({visible.length})</h2>
           <LessonRows visible={visible} onOpen={onOpen} empty={<p className="m-0 p-2 text-[13px] text-muted" data-testid="search-none">No lessons match.</p>} />
-          <h2 className="mt-4 mb-1 text-xs font-medium text-muted">Verses ({verseMatches.length})</h2>
+          <h2 className="mt-6 mb-2 text-xs font-semibold tracking-wider text-muted uppercase">Verses ({verseMatches.length})</h2>
           <ul className="m-0 list-none space-y-1 p-0" data-testid="search-verses">
             {verseMatches.map((g) => (
               <li key={g.key}>
@@ -91,7 +93,7 @@ export function SearchPage() {
           </button>
           {related && (
             <>
-              <h2 className="mt-3 mb-1 text-xs font-medium text-muted" data-testid="search-meaning-heading">Related in meaning ({related.length})</h2>
+              <h2 className="mt-5 mb-2 text-xs font-semibold tracking-wider text-muted uppercase" data-testid="search-meaning-heading">Related in meaning ({related.length})</h2>
               {related.length === 0 && <p className="m-0 p-2 text-[13px] text-muted" data-testid="search-meaning-none">No verses are close in meaning.</p>}
               <ul className="m-0 list-none space-y-1 p-0" data-testid="search-meaning-list">
                 {related.map((g) => (
@@ -107,6 +109,7 @@ export function SearchPage() {
           )}
         </>
       )}
+      </div>
     </div>
   );
 }

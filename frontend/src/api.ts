@@ -265,7 +265,7 @@ export const api = {
   lectures: () => request<Lecture[]>('/lectures'),
   saveLecture: (l: { id?: string; title: string; issue: string; objective: string; verse_ids: string[]; verse_objectives: string[] }) =>
     request<Lecture>('/lectures', json('POST', l)),
-  exportLecture: (l: { title: string; issue: string; objective: string; verse_ids: string[]; verse_objectives: string[]; context_language: Language }) =>
+  exportLecture: (l: { title: string; issue: string; objective: string; verse_ids: string[]; verse_objectives: string[]; context_language: Language; include_context: boolean }) =>
     fetchFile('/api/lectures/export', l, 'lecture.docx'),
   deleteLecture: (id: string) => request(`/lectures/${id}`, { method: 'DELETE' }),
 

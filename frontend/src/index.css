@@ -245,6 +245,36 @@ mark {
   transform: translateX(12px);
 }
 
+/* The icon tile that opens every page, in the colour its part has in the sidebar. */
+.page-tile {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid color-mix(in srgb, var(--tone) 30%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--tone) 14%, transparent);
+  color: var(--tone);
+}
+
+/* A card on a page: one radius, one border and one padding everywhere. */
+.card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
 /* ---------- Welcome ---------- */
 .welcome {
   background:
@@ -622,8 +652,162 @@ mark {
   }
 }
 
+/*
+ * Tailwind's space-y gap gives way to any margin utility on a child, and m-0 is on most
+ * paragraphs here, so blocks that were meant to be spaced touched. Outside the layers,
+ * these always win, so a stack is spaced as written.
+ */
+.space-y-0\.5 > :not(:last-child) { margin-block-end: 0.125rem; }
+.space-y-1 > :not(:last-child) { margin-block-end: 0.25rem; }
+.space-y-1\.5 > :not(:last-child) { margin-block-end: 0.375rem; }
+.space-y-2 > :not(:last-child) { margin-block-end: 0.5rem; }
+.space-y-3 > :not(:last-child) { margin-block-end: 0.75rem; }
+.space-y-4 > :not(:last-child) { margin-block-end: 1rem; }
+.space-y-5 > :not(:last-child) { margin-block-end: 1.25rem; }
+.space-y-6 > :not(:last-child) { margin-block-end: 1.5rem; }
+
+/* ---------- Lecture document: laid out like the lesson PDFs ---------- */
+.lecture-paper {
+  max-width: 820px;
+  padding: 56px 64px 64px;
+  border-radius: 4px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2), 0 18px 48px -18px rgba(0, 0, 0, 0.55);
+}
+
+.lecture-doc {
+  color: #111827;
+  font-family: Georgia, 'Times New Roman', Times, serif;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.lecture-doc p {
+  margin: 0;
+}
+
+.lecture-doc-title {
+  margin: 0 0 22px;
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1.3;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.lecture-doc-block {
+  margin-bottom: 16px;
+}
+
+.lecture-doc-label {
+  margin: 0 0 3px;
+  font-size: 15px;
+  font-variant: small-caps;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.lecture-doc ol {
+  margin: 0;
+  padding-left: 26px;
+  list-style: decimal;
+}
+
+.lecture-doc ol li {
+  margin-bottom: 2px;
+}
+
+.lecture-doc-part {
+  margin-top: 22px;
+}
+
+.lecture-doc-heading {
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.lecture-doc-point {
+  margin: 0 0 14px 22px;
+  break-inside: avoid;
+}
+
+.lecture-doc-ref {
+  font-style: italic;
+  font-weight: 700;
+}
+
+.lecture-doc-letter {
+  display: inline-block;
+  min-width: 22px;
+  margin-left: -22px;
+  font-style: normal;
+}
+
+.lecture-doc-version {
+  font-weight: 400;
+}
+
+.lecture-doc-text {
+  margin-top: 3px !important;
+  font-family: Inter, ui-sans-serif, system-ui, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14.5px;
+}
+
+.lecture-doc-context {
+  margin-top: 6px;
+  padding: 6px 0 2px 12px;
+  border-left: 2px solid #d1d5db;
+  color: #4b5563;
+  font-size: 12.5px;
+  font-style: italic;
+}
+
+.lecture-doc-context p + p {
+  margin-top: 3px;
+}
+
+.lecture-doc-translating {
+  margin-top: 18px !important;
+  color: #6b7280;
+  font-size: 12.5px;
+}
+
+.lecture-doc-warning {
+  color: #92400e;
+  font-style: normal;
+  font-weight: 700;
+}
+
+@media (max-width: 640px) {
+  .lecture-paper {
+    padding: 28px 22px 32px;
+  }
+}
+
+/* Only the lecture prints, never the app around it. */
+.print-doc {
+  display: none;
+}
+
 @media print {
   .no-print {
     display: none !important;
+  }
+  @page {
+    size: A4;
+    margin: 18mm 20mm;
+  }
+  body:has(.print-doc) {
+    background: #ffffff;
+  }
+  body:has(.print-doc) #root {
+    display: none !important;
+  }
+  .print-doc {
+    display: block;
   }
 }

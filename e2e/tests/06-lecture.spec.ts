@@ -272,7 +272,11 @@ test('the context stays apart from the verse and follows it into the workspace a
 
   await page.getByTestId('suggestion-add').first().click();
   await expect(page.getByTestId('workspace-context-speaker')).toContainText('STUB-SPEAKER-');
+  // AI context goes into the copy only when it is turned on, in the preview.
   await page.getByTestId('lecture-title').fill('Context copy');
+  await page.getByTestId('lecture-preview').click();
+  await page.getByTestId('preview-context').click();
+  await page.getByTestId('preview-close').click();
   await page.getByTestId('lecture-copy').click();
   const clip = await page.evaluate(() => navigator.clipboard.readText());
   expect(clip).toContain('Speaker (AI, review before use): STUB-SPEAKER-');

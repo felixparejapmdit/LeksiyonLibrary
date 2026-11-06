@@ -1400,6 +1400,13 @@ struct ExportBody {
     /// "tl" for Tagalog context, wherever a translation exists.
     #[serde(default)]
     context_language: String,
+    /// AI context under each verse. Older callers always had it.
+    #[serde(default = "yes")]
+    include_context: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 /// Verse text and context are read from the database here, so an export can only ever
@@ -1411,6 +1418,7 @@ async fn export_lecture(State(s): State<S>, u: User, Json(b): Json<ExportBody>) 
     let title = b.title.trim().to_string();
     let (doc_title, issue, objective) = (title.clone(), b.issue, b.objective);
     let tagalog = b.context_language == "tl";
+    let with_context = b.include_context;
     let items = with_db(&s, move |c| {
         let mut items = Vec::new();
         // The wording to show and whether the user reviewed that wording.
@@ -1475,7 +1483,7 @@ async fn export_lecture(State(s): State<S>, u: User, Json(b): Json<ExportBody>) 
         Ok(items)
     })
     .await?;
-    let bytes = export::docx(&doc_title, &issue, &objective, &items).map_err(|e| {
+    let bytes = export::docx(&doc_title, &issue, &objective, &items, tagalog, with_context).map_err(|e| {
         eprintln!("export failed: {e}");
         ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Export failed.".into())
     })?;
