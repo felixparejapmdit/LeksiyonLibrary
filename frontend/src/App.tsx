@@ -1,6 +1,7 @@
-import { boot, useStore, useRoute } from './store';
+import { useEffect } from 'react';
+import { boot, getState, useStore, useRoute } from './store';
 import { VaultPage } from './pages/VaultPage';
-import { BiblesPage } from './pages/BiblesPage';
+import { BiblesPage, warmLibraries } from './pages/BiblesPage';
 import { LecturePage } from './pages/LecturePage';
 import { SettingsPage } from './pages/SettingsPage';
 import { SearchPage } from './pages/SearchPage';
@@ -59,6 +60,14 @@ export default function App() {
 }
 
 function Shell() {
+  // While nothing else is happening, the verse lists are sorted ahead of the first visit.
+  const verses = useStore((s) => s.verses);
+  useEffect(() => {
+    const idle = window.requestIdleCallback ?? ((fn: () => void) => window.setTimeout(fn, 300));
+    const cancel = window.cancelIdleCallback ?? window.clearTimeout;
+    const id = idle(() => warmLibraries(getState().verses));
+    return () => cancel(id);
+  }, [verses]);
   return (
     <div className="flex h-dvh flex-col overflow-hidden" data-testid="app-shell">
       <Header />

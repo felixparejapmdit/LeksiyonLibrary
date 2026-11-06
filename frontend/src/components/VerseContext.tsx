@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { ChevronRight, Loader2 } from 'lucide-react';
+import { ChevronRight, Loader2, ShieldAlert, ShieldCheck, UserRound } from 'lucide-react';
 import { api, type Language } from '../api';
 import { setContextLanguage, setState, useStore, type State } from '../store';
 
@@ -181,17 +181,38 @@ export function ContextLines({ verseKey, reference, referenceTl, testId, active 
   if (b.empty) return null;
   const labels = CONTEXT_LABELS[language];
   const names = scopeNames(language === 'tl' && referenceTl ? referenceTl : reference);
-  const part = (id: string, label: string, text: string) => text && <span className="block" data-testid={`${testId}-${id}`}><span className="font-semibold">{label}: </span>{text}</span>;
+  // Each part has its heading on its own line and its text set as a justified paragraph.
+  // The colon stays in the text for screen readers and copying, hidden from the eye.
+  const part = (id: string, label: string, text: string) =>
+    text && (
+      <section className="context-part" data-testid={`${testId}-${id}`}>
+        <h4 className="context-head">
+          {label}
+          <span className="sr-only">: </span>
+        </h4>
+        <p className="context-text">{text}</p>
+      </section>
+    );
   return (
-    <span className="block" data-testid={testId}>
-      <span className="font-semibold" data-testid={`${testId}-label`}>{b.reviewed ? labels.reviewed : labels.aiWarning}</span>
-      {part('speaker', labels.speaker, b.speaker)}
+    <div className="space-y-3" data-testid={testId}>
+      <p className={`context-flag ${b.reviewed ? 'is-reviewed' : ''}`}>
+        {b.reviewed ? <ShieldCheck size={14} className="flex-none" /> : <ShieldAlert size={14} className="flex-none" />}
+        <span data-testid={`${testId}-label`}>{b.reviewed ? labels.reviewed : labels.aiWarning}</span>
+      </p>
+      {b.speaker && (
+        <p className="context-speaker" data-testid={`${testId}-speaker`}>
+          <UserRound size={13} className="flex-none text-muted" />
+          <span className="font-semibold">{labels.speaker}</span>
+          <span className="sr-only">: </span>
+          <span className="context-chip">{b.speaker}</span>
+        </p>
+      )}
       {part('note', labels.verseNote, b.verseNote)}
       {part('chapter', `${labels.chapter} (${names.chapter})`, b.chapter)}
       {part('book', `${labels.book} (${names.book})`, b.book)}
       {part('history', `${labels.history} (${names.book})`, b.history)}
       {language === 'tl' && b.untranslated.length > 0 && (
-        <span className="no-print mt-1 flex items-center gap-1 text-muted" data-testid={`${testId}-translating`}>
+        <span className="no-print mt-1 flex items-center gap-1 text-xs text-muted" data-testid={`${testId}-translating`}>
           {busy ? (
             <>
               <Loader2 size={12} className="animate-spin" /> Isinasalin sa computer na ito. Maaaring tumagal ito ng ilang minuto. Translating on this computer; this can take a few minutes.
@@ -203,7 +224,7 @@ export function ContextLines({ verseKey, reference, referenceTl, testId, active 
           )}
         </span>
       )}
-    </span>
+    </div>
   );
 }
 
@@ -239,7 +260,7 @@ export function ContextPanel({ verseKey, reference, referenceTl, testId, note, c
   const labels = CONTEXT_LABELS[language];
   const hasContent = !reviewed.empty || !!note;
   return (
-    <div className="my-1" data-testid={`${testId}-panel`} data-open={open}>
+    <div className="my-2" data-testid={`${testId}-panel`} data-open={open}>
       <button
         type="button"
         className="no-print tap inline-flex min-h-7 cursor-pointer items-center gap-1 rounded-md border-0 bg-transparent px-1 text-xs font-semibold text-accent2 hover:bg-raised max-lg:min-h-11"
@@ -251,16 +272,22 @@ export function ContextPanel({ verseKey, reference, referenceTl, testId, note, c
         {open ? 'Hide details' : 'Show context and details'}
         {hasContent && <span className="font-normal text-muted">· {reviewed.reviewed && !note ? 'reviewed' : 'AI, review before use'}</span>}
       </button>
-      <div className={`${open ? '' : 'hidden print:block'} mt-1 space-y-1 text-xs leading-relaxed text-accent2`}>
-        <ContextLanguageSwitch language={language} onChange={setContextLanguage} />
+      <div className={`${open ? '' : 'hidden print:block'} context-box`}>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line pb-2.5">
+          <span className="text-[11px] font-semibold tracking-wider text-muted uppercase">{language === 'tl' ? 'Konteksto at mga tala' : 'Context and notes'}</span>
+          <ContextLanguageSwitch language={language} onChange={setContextLanguage} />
+        </div>
         {note && (
-          <p className="m-0" data-testid="ai-note">
-            <span className="font-semibold">{labels.aiNote}: </span>
-            {language === 'tl' && noteTl ? noteTl : note}
-          </p>
+          <section className="context-part context-note" data-testid="ai-note">
+            <h4 className="context-head">
+              {labels.aiNote}
+              <span className="sr-only">: </span>
+            </h4>
+            <p className="context-text">{language === 'tl' && noteTl ? noteTl : note}</p>
+          </section>
         )}
         <ContextLines verseKey={verseKey} reference={reference} referenceTl={referenceTl} testId={testId} active={open} />
-        {children}
+        {children && <div className="border-t border-line pt-3">{children}</div>}
       </div>
     </div>
   );

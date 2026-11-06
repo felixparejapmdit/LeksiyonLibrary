@@ -26,7 +26,7 @@ async fn embed(s: &S, inputs: Vec<String>, timeout: Duration) -> Result<Vec<Vec<
         .http
         .post(format!("{}/api/embed", s.config.ollama_url.trim_end_matches('/')))
         .timeout(timeout)
-        .json(&json!({ "model": s.config.embed_model, "input": inputs }))
+        .json(&json!({ "model": s.config.embed_model, "input": inputs, "options": { "num_thread": crate::ai::model_threads() } }))
         .send()
         .await
         .map_err(|e| format!("embedding service unreachable: {e}"))?;

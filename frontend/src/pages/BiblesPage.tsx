@@ -6,7 +6,7 @@ import { PAGE, PageHeader } from '../components/PageHeader';
 import { Highlight } from '../components/LessonList';
 import { scopeNames } from '../components/VerseContext';
 import { openReview } from './ReviewPage';
-import { askConfirm, errorText, getState, libraryOf, navigate, resetFilters, selectLesson, setState, toast, useStore, verseGroups, type Library } from '../store';
+import { askConfirm, derived, errorText, getState, libraryOf, navigate, resetFilters, selectLesson, setState, toast, useStore, verseGroups, type Library } from '../store';
 
 function replaceVerse(v: Verse) {
   setState({ verses: getState().verses.map((x) => (x.id === v.id ? v : x)) });
@@ -374,13 +374,25 @@ function ParallelSide({ verses, side, query, testId }: { verses: Verse[]; side: 
   );
 }
 
+/** One library's verses, kept between visits while the verses are unchanged. */
+const libraryVerses = (all: Verse[], library: Library) => derived(all, `library:${library}`, () => all.filter((v) => libraryOf(v) === library));
+
+/** Its references in Bible order, kept the same way. */
+const sortedGroups = (all: Verse[], library: Library) =>
+  derived(all, `sorted:${library}`, () => verseGroups(libraryVerses(all, library)).sort((a, b) => a.book - b.book || byReference.compare(a.items[0].ref_en, b.items[0].ref_en)));
+
+/** Prepares both libraries while the app is idle, so even the first visit opens at once. */
+export function warmLibraries(all: Verse[]) {
+  for (const library of ['verse', 'lesson'] as const) sortedGroups(all, library);
+}
+
 /**
  * One library's verses. The Verse Library holds verses read from pastoral visits and imported from sheets; the
  * Lesson Library's verses are the ones read from lesson PDFs.
  */
 export function BiblesPage({ library }: { library: Library }) {
   const all = useStore((s) => s.verses);
-  const verses = useMemo(() => all.filter((v) => libraryOf(v) === library), [all, library]);
+  const verses = useMemo(() => libraryVerses(all, library), [all, library]);
   const rowsToFix = useStore((s) => (library === 'verse' ? s.rowsToFix.length : 0));
   const [view, setViewState] = useState<View>(savedViews[library]);
   const { layout, left, right, bothSides, query, language, status, origin, translation, book, pageSize } = view;
@@ -418,7 +430,7 @@ export function BiblesPage({ library }: { library: Library }) {
   }, [verses]);
 
   // Sorted once for each change to the library, not again for every keystroke or filter.
-  const sorted = useMemo(() => verseGroups(verses).sort((a, b) => a.book - b.book || byReference.compare(a.items[0].ref_en, b.items[0].ref_en)), [verses]);
+  const sorted = useMemo(() => sortedGroups(all, library), [all, library]);
 
   const groups = useMemo(() => {
     const q = deferredQuery.trim().toLowerCase();
@@ -474,7 +486,7 @@ export function BiblesPage({ library }: { library: Library }) {
   return (
     <div className="scroll-stable h-full" data-testid="bibles-page">
       <div ref={top} />
-      <div className={`${PAGE} max-w-6xl`}>
+      <div className={PAGE}>
         <PageHeader
           icon={library === 'verse' ? BookMarked : BookText}
           tone={library === 'verse' ? 'pv' : 'lessons'}
@@ -512,7 +524,7 @@ export function BiblesPage({ library }: { library: Library }) {
             <button className="btn !min-h-8 max-lg:!min-h-11" data-testid="bibles-rows-to-fix-open" onClick={() => navigate('/import#rows-to-fix')}>Fix them</button>
           </p>
         )}
-        <div className="z-10 -mx-4 mb-4 border-b border-line bg-bg px-4 pt-1 pb-3 lg:sticky lg:-top-6 lg:-mx-6 lg:px-6 lg:pt-3" data-testid="bibles-toolbar">
+        <div className="z-10 -mx-4 mb-4 border-b border-line bg-bg px-4 pt-1 pb-3 lg:sticky lg:-top-6 lg:-mx-8 lg:px-8 lg:pt-3" data-testid="bibles-toolbar">
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative min-w-52 flex-1">
               <Search size={15} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted" />

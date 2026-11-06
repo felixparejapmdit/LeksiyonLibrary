@@ -11,7 +11,7 @@ export function ImportPage() {
   }, []);
   return (
     <div className="scroll-stable h-full" data-testid="import-page">
-      <div className={`${PAGE} max-w-4xl`}>
+      <div className={PAGE}>
         <PageHeader
           icon={FileSpreadsheet}
           tone="pv"

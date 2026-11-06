@@ -56,7 +56,7 @@ export function SearchPage() {
 
   return (
     <div className="scroll-stable h-full" data-testid="search-page">
-      <div className={`${PAGE} max-w-3xl`}>
+      <div className={PAGE}>
       <PageHeader icon={Search} tone="lessons" title="Search" description="Lesson titles, lesson text, places, references and verse wording, all searched on this computer." />
       <div className="relative">
         <Search size={16} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted" />

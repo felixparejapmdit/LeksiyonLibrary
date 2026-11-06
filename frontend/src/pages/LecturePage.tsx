@@ -327,7 +327,7 @@ export function LecturePage() {
     <div className="scroll-stable h-full" data-testid="lecture-page">
       {previewing && <LecturePreview outline={outline} byId={byId} withContext={withContext} onContext={setWithContext} onClose={() => setPreviewing(false)} onWord={exportWord} exporting={exporting} />}
       {titled && <PrintCopy outline={outline} byId={byId} withContext={withContext} />}
-      <div className={`${PAGE} max-w-7xl`}>
+      <div className={PAGE}>
         <div className="no-print">
           <PageHeader
             icon={Sparkles}
@@ -480,7 +480,7 @@ export function LecturePage() {
                     </div>
                     <FoundInLessons found={s.from_lessons ?? []} />
                     <ContextPanel verseKey={s.canonical_key} reference={s.ref_en} referenceTl={s.ref_tl} testId="verse-context" note={g.notes[s.canonical_key]}>
-                      <div className="mb-2">{contextButton(s.canonical_key, 'context-edit')}</div>
+                      {contextButton(s.canonical_key, 'context-edit')}
                     </ContextPanel>
                     <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
                       {visible.map((v) => (
@@ -600,7 +600,7 @@ export function LecturePage() {
                                   <p className="m-0 mt-1 text-[13px] leading-relaxed" data-testid="workspace-text">{v.text}</p>
                                   <div className="no-print mt-1.5"><VerseOrigin verse={v} /></div>
                                   <ContextPanel verseKey={v.canonical_key} reference={v.ref_en} referenceTl={v.ref_tl} testId="workspace-context">
-                                    <div className="mt-1">{contextButton(v.canonical_key, 'workspace-context-edit')}</div>
+                                    {contextButton(v.canonical_key, 'workspace-context-edit')}
                                   </ContextPanel>
                                 </div>
                               </li>

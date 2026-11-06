@@ -26,7 +26,7 @@ export async function openPdf(data: Uint8Array): Promise<PDFDocumentProxy> {
 }
 
 // Keeps recently opened documents ready so switching lessons is instant.
-const MAX_DOCS = 6;
+const MAX_DOCS = 10;
 const docs = new Map<string, Promise<PDFDocumentProxy>>();
 
 export function lessonDocument(url: string): Promise<PDFDocumentProxy> {
@@ -60,7 +60,7 @@ export function forgetDocuments() {
 }
 
 // Finished page renders, reused when returning to a page at the same zoom.
-const MAX_PAGES = 8;
+const MAX_PAGES = 12;
 const pageCache = new Map<string, HTMLCanvasElement>();
 
 export function cachedPage(key: string) {

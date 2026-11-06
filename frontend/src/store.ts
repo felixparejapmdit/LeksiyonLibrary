@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react';
+import { startTransition, useEffect, useState, useSyncExternalStore } from 'react';
 import { api, ApiError, type Category, type Language, type Lecture, type Lesson, type RowToFix, type ScriptureContext, type TagalogContext, type UploadTarget, type Verse, type VerseContext } from './api';
 
 export type SortMode = 'newest' | 'oldest' | 'title';
@@ -160,14 +160,39 @@ export function navigate(path: string) {
   routeListeners.forEach((l) => l());
 }
 
+/**
+ * The page shown. A change of page is a transition: React prepares the new page in small
+ * pieces while the old one stays usable, so switching never freezes the screen.
+ */
 export function useRoute() {
-  return useSyncExternalStore(
-    (cb) => {
-      routeListeners.add(cb);
-      return () => routeListeners.delete(cb);
-    },
-    () => location.pathname,
-  );
+  const [route, setRoute] = useState(() => location.pathname);
+  useEffect(() => {
+    const update = () => startTransition(() => setRoute(location.pathname));
+    routeListeners.add(update);
+    update();
+    return () => {
+      routeListeners.delete(update);
+    };
+  }, []);
+  return route;
+}
+
+// ---------- Work kept between visits ----------
+
+const derivedCache = new WeakMap<object, Map<string, unknown>>();
+
+/**
+ * Work done on a list, such as sorting every verse, is kept for as long as that list is
+ * the current one, so going back to a page does not redo it. It lives in memory only.
+ */
+export function derived<T>(source: object, key: string, make: () => T): T {
+  let byKey = derivedCache.get(source);
+  if (!byKey) {
+    byKey = new Map();
+    derivedCache.set(source, byKey);
+  }
+  if (!byKey.has(key)) byKey.set(key, make());
+  return byKey.get(key) as T;
 }
 
 // ---------- Actions ----------

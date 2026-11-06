@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, ArrowRight, CheckCircle2, FileSpreadsheet, FileText, ListChecks, Lock, Save, ShieldAlert } from 'lucide-react';
 import { api, type Verse } from '../api';
 import { PdfViewer } from '../components/PdfViewer';
-import { errorText, getState, libraryName, libraryOf, navigate, selectLesson, setState, toast, useStore, type Library } from '../store';
+import { derived, errorText, getState, libraryName, libraryOf, navigate, selectLesson, setState, toast, useStore, type Library } from '../store';
 
 const replaceVerse = (v: Verse) => setState({ verses: getState().verses.map((x) => (x.id === v.id ? v : x)) });
 
@@ -38,12 +38,12 @@ function LibraryTabs({ library, counts, onChange }: { library: Library; counts: 
 export function ReviewPage() {
   const verses = useStore((s) => s.verses);
   const lessons = useStore((s) => s.lessons);
-  const queues = useMemo(() => {
+  const queues = useMemo(() => derived(verses, 'review-queues', () => {
     const sorted = verses
       .filter((v) => v.status === 'unverified')
       .sort((a, b) => a.book_id - b.book_id || a.ref_en.localeCompare(b.ref_en, undefined, { numeric: true }) || a.language.localeCompare(b.language));
     return { verse: sorted.filter((v) => libraryOf(v) === 'verse'), lesson: sorted.filter((v) => libraryOf(v) === 'lesson') };
-  }, [verses]);
+  }), [verses]);
   const counts = { verse: queues.verse.length, lesson: queues.lesson.length };
   const [library, setLibraryState] = useState<Library>(() => savedLibrary ?? (counts.verse === 0 && counts.lesson > 0 ? 'lesson' : 'verse'));
   const [index, setIndex] = useState(0);

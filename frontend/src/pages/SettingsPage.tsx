@@ -150,9 +150,9 @@ export function SettingsPage() {
 
   return (
     <div className="scroll-stable h-full" data-testid="settings-page">
-      <div className={`${PAGE} max-w-3xl`}>
+      <div className={PAGE}>
         <PageHeader icon={Settings} tone="archive" title="Settings" description="How the app looks, your encrypted data and backups, and the local AI." />
-        <div className="space-y-4">
+        <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
         <section className="card p-4">
           <h2 className="card-head mb-3"><Palette size={15} className="text-muted" /> Appearance</h2>
           <div className="flex gap-1.5" role="group" aria-label="Theme">
@@ -191,7 +191,9 @@ export function SettingsPage() {
             <button className="btn" data-testid="settings-reset" onClick={askReset}><RotateCcw size={14} /> Reset vault</button>
           </div>
         </section>
-        <AiCard />
+        <div className="xl:col-span-2">
+          <AiCard />
+        </div>
         </div>
       </div>
     </div>

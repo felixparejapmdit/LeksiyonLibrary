@@ -30,4 +30,4 @@ export function PageHeader({ icon: Icon, tone, title, subtitle, description, act
 }
 
 /** The same frame on every page: one width, and the same space around the content. */
-export const PAGE = 'mx-auto w-full px-4 py-5 lg:px-6 lg:py-6';
+export const PAGE = 'mx-auto w-full max-w-[1680px] px-4 py-5 lg:px-8 lg:py-6';

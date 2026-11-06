@@ -1,3 +1,4 @@
+import { lessonDocument } from '../pdf';
 import { memo, useMemo } from 'react';
 import { useProgressive } from './Layout';
 import { Calendar, CalendarDays, ClipboardCheck, Download, FileText, Folder, FolderOpen, MapPin, Pencil, Trash2, X } from 'lucide-react';
@@ -142,10 +143,18 @@ export function FilterChips() {
   );
 }
 
+let prefetchTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** Loads a lesson's PDF while the pointer rests on its row, in memory only, ready to open. */
+function prefetchLesson(id: string) {
+  clearTimeout(prefetchTimer);
+  prefetchTimer = setTimeout(() => void lessonDocument(lessonFileUrl(id)).catch(() => {}), 150);
+}
+
 const Row = memo(function Row({ lesson, selected, query, onOpen }: { lesson: Lesson; selected: boolean; query: string; onOpen: (id: string) => void }) {
   const meta = [formatLessonDate(lesson), lesson.location].filter(Boolean).join(' · ');
   return (
-    <li className="row-cv" data-testid="lesson-row" data-lesson-id={lesson.id} data-selected={selected}>
+    <li className="row-cv" data-testid="lesson-row" data-lesson-id={lesson.id} data-selected={selected} onPointerEnter={() => prefetchLesson(lesson.id)} onFocus={() => prefetchLesson(lesson.id)}>
       <div className={`tap group flex items-center gap-x-2 rounded-lg border px-2 max-sm:flex-wrap max-sm:pb-1 ${selected ? 'border-line bg-raised' : 'border-transparent hover:bg-raised/60'}`}>
         <button
           className="flex min-h-[54px] min-w-0 flex-1 cursor-pointer items-center gap-2 border-0 bg-transparent py-1.5 text-left max-sm:basis-full"

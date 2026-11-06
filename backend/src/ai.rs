@@ -312,6 +312,14 @@ fn clean_speaker(speaker: &str, reference: &str) -> Option<String> {
     (!reference.to_lowercase().starts_with(&speaker.to_lowercase())).then_some(speaker)
 }
 
+/**
+ * Threads the local model may use: all but two of this computer's cores, so the app, the
+ * PDF viewer and OCR stay smooth while the AI writes. Always at least one.
+ */
+pub fn model_threads() -> usize {
+    std::thread::available_parallelism().map_or(2, |n| n.get()).saturating_sub(2).max(1)
+}
+
 async fn ask_json(client: &reqwest::Client, base_url: &str, model: &str, system: &str, user: &str) -> Result<Value, String> {
     let resp = client
         .post(format!("{}/api/chat", base_url.trim_end_matches('/')))
@@ -319,7 +327,7 @@ async fn ask_json(client: &reqwest::Client, base_url: &str, model: &str, system:
             "model": model,
             "stream": false,
             "format": "json",
-            "options": { "temperature": 0.1 },
+            "options": { "temperature": 0.1, "num_thread": model_threads() },
             "messages": [
                 { "role": "system", "content": system },
                 { "role": "user", "content": user }
@@ -399,7 +407,7 @@ pub async fn request_notes(
             "model": model,
             "stream": false,
             "format": "json",
-            "options": { "temperature": 0.1 },
+            "options": { "temperature": 0.1, "num_thread": model_threads() },
             "messages": [
                 { "role": "system", "content": system },
                 { "role": "user", "content": user }
