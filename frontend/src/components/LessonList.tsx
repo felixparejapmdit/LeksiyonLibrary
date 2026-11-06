@@ -1,6 +1,6 @@
 import { memo, useMemo } from 'react';
 import { useProgressive } from './Layout';
-import { Calendar, CalendarDays, ClipboardCheck, Download, FileText, Folder, MapPin, Pencil, Trash2, X } from 'lucide-react';
+import { Calendar, CalendarDays, ClipboardCheck, Download, FileText, Folder, FolderOpen, MapPin, Pencil, Trash2, X } from 'lucide-react';
 import { api, lessonFileUrl, type Category, type Lesson } from '../api';
 import {
   askConfirm,
@@ -65,6 +65,53 @@ export function CategoryTabs({ pool }: { pool: Lesson[] }) {
   );
 }
 
+/** The year 0 stands for lessons with no date, which no year folder holds. */
+export const NO_DATE = 0;
+
+/**
+ * Pastoral Visits' year folders, made from each visit's date: one per year, newest first,
+ * and one for visits with no date. They are the page's own tabs, as Midweek and Weekend are elsewhere.
+ */
+export function YearFolderTabs() {
+  const lessons = useStore((s) => s.lessons);
+  const year = useStore((s) => s.filters.year);
+  const visits = useMemo(() => lessons.filter((l) => l.category === 'pastoral'), [lessons]);
+  const { years, undated } = useMemo(() => {
+    const m = new Map<number, number>();
+    let none = 0;
+    for (const l of visits) {
+      if (l.year) m.set(l.year, (m.get(l.year) ?? 0) + 1);
+      else none++;
+    }
+    return { years: [...m.entries()].sort((a, b) => b[0] - a[0]), undated: none };
+  }, [visits]);
+  const tab = (id: number | null, label: string, n: number, testId: string) => {
+    const selected = year === id;
+    const Icon = selected ? FolderOpen : Folder;
+    return (
+      <button
+        key={testId}
+        role="tab"
+        aria-selected={selected}
+        data-testid={testId}
+        className={`tap flex min-h-[34px] flex-none items-center gap-1.5 rounded-full border px-3 text-xs font-medium max-lg:min-h-11 ${selected ? 'border-pv bg-pv/15 text-pv' : 'border-line text-muted hover:bg-raised'}`}
+        onClick={() => updateFilters({ year: id })}
+      >
+        <Icon size={13} className={selected ? '' : 'text-pv'} /> {label}
+        <span className="tabular-nums opacity-80">{n}</span>
+      </button>
+    );
+  };
+  return (
+    <div className="flex items-center gap-1.5 overflow-x-auto pb-1" role="tablist" aria-label="Pastoral visits by year" data-testid="pv-year-tabs">
+      {tab(null, 'All years', visits.length, 'pv-folder-all')}
+      {years.map(([y, n]) => tab(y, String(y), n, `pv-folder-${y}`))}
+      {undated > 0 && tab(NO_DATE, 'No date', undated, 'pv-folder-none')}
+      {visits.length === 0 && <span className="pl-1 text-xs text-muted" data-testid="pv-folders-hint">A folder for each year is made from the visits' dates as you add them.</span>}
+    </div>
+  );
+}
+
 function Chip({ label, onClear, testId }: { label: string; onClear: () => void; testId: string }) {
   return (
     <span className="flex items-center gap-1 rounded-full border border-line bg-raised py-0.5 pr-0.5 pl-2.5 text-xs" data-testid={testId}>
@@ -79,15 +126,12 @@ function Chip({ label, onClear, testId }: { label: string; onClear: () => void; 
 export function FilterChips() {
   const f = useStore((s) => s.filters);
   const verses = useStore((s) => s.verses);
-  const folders = useStore((s) => s.folders);
   const verseLabel = useMemo(() => verseGroups(verses).find((g) => g.key === f.verseKey)?.items[0].ref_printed, [verses, f.verseKey]);
-  const folderName = folders.find((x) => x.id === f.folderId)?.name;
-  if (f.year === null && !f.verseKey && !f.query.trim() && !f.folderId && !f.toCheck) return null;
+  if (f.year === null && !f.verseKey && !f.query.trim() && !f.toCheck) return null;
   return (
     <div className="flex flex-wrap items-center gap-1.5 pt-1.5" data-testid="filter-chips">
       <span className="text-xs text-muted">Filtered by:</span>
-      {f.year !== null && <Chip label={`Year: ${f.year}`} onClear={() => updateFilters({ year: null })} testId="chip-year" />}
-      {f.folderId && <Chip label={`Folder: ${folderName ?? ''}`} onClear={() => updateFilters({ folderId: null })} testId="chip-folder" />}
+      {f.year !== null && <Chip label={f.year === NO_DATE ? 'Year: no date' : `Year: ${f.year}`} onClear={() => updateFilters({ year: null })} testId="chip-year" />}
       {f.toCheck && <Chip label="Not checked yet" onClear={() => updateFilters({ toCheck: false })} testId="chip-to-check" />}
       {f.verseKey && <Chip label={verseLabel ?? f.verseKey} onClear={() => updateFilters({ verseKey: null })} testId="chip-verse" />}
       {f.query.trim() && <Chip label={`Keyword: "${f.query.trim()}"`} onClear={() => { setState({ contentMatches: null }); updateFilters({ query: '' }); }} testId="chip-query" />}

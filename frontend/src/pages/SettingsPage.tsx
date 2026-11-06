@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CheckCircle2, Download, ExternalLink, FileSpreadsheet, Loader2, Moon, RefreshCw, RotateCcw, Sun, Upload, X } from 'lucide-react';
+import { CheckCircle2, Download, ExternalLink, Loader2, Moon, PartyPopper, RefreshCw, RotateCcw, Sun, Upload, X } from 'lucide-react';
 import { api, type AiStatus, type ModelPull } from '../api';
 import { askReset, RestoreInput } from '../components/Header';
-import { errorText, navigate, setState, setTheme, toast, useStore } from '../store';
+import { errorText, setState, setTheme, setWelcomePref, toast, useStore } from '../store';
 
 /** Download sizes of the app's own models, as Ollama's library lists them. */
 const SIZE_GB: Record<string, number> = { 'llama3.2:3b': 2.0, 'bge-m3': 1.2 };
@@ -141,6 +141,7 @@ function AiCard() {
 
 export function SettingsPage() {
   const theme = useStore((s) => s.theme);
+  const welcome = useStore((s) => s.welcomeOnOpen);
   const lessons = useStore((s) => s.lessons.length);
   const verses = useStore((s) => s.verses);
   const restoreRef = useRef<HTMLInputElement>(null);
@@ -158,6 +159,15 @@ export function SettingsPage() {
             </button>
             <button className={`btn ${theme === 'light' ? 'border-accent2!' : ''}`} aria-pressed={theme === 'light'} data-testid="settings-light" onClick={() => setTheme('light')}>
               <Sun size={14} /> Light
+            </button>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-line pt-3">
+            <span className="min-w-0 flex-1 text-[13px]" id="settings-welcome-label">Show the welcome screen when the app opens</span>
+            <button type="button" role="switch" aria-checked={welcome} aria-labelledby="settings-welcome-label" className="btn" data-testid="settings-welcome" onClick={() => setWelcomePref(!welcome)}>
+              <span className={`switch ${welcome ? 'is-on' : ''}`} aria-hidden="true" /> {welcome ? 'On' : 'Off'}
+            </button>
+            <button className="btn" data-testid="settings-welcome-preview" onClick={() => setState({ welcomeOpen: true })}>
+              <PartyPopper size={14} /> Show it now
             </button>
           </div>
         </section>
@@ -178,11 +188,6 @@ export function SettingsPage() {
             <button className="btn" data-testid="settings-restore" onClick={() => restoreRef.current?.click()}><Upload size={14} /> Restore</button>
             <button className="btn" data-testid="settings-reset" onClick={askReset}><RotateCcw size={14} /> Reset vault</button>
           </div>
-        </section>
-        <section className="rounded-lg border border-line bg-panel p-3" data-testid="settings-import">
-          <h2 className="m-0 mb-1 text-[14px] font-semibold">Importing verses</h2>
-          <p className="m-0 mb-2 text-[13px] text-muted">Verses from Excel files are imported on their own page, under Pastoral Visits. They go to the Verse Library.</p>
-          <button className="btn" data-testid="settings-open-import" onClick={() => navigate('/import')}><FileSpreadsheet size={14} /> Open Import Verses</button>
         </section>
         <AiCard />
       </div>

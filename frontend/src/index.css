@@ -32,6 +32,13 @@ html[data-theme='dark'] {
   --danger: #f87171;
   --on-accent: #ffffff;
   --mark-bg: rgba(99, 102, 241, 0.42);
+  /* The sidebar's colours: light enough to read as text on the dark panel. */
+  --tone-archive: #a5b4fc;
+  --tone-lessons: #93c5fd;
+  --tone-pv: #d8b4fe;
+  --tone-assist: #fcd34d;
+  --tone-review: #86efac;
+  --tone-warn: #fbbf24;
 }
 
 html[data-theme='light'] {
@@ -50,6 +57,12 @@ html[data-theme='light'] {
   --danger: #b91c1c;
   --on-accent: #ffffff;
   --mark-bg: rgba(79, 70, 229, 0.2);
+  --tone-archive: #4338ca;
+  --tone-lessons: #1d4ed8;
+  --tone-pv: #7e22ce;
+  --tone-assist: #b45309;
+  --tone-review: #15803d;
+  --tone-warn: #a16207;
 }
 
 html,
@@ -199,6 +212,194 @@ mark {
   padding: 0 1px;
 }
 
+/* An on/off switch inside a button. */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 28px;
+  height: 16px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--line);
+  transition: background-color 120ms linear;
+}
+
+.switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--fg);
+  transition: transform 120ms ease-out;
+}
+
+.switch.is-on {
+  background: var(--accent);
+}
+
+.switch.is-on::after {
+  background: #ffffff;
+  transform: translateX(12px);
+}
+
+/* ---------- Welcome ---------- */
+.welcome {
+  background:
+    radial-gradient(52rem 34rem at 12% 8%, color-mix(in srgb, var(--accent) 24%, transparent), transparent 62%),
+    radial-gradient(46rem 32rem at 92% 96%, color-mix(in srgb, var(--pv) 20%, transparent), transparent 60%),
+    radial-gradient(30rem 22rem at 70% 18%, color-mix(in srgb, var(--accent2) 12%, transparent), transparent 70%),
+    var(--bg);
+  animation: welcome-show 280ms ease-out;
+}
+
+.welcome.is-leaving {
+  animation: welcome-hide 260ms ease-in forwards;
+}
+
+@keyframes welcome-show {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes welcome-hide {
+  to {
+    opacity: 0;
+    transform: scale(1.02);
+  }
+}
+
+.welcome-skip {
+  border-color: color-mix(in srgb, var(--fg) 18%, transparent);
+  background: color-mix(in srgb, var(--panel) 60%, transparent);
+  backdrop-filter: blur(6px);
+}
+
+.welcome-in {
+  animation: welcome-rise 620ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@keyframes welcome-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+.welcome-emblem {
+  position: relative;
+  display: inline-flex;
+  width: 96px;
+  height: 96px;
+  align-items: center;
+  justify-content: center;
+}
+
+.welcome-core {
+  position: relative;
+  display: inline-flex;
+  width: 76px;
+  height: 76px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 24px;
+  background: linear-gradient(140deg, var(--accent), var(--pv));
+  color: #ffffff;
+  box-shadow: 0 18px 40px -12px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+.welcome-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 30px;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  animation: welcome-ring 2.8s ease-out infinite;
+}
+
+.welcome-ring-2 {
+  animation-delay: 1.4s;
+}
+
+@keyframes welcome-ring {
+  0% {
+    opacity: 0.9;
+    transform: scale(0.82);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.45);
+  }
+}
+
+.welcome-lock {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--bg);
+  border-radius: 999px;
+  background: var(--ok);
+  color: var(--bg);
+}
+
+.welcome-title {
+  background: linear-gradient(90deg, var(--fg), color-mix(in srgb, var(--pv) 70%, var(--fg)));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.welcome-verse {
+  padding: 12px 16px;
+  border: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--panel) 55%, transparent);
+}
+
+.welcome-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 10px 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--tone) 28%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--tone) 9%, var(--panel));
+}
+
+.welcome-tile-icon {
+  color: var(--tone);
+}
+
+.welcome-timer span {
+  background: linear-gradient(90deg, var(--accent), var(--pv));
+  transform-origin: left;
+  animation-name: welcome-timer;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+/* Resting the pointer on the welcome holds it open. */
+.welcome-card:hover .welcome-timer span {
+  animation-play-state: paused;
+}
+
+@keyframes welcome-timer {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
 /* Skips rendering offscreen rows while keeping scroll height stable. */
 .row-cv {
   content-visibility: auto;
@@ -218,6 +419,28 @@ mark {
 
 .fade-in {
   animation: fade 90ms linear;
+}
+
+/* A highlighter stroke over the printed verse: it tints the paper, never hides the ink. */
+.verse-mark {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 3px;
+  background: rgba(250, 204, 21, 0.45);
+  box-shadow: 0 0 0 1.5px rgba(202, 138, 4, 0.55);
+  mix-blend-mode: multiply;
+  animation: mark-in 900ms ease-out;
+}
+
+@keyframes mark-in {
+  0% {
+    opacity: 0;
+    box-shadow: 0 0 0 8px rgba(250, 204, 21, 0);
+  }
+  35% {
+    opacity: 1;
+    box-shadow: 0 0 0 5px rgba(250, 204, 21, 0.45);
+  }
 }
 
 @keyframes fade {
@@ -255,6 +478,148 @@ mark {
 .safe-bottom {
   padding-bottom: env(safe-area-inset-bottom);
 }
+}
+
+/* Outside the components layer: the base button rule above would otherwise win over these colours. */
+/* ---------- Sidebar ---------- */
+.tone-archive { --tone: var(--tone-archive); }
+.tone-lessons { --tone: var(--tone-lessons); }
+.tone-pv { --tone: var(--tone-pv); }
+.tone-assist { --tone: var(--tone-assist); }
+.tone-review { --tone: var(--tone-review); }
+.tone-warn { --tone: var(--tone-warn); }
+
+/* An entry's icon, label and count share its colour. */
+.nav-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--tone, var(--fg));
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  transition: background-color 90ms linear, box-shadow 90ms linear;
+}
+
+.nav-row:hover {
+  background: color-mix(in srgb, var(--tone, var(--fg)) 9%, transparent);
+}
+
+.nav-row.is-active {
+  background: color-mix(in srgb, var(--tone, var(--fg)) 16%, transparent);
+  box-shadow: inset 3px 0 0 var(--tone, var(--fg));
+  font-weight: 650;
+}
+
+.nav-tile {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--tone) 17%, transparent);
+  color: var(--tone);
+  transition: background-color 90ms linear, color 90ms linear;
+}
+
+/* The selected entry's tile deepens, and its icon keeps the colour of its label. */
+.nav-row.is-active .nav-tile {
+  background: color-mix(in srgb, var(--tone) 32%, transparent);
+}
+
+.nav-count {
+  flex: none;
+  min-width: 22px;
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--tone, var(--muted)) 14%, transparent);
+  color: var(--tone, var(--muted));
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* What belongs to an entry hangs from it on a thin line in its colour. */
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 2px 0 4px 18px;
+  padding-left: 6px;
+  border-left: 1px solid color-mix(in srgb, var(--tone) 32%, transparent);
+}
+
+.nav-sub {
+  min-height: 30px;
+  gap: 7px;
+  font-size: 12.5px;
+}
+
+.nav-chevron {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 30px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--tone);
+  opacity: 0.75;
+}
+
+.nav-chevron:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--tone) 9%, transparent);
+}
+
+.nav-tree {
+  margin: 0 0 3px 26px;
+  padding: 0 0 0 6px;
+  list-style: none;
+  border-left: 1px dashed color-mix(in srgb, var(--tone) 35%, transparent);
+}
+
+.nav-leaf {
+  min-height: 28px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.nav-leaf:hover {
+  color: var(--fg);
+  background: var(--raised);
+}
+
+.nav-progress {
+  background: linear-gradient(90deg, var(--tone-review), var(--tone-lessons));
+  transition: width 300ms ease-out;
+}
+
+@media (pointer: coarse), (max-width: 1023px) {
+  .nav-row,
+  .nav-sub,
+  .nav-leaf {
+    min-height: 44px;
+  }
+  .nav-chevron {
+    width: 32px;
+    height: 44px;
+  }
 }
 
 @media print {

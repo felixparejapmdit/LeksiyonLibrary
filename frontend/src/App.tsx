@@ -10,6 +10,7 @@ import { BottomNav } from './components/BottomNav';
 import { DesktopFrame } from './components/Layout';
 import { BackupDialog, BackupReminder, ConfirmDialog, ContextDialog, EditLessonDialog, ToastRegion, UploadDialog } from './components/Overlays';
 import { ReviewPage } from './pages/ReviewPage';
+import { Welcome } from './components/Welcome';
 
 function Page() {
   const route = useRoute();
@@ -36,6 +37,7 @@ function Page() {
 export default function App() {
   const booted = useStore((s) => s.booted);
   const bootError = useStore((s) => s.bootError);
+  const welcomeOpen = useStore((s) => s.welcomeOpen);
 
   if (bootError) {
     return (
@@ -46,8 +48,17 @@ export default function App() {
       </div>
     );
   }
-  // Nothing is painted until the vault has loaded, so an empty vault never flashes.
-  if (!booted) return null;
+  // Nothing but the welcome is painted until the vault has loaded, so an empty vault never flashes.
+  // The welcome keeps its place while the vault loads beneath it, so it is not shown twice.
+  return (
+    <>
+      {booted && <Shell />}
+      {welcomeOpen && <Welcome />}
+    </>
+  );
+}
+
+function Shell() {
   return (
     <div className="flex h-dvh flex-col overflow-hidden" data-testid="app-shell">
       <Header />

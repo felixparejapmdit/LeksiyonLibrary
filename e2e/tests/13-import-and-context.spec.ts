@@ -45,9 +45,11 @@ const everyFile = (dir: string): string[] => readdirSync(dir, { withFileTypes: t
 test.describe('importing verses', () => {
   test('an Excel file is previewed, then imported with its slips corrected and reported', async ({ page }) => {
     await withEmptyVault(page, async () => {
-      // Importing has its own page under Pastoral Visits, reached from Settings, the sidebar and the Verse Library.
+      // Importing has its own page under Pastoral Visits, reached from the sidebar and the Verse Library, and no longer from Settings.
       await page.goto('/settings');
-      await page.getByTestId('settings-open-import').click();
+      await expect(page.getByTestId('settings-page')).toBeVisible();
+      await expect(page.getByTestId('settings-import')).toHaveCount(0);
+      await page.getByTestId('side-import').click();
       await expect(page.getByTestId('import-title')).toHaveText('Import Verses');
       await expect(page.getByTestId('import-from-google'), 'Google Sheets are downloaded as Excel first').toContainText('Microsoft Excel (.xlsx)');
       await expect(page.getByTestId('import-sheet'), 'there is no Google Sheets option').toHaveCount(0);
@@ -124,14 +126,19 @@ test.describe('importing verses', () => {
     });
   });
 
-  test('imported verses never appear in the list that filters lessons', async ({ page }) => {
+  test('imported verses count towards the Verse Library and are marked as imported', async ({ page }) => {
     await withEmptyVault(page, async () => {
       await page.request.post('/api/verses/import', { multipart: { commit: '1', file: { name: 'made-up.xlsx', mimeType: 'application/octet-stream', buffer: xlsx(ROWS) } } });
       await page.goto('/');
       await expect(page.getByTestId('app-shell')).toBeVisible();
       await expect(page.getByRole('button', { name: /Colossians 3:12/ })).toHaveCount(0);
-      await expect(page.getByTestId('side-verses-count')).toHaveText('0');
-      await expect(page.getByTestId('side-bibles-count'), 'they still count towards the library').toHaveText('6');
+      await expect(page.getByTestId('side-lesson-verses-count')).toHaveText('0');
+      await expect(page.getByTestId('side-bibles-count'), 'they count towards the library').toHaveText('6');
+      await page.getByTestId('side-bibles').click();
+      await expect(page.getByTestId('bibles-origin-counts')).toContainText('0 read from uploaded PDFs');
+      await expect(page.getByTestId('bibles-origin-counts')).toContainText('6 imported from Excel');
+      await expect(page.locator('[data-testid="verse-origin"][data-origin="pdf"]')).toHaveCount(0);
+      await expect(page.getByTestId('verse-origin').first()).toHaveText('Imported from Excel');
     });
   });
 
@@ -397,7 +404,7 @@ test.describe('a large Bibles Library', () => {
       await expect(page.getByTestId('bibles-layout-table')).toHaveAttribute('aria-pressed', 'true');
       await expect(page.getByTestId('bibles-range')).toHaveText('1–25 of 124 verses');
       await expect(page.getByTestId('table-row')).toHaveCount(25);
-      await expect(page.getByTestId('bibles-table').locator('th')).toHaveText(['Open', 'Translation', 'Book', 'Chapter', 'Verse', 'Content', 'Language', 'Status']);
+      await expect(page.getByTestId('bibles-table').locator('th')).toHaveText(['Open', 'Source', 'Translation', 'Book', 'Chapter', 'Verse', 'Content', 'Language', 'Status']);
 
       await page.getByTestId('bibles-book').selectOption({ label: 'John' });
       await expect(page.getByTestId('bibles-range')).toHaveText('1–4 of 4 verses');

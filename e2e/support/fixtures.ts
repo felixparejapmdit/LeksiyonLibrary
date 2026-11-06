@@ -144,6 +144,10 @@ export const test = base.extend<{ errors: string[]; guard: void; app: Page }>({
       await page.addInitScript(instrumentation);
       // Tests that are about the backup reminder turn it back on themselves.
       await page.addInitScript(() => localStorage.setItem('lv.backupSnooze', String(Date.now() + 1e10)));
+      // The welcome screen is off unless a test turns it on; its own tests do.
+      await page.addInitScript(() => {
+        if (localStorage.getItem('lv.welcome') === null) localStorage.setItem('lv.welcome', 'off');
+      });
       page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
       page.on('console', (m) => {
         if (m.type() === 'error' && !m.text().startsWith('Failed to load resource')) errors.push(`console: ${m.text()}`);
@@ -165,7 +169,6 @@ export const test = base.extend<{ errors: string[]; guard: void; app: Page }>({
 
 export const TEST_PASSPHRASE = 'a long test passphrase';
 
-/** Runs a test on an empty vault, then puts the shared test library back. */
 /** Lesson PDFs are uploaded from the Lesson Library page, which this opens first if needed. */
 export async function openLessonUpload(page: Page) {
   const button = page.getByTestId('lesson-upload');
@@ -181,6 +184,7 @@ export async function openLessonUpload(page: Page) {
   await button.click();
 }
 
+/** Runs a test on an empty vault, then puts the shared test library back. */
 export async function withEmptyVault(page: Page, body: () => Promise<void>) {
   const saved = await (await page.request.post('/api/backup', { data: { passphrase: TEST_PASSPHRASE } })).body();
   const wipe = () => page.request.post('/api/reset', { data: { confirm: 'RESET' } });

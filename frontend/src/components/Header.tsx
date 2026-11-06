@@ -73,7 +73,7 @@ export function RestoreInput({ inputRef }: { inputRef: React.RefObject<HTMLInput
 function SearchBox() {
   const query = useStore((s) => s.filters.query);
   const route = useRoute();
-  const count = useStore((s) => (s.filters.query.trim() ? s.lessons.filter((l) => matchesFilters(l, { ...s.filters, scope: 'all', category: 'all', year: null, folderId: null, verseKey: null, toCheck: false }, s.contentMatches)).length : 0));
+  const count = useStore((s) => (s.filters.query.trim() ? s.lessons.filter((l) => matchesFilters(l, { ...s.filters, scope: 'all', category: 'all', year: null, verseKey: null, toCheck: false }, s.contentMatches)).length : 0));
   const total = useStore((s) => s.lessons.length);
   return (
     <div className="relative mx-4 hidden w-full max-w-md lg:block">

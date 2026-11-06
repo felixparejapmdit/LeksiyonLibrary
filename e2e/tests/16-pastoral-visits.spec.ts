@@ -75,6 +75,8 @@ test.describe('pastoral visits', () => {
       await page.goto('/');
       await page.getByTestId('side-pv').click();
       await expect(page.getByTestId('empty-pastoral')).toBeVisible();
+      await expect(page.getByTestId('pv-folders-hint'), 'no year folders until visits are added').toBeVisible();
+      await expect(page.getByTestId('pv-folders-empty')).toContainText('Year folders appear here as visits with a date are added');
       await expect(page.getByTestId('viewer-empty'), 'a lesson from another list is not shown here').toBeVisible();
 
       // Several PDFs dropped on the page at once; anything that is not a PDF is skipped.
@@ -110,6 +112,10 @@ test.describe('pastoral visits', () => {
       expect(workersVerses.map((v) => v.canonical_key), 'the unread verse is not added to the one before it').toEqual(['41.4:2']);
       expect(workersVerses[0].text).toBe('Ang manggagawa ay masipag sa bukid at hindi siya umaalis.');
       await expect(page.getByTestId('side-pv-count')).toHaveText('2');
+      // Both visits are from 2021, so a 2021 folder is made for them, on the page and in the sidebar.
+      await expect(page.getByTestId('pv-folder-2021')).toContainText('20212');
+      await expect(page.getByTestId('pv-year-2021')).toContainText('2');
+      await expect(page.getByTestId('pv-folders-hint')).toHaveCount(0);
       await expect(page.getByTestId('side-lessons-count')).toHaveText('1');
       await expect(page.getByTestId('lesson-row')).toHaveCount(2);
       await expect(page.getByTestId('lesson-row').filter({ hasText: 'Ang Halimbawa ng mga Bantay' })).toHaveCount(1);

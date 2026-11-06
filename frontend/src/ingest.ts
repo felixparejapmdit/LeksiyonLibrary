@@ -2,7 +2,19 @@ import { api, ApiError, type Lesson, type UploadTarget } from './api';
 import { loadPdfjs, openPdf, renderToCanvas } from './pdf';
 import { getState, refreshAll, selectLesson, setState, toast, type UploadItem } from './store';
 
-type OcrWorker = { recognize: (image: Blob) => Promise<{ data: { text: string } }>; terminate: () => Promise<unknown> };
+export interface OcrLine {
+  bbox: { x0: number; y0: number; x1: number; y1: number };
+  words: { text: string; bbox: { x0: number; y0: number; x1: number; y1: number } }[];
+}
+
+type OcrWorker = {
+  recognize: (
+    image: Blob,
+    options?: object,
+    output?: { text?: boolean; blocks?: boolean },
+  ) => Promise<{ data: { text: string; blocks: { paragraphs: { lines: OcrLine[] }[] }[] | null } }>;
+  terminate: () => Promise<unknown>;
+};
 
 let worker: Promise<OcrWorker> | null = null;
 let idleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -14,7 +26,7 @@ const MIN_TEXT_CHARS = 30;
 const OCR_FALLBACK_SCALE = 3.5;
 
 /** The OCR engine runs in its own Web Worker, so the UI stays responsive. */
-function ocrWorker() {
+export function ocrWorker() {
   clearTimeout(idleTimer);
   worker ??= import('tesseract.js').then(
     ({ createWorker }) =>
@@ -29,8 +41,10 @@ function ocrWorker() {
   return worker;
 }
 
-function releaseWorkerSoon() {
+/** Frees the OCR engine after a minute unused. Uploads still running keep it. */
+export function releaseWorkerSoon() {
   clearTimeout(idleTimer);
+  if (running) return;
   idleTimer = setTimeout(() => {
     worker?.then((w) => w.terminate()).catch(() => {});
     worker = null;
@@ -111,7 +125,7 @@ function pageTextFromItems(items: { str?: string; transform?: number[]; hasEOL?:
  * correctly, while renders at 2.78x to 5.5x kept misreading "II" as "I". It is
  * also far cheaper for the main thread, so the app stays responsive during OCR.
  */
-async function pageImageForOcr(doc: Awaited<ReturnType<typeof openPdf>>, n: number): Promise<Blob> {
+export async function pageImageForOcr(doc: Awaited<ReturnType<typeof openPdf>>, n: number): Promise<Blob> {
   const page = await doc.getPage(n);
   try {
     const { OPS } = await loadPdfjs();

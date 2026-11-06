@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect, setAiMode, withEmptyVault, openLessonUpload } from '../support/fixtures';
-import { midweekLesson } from '../support/pdf';
+import { makePdf, midweekLesson } from '../support/pdf';
 import { xlsx } from '../support/xlsx';
 
 // Everything here is made up, as all test data must be: this repository is public.
@@ -17,7 +17,9 @@ async function uploadLesson(page: Page) {
   ];
   const lines = verses.flatMap(([reference, text]) => [`A. A point ..... ${reference} NIRV`, text, 'B Next point']);
   const pages = [`Wednesday/Thursday: October 15/16, 2025\nPaksa: Ang Halimbawa ng Pagbabantay\n${lines.join('\n')}`];
-  const res = await page.request.post('/api/lessons', { multipart: { source_kind: 'text', pages: JSON.stringify(pages), file: midweekLesson } });
+  // The PDF prints the same lines, so a verse can be found again on its page.
+  const file = { ...midweekLesson, buffer: makePdf(pages.map((p) => p.split('\n'))) };
+  const res = await page.request.post('/api/lessons', { multipart: { source_kind: 'text', pages: JSON.stringify(pages), file } });
   expect(res.ok()).toBe(true);
   return (await res.json()).lesson;
 }
@@ -149,11 +151,26 @@ test.describe('the Verse Library and the Lesson Library', () => {
       await expect(page.getByTestId('verse-card')).toHaveCount(2);
       await expect(page.getByTestId('verse-import-source')).toHaveCount(2);
       await expect(page.getByTestId('verse-source'), 'no lesson verse here').toHaveCount(0);
+      // Each verse says plainly where it came from.
+      await expect(page.locator('[data-testid="verse-origin"][data-origin="import"]')).toHaveCount(2);
+      await expect(page.getByTestId('verse-origin').first()).toHaveText('Imported from Excel');
+      await page.getByTestId('bibles-origin').selectOption('pdf');
+      await expect(page.getByTestId('bibles-empty')).toBeVisible();
+      await page.getByTestId('bibles-origin').selectOption('import');
+      await expect(page.getByTestId('verse-card')).toHaveCount(2);
+      await page.getByTestId('bibles-clear').click();
+      await page.getByTestId('bibles-layout-table').click();
+      await expect(page.getByTestId('table-origin').first()).toHaveText('Excel');
+      await page.getByTestId('bibles-layout-cards').click();
 
       await page.getByTestId('side-lesson-verses').click();
       await expect(page.getByTestId('bibles-title')).toHaveText('Verses from lessons');
       await expect(page.getByTestId('verse-card')).toHaveCount(fromLesson.length);
       await expect(page.getByTestId('verse-import-source'), 'no imported verse here').toHaveCount(0);
+      await expect(page.locator('[data-testid="verse-origin"][data-origin="pdf"]')).toHaveCount(fromLesson.length);
+      await expect(page.getByTestId('verse-origin').first()).toHaveText('From lesson PDF');
+      await expect(page.getByTestId('verse-pdf-source').first()).toHaveText(`From ${lesson.title}`);
+      await expect(page.getByTestId('bibles-origin'), 'the lesson verses are all from PDFs').toHaveCount(0);
       await expect(page.getByTestId('bibles-import'), 'importing is only for the Verse Library').toHaveCount(0);
 
       // Review starts on the library it was opened from.
@@ -163,6 +180,15 @@ test.describe('the Verse Library and the Lesson Library', () => {
       await expect(page.getByTestId('review-count-verse')).toHaveText('2');
       await expect(page.getByTestId('review-progress')).toHaveText(`1 of ${fromLesson.length} to review`);
       await expect(page.getByTestId('pdf-viewer')).toBeVisible();
+      // The verse is highlighted where it is printed on its page, and scrolled into view.
+      await expect(page.getByTestId('viewer-mark-status')).toHaveAttribute('data-state', 'found', { timeout: 60_000 });
+      await expect(page.getByTestId('viewer-mark').first()).toBeInViewport();
+      await page.getByTestId('viewer-scroll').evaluate((el) => el.scrollTo({ top: 0 }));
+      await page.getByTestId('viewer-mark-show').click();
+      await expect(page.getByTestId('viewer-mark').first()).toBeInViewport();
+      await page.getByTestId('review-skip').click();
+      await expect(page.getByTestId('viewer-mark-status')).toHaveAttribute('data-state', /found|missing/, { timeout: 60_000 });
+      await page.getByTestId('review-prev').click();
 
       await page.getByTestId('review-library-verse').click();
       await expect(page.getByTestId('review-library-verse')).toHaveAttribute('aria-selected', 'true');

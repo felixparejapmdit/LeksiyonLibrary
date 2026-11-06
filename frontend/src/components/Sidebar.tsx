@@ -1,89 +1,127 @@
-import { memo, useMemo, useState } from 'react';
-import { Archive, BookMarked, BookOpen, BookText, ChevronDown, ChevronRight, ClipboardCheck, FileSpreadsheet, Folder, FolderPlus, ListChecks, MapPin, Sparkles, Trash2 } from 'lucide-react';
-import { api } from '../api';
-import { useProgressive } from './Layout';
-import {
-  askConfirm,
-  errorText,
-  getState,
-  navigate,
-  openScope,
-  refreshAll,
-  selectLesson,
-  setState,
-  sortLessons,
-  toast,
-  libraryOf,
-  updateFilters,
-  useRoute,
-  useStore,
-  verseGroups,
-} from '../store';
+import { useMemo, useState, type ReactNode } from 'react';
+import { Archive, BookMarked, BookOpen, BookText, ChevronDown, ChevronRight, ClipboardCheck, FileSpreadsheet, Folder, FolderOpen, ListChecks, Lock, MapPin, Sparkles, type LucideIcon } from 'lucide-react';
+import type { Lesson } from '../api';
+import { libraryOf, navigate, openScope, selectLesson, setState, sortLessons, updateFilters, useRoute, useStore, type Scope } from '../store';
+
+/** Each part of the library has its own colour, shared by its icon, its label and its count. */
+type Tone = 'archive' | 'lessons' | 'pv' | 'assist' | 'review' | 'warn';
 
 function Count({ n, testId, title }: { n: number; testId?: string; title?: string }) {
-  return <span className="ml-auto flex-none pl-2 text-xs text-muted tabular-nums" data-testid={testId} title={title}>{n}</span>;
-}
-
-const rowClass = (active: boolean) =>
-  `tap flex min-h-8 w-full min-w-0 items-center gap-2 rounded-lg border-0 bg-transparent px-2 text-left text-[13px] max-lg:min-h-11 ${active ? 'bg-raised font-semibold text-fg' : 'text-fg hover:bg-raised/60'}`;
-
-function openLesson(id: string) {
-  selectLesson(id);
-  setState({ drawerOpen: false });
-}
-
-function toggleVerseFilter(key: string) {
-  const current = getState().filters.verseKey;
-  updateFilters({ verseKey: current === key ? null : key });
-  if (location.pathname !== '/') navigate('/');
-  setState({ drawerOpen: false });
-}
-
-// Memoised so changing a filter re-renders only the rows whose state changed.
-const VerseRow = memo(function VerseRow({ verseKey, label, count, active }: { verseKey: string; label: string; count: number; active: boolean }) {
   return (
-    <li>
-      <button className={rowClass(active)} data-testid="side-verse" aria-pressed={active} onClick={() => toggleVerseFilter(verseKey)}>
-        <span className="truncate text-xs">{label}</span>
-        <Count n={count} />
-      </button>
-    </li>
+    <span className="nav-count" data-testid={testId} title={title}>
+      {n}
+    </span>
   );
-});
+}
+
+/** A main entry: a tinted icon tile, the label and its count, all in the entry's colour. */
+function Entry({ tone, icon: Icon, label, active, count, testId, title, onClick }: { tone: Tone; icon: LucideIcon; label: string; active: boolean; count?: ReactNode; testId: string; title?: string; onClick: () => void }) {
+  return (
+    <button className={`nav-row tone-${tone} ${active ? 'is-active' : ''}`} aria-current={active ? 'page' : undefined} data-testid={testId} title={title} onClick={onClick}>
+      <span className="nav-tile">
+        <Icon size={15} />
+      </span>
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {count}
+    </button>
+  );
+}
+
+/** An entry inside a section, such as a year folder or a page of that library. */
+function SubEntry({ tone, icon: Icon, label, active, count, testId, title, onClick }: { tone: Tone; icon: LucideIcon; label: string; active: boolean; count?: ReactNode; testId: string; title?: string; onClick: () => void }) {
+  return (
+    <button className={`nav-row nav-sub tone-${tone} ${active ? 'is-active' : ''}`} aria-current={active ? 'page' : undefined} data-testid={testId} title={title} onClick={onClick}>
+      <Icon size={14} className="flex-none" />
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {count}
+    </button>
+  );
+}
+
+function Heading({ children }: { children: ReactNode }) {
+  return <h2 className="m-0 px-2 pt-3 pb-1 text-[10.5px] font-semibold tracking-[0.08em] text-muted uppercase">{children}</h2>;
+}
+
+/**
+ * Year folders, made from each lesson's date. A Lesson Library year holds only its lessons,
+ * and a Pastoral Visits year only its visits. A folder opens to list what is in it.
+ */
+function YearFolders({ scope, lessons, tone, prefix }: { scope: Exclude<Scope, 'all'>; lessons: Lesson[]; tone: Tone; prefix: string }) {
+  const route = useRoute();
+  const f = useStore((s) => s.filters);
+  const sort = useStore((s) => s.sort);
+  const [open, setOpen] = useState<Record<number, boolean>>({});
+  const years = useMemo(() => {
+    const m = new Map<number, Lesson[]>();
+    for (const l of lessons) if (l.year) m.set(l.year, [...(m.get(l.year) ?? []), l]);
+    return [...m.entries()].sort((a, b) => b[0] - a[0]);
+  }, [lessons]);
+  if (years.length === 0)
+    return (
+      <p className="m-0 px-2 py-1 text-[11.5px] text-muted" data-testid={`${prefix}folders-empty`}>
+        Year folders appear here as {scope === 'lessons' ? 'lessons' : 'visits'} with a date are added.
+      </p>
+    );
+
+  const showYear = (year: number | null) => {
+    openScope(scope);
+    updateFilters({ year });
+  };
+  return (
+    <ul className="m-0 list-none p-0" data-testid={`${prefix}folders`} aria-label={`${scope === 'lessons' ? 'Lesson Library' : 'Pastoral Visits'} by year`}>
+      {years.map(([year, list]) => {
+        const active = route === '/' && f.scope === scope && f.year === year;
+        const expanded = !!open[year];
+        return (
+          <li key={year}>
+            <div className="flex items-center">
+              <button
+                className={`nav-chevron tone-${tone}`}
+                aria-label={`${expanded ? 'Collapse' : 'Expand'} ${year}`}
+                aria-expanded={expanded}
+                data-testid={`${prefix}year-expand-${year}`}
+                onClick={() => setOpen((o) => ({ ...o, [year]: !expanded }))}
+              >
+                {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+              </button>
+              <SubEntry tone={tone} icon={expanded || active ? FolderOpen : Folder} label={String(year)} active={active} count={<Count n={list.length} />} testId={`${prefix}year-${year}`} onClick={() => showYear(active ? null : year)} />
+            </div>
+            {expanded && (
+              <ul className={`nav-tree tone-${tone}`}>
+                {sortLessons(list, sort).map((l) => (
+                  <li key={l.id}>
+                    <button
+                      className="nav-row nav-leaf"
+                      data-testid="tree-lesson"
+                      title={l.title}
+                      onClick={() => {
+                        showYear(year);
+                        selectLesson(l.id);
+                        setState({ drawerOpen: false });
+                      }}
+                    >
+                      <span className="truncate">{l.title}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
 
 export function Sidebar() {
   const route = useRoute();
   const lessons = useStore((s) => s.lessons);
-  const folders = useStore((s) => s.folders);
   const verses = useStore((s) => s.verses);
   const rowsToFix = useStore((s) => s.rowsToFix.length);
   const f = useStore((s) => s.filters);
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [foldersOpen, setFoldersOpen] = useState(true);
-  const [versesOpen, setVersesOpen] = useState(true);
-  const [adding, setAdding] = useState(false);
-  const [newName, setNewName] = useState('');
 
-  const years = useMemo(() => {
-    const m = new Map<number, number>();
-    for (const l of lessons) if (l.year) m.set(l.year, (m.get(l.year) ?? 0) + 1);
-    return [...m.entries()].sort((a, b) => b[0] - a[0]);
-  }, [lessons]);
+  const { worship, visits } = useMemo(() => ({ worship: lessons.filter((l) => l.category !== 'pastoral'), visits: lessons.filter((l) => l.category === 'pastoral') }), [lessons]);
 
-  const pastoralCount = useMemo(() => lessons.filter((l) => l.category === 'pastoral').length, [lessons]);
-
-  const groups = useMemo(() => {
-    const seen = verseGroups(verses).map((g) => ({
-      key: g.key,
-      label: g.items[0].ref_en,
-      book: g.book,
-      lessons: new Set(g.items.flatMap((v) => v.sources.map((x) => x.lesson_id))).size,
-    }));
-    // This list filters lessons, so verses that only came from an import have no place in it.
-    return seen.filter((g) => g.lessons > 0).sort((a, b) => a.book - b.book || a.label.localeCompare(b.label, undefined, { numeric: true }));
-  }, [verses]);
-
-  const shownGroups = useProgressive(groups, 60);
   // Every count here is of verses, so each library is always its unverified plus its verified.
   const counts = useMemo(() => {
     const c = { verse: 0, lesson: 0, verseToReview: 0, lessonToReview: 0 };
@@ -95,170 +133,109 @@ export function Sidebar() {
     return c;
   }, [verses]);
   const unverified = counts.verseToReview + counts.lessonToReview;
+  const verified = verses.length - unverified;
   const toCheck = useMemo(() => lessons.filter((l) => l.needs_check).length, [lessons]);
 
-  const plain = route === '/' && f.category === 'all' && f.year === null && !f.verseKey && !f.folderId && !f.query && !f.toCheck;
-  const allActive = plain && f.scope === 'all';
-
-  const toggle = (k: string) => setExpanded((e) => ({ ...e, [k]: !e[k] }));
-  const goVault = () => {
-    if (route !== '/') navigate('/');
+  const plain = route === '/' && f.category === 'all' && f.year === null && !f.verseKey && !f.query && !f.toCheck;
+  const go = (path: string) => {
+    navigate(path);
     setState({ drawerOpen: false });
   };
 
-  const LessonChildren = ({ list }: { list: typeof lessons }) => (
-    <ul className="m-0 mb-1 ml-5 list-none border-l border-line p-0 pl-1">
-      {sortLessons(list, getState().sort).map((l) => (
-        <li key={l.id}>
-          <button className={rowClass(false)} data-testid="tree-lesson" onClick={() => { goVault(); openLesson(l.id); }}>
-            <span className="truncate text-xs">{l.title}</span>
-          </button>
-        </li>
-      ))}
-    </ul>
-  );
-
   return (
     <nav className="flex h-full min-w-0 flex-col overflow-hidden bg-panel" aria-label="Library" data-testid="sidebar">
-      <div className="flex-none space-y-0.5 p-2">
-        <button className={rowClass(allActive)} data-testid="side-all" title="Every lesson: worship service lessons and pastoral visits" onClick={() => openScope('all')}>
-          <Archive size={15} className="flex-none" /> All Archives
-          <Count n={lessons.length} testId="side-all-count" />
-        </button>
-        {toCheck > 0 && (
-          <button className={`${rowClass(route === '/' && f.toCheck)} !pl-7`} data-testid="side-to-check" onClick={() => { openScope('all'); updateFilters({ toCheck: true }); }}>
-            <ClipboardCheck size={14} className="flex-none text-warn" /> Not checked yet
-            <Count n={toCheck} testId="side-to-check-count" />
-          </button>
-        )}
-        <button className={rowClass(plain && f.scope === 'lessons')} data-testid="side-lessons" title="Worship service lessons uploaded as PDFs" onClick={() => openScope('lessons')}>
-          <BookOpen size={15} className="flex-none" /> Lesson Library
-          <Count n={lessons.length - pastoralCount} testId="side-lessons-count" />
-        </button>
-        <button className={`${rowClass(route === '/lesson-verses')} !pl-7`} data-testid="side-lesson-verses" onClick={() => navigate('/lesson-verses')}>
-          <BookText size={14} className="flex-none" /> Verses from lessons
-          <Count n={counts.lesson} testId="side-lesson-verses-count" title={`${counts.lesson} verses read from lesson PDFs: ${counts.lesson - counts.lessonToReview} verified, ${counts.lessonToReview} to review`} />
-        </button>
-        <button className={rowClass(plain && f.scope === 'pastoral')} data-testid="side-pv" title="Pastoral visits, with their own upload" onClick={() => openScope('pastoral')}>
-          <MapPin size={15} className="flex-none text-pv" /> Pastoral Visits
-          <Count n={pastoralCount} testId="side-pv-count" />
-        </button>
-        <button className={`${rowClass(route === '/bibles')} !pl-7`} data-testid="side-bibles" title="Verses read from pastoral visit PDFs and imported from Excel files" onClick={() => navigate('/bibles')}>
-          <BookMarked size={14} className="flex-none" /> Verse Library
-          <Count n={counts.verse} testId="side-bibles-count" title={`${counts.verse} verses: ${counts.verse - counts.verseToReview} verified, ${counts.verseToReview} to review`} />
-        </button>
-        <button className={`${rowClass(route === '/import')} !pl-7`} data-testid="side-import" title="Import verses from an Excel file into the Verse Library" onClick={() => navigate('/import')}>
-          <FileSpreadsheet size={14} className="flex-none" /> Import Verses
-          {rowsToFix > 0 && <Count n={rowsToFix} testId="side-import-count" title={`${rowsToFix} imported ${rowsToFix === 1 ? 'row' : 'rows'} to fix`} />}
-        </button>
-        <button className={rowClass(route === '/lecture')} data-testid="side-lecture" title="Lecture Maker: builds a lecture from the verses in both libraries" onClick={() => navigate('/lecture')}>
-          <Sparkles size={15} className="flex-none" /> Lesson Assistant
-        </button>
-        <button className={rowClass(route === '/review')} data-testid="side-review" onClick={() => navigate('/review')}>
-          <ListChecks size={15} className="flex-none" /> Review Verses
-          <Count n={unverified} testId="side-review-count" title={`${unverified} of ${verses.length} verses still to review: ${counts.verseToReview} in the Verse Library, ${counts.lessonToReview} in the Lesson Library`} />
-        </button>
-      </div>
       <div className="scroll-stable min-h-0 flex-1 px-2 pb-3">
-        <div className="flex items-center justify-between">
-          <button className="tap flex min-h-8 items-center gap-1 rounded-md px-2 text-xs font-medium text-muted hover:text-fg max-lg:min-h-11" aria-expanded={foldersOpen} data-testid="folders-toggle" onClick={() => setFoldersOpen(!foldersOpen)}>
-            Folders {foldersOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-          </button>
-          <button className="icon-btn !h-8 !w-8 max-lg:!h-11 max-lg:!w-11" aria-label="New folder" data-testid="folder-add" onClick={() => { setAdding(!adding); setFoldersOpen(true); }}>
-            <FolderPlus size={14} />
-          </button>
+        <Heading>Library</Heading>
+        <Entry tone="archive" icon={Archive} label="All Archives" active={plain && f.scope === 'all'} testId="side-all" title="Every lesson: worship service lessons and pastoral visits" onClick={() => openScope('all')} count={<Count n={lessons.length} testId="side-all-count" />} />
+        {toCheck > 0 && (
+          <div className="nav-group tone-warn">
+            <SubEntry
+              tone="warn"
+              icon={ClipboardCheck}
+              label="Not checked yet"
+              active={route === '/' && f.toCheck}
+              testId="side-to-check"
+              onClick={() => {
+                openScope('all');
+                updateFilters({ toCheck: true });
+              }}
+              count={<Count n={toCheck} testId="side-to-check-count" />}
+            />
+          </div>
+        )}
+
+        <div className="mt-1">
+          <Entry tone="lessons" icon={BookOpen} label="Lesson Library" active={plain && f.scope === 'lessons'} testId="side-lessons" title="Worship service lessons uploaded as PDFs" onClick={() => openScope('lessons')} count={<Count n={worship.length} testId="side-lessons-count" />} />
+          <div className="nav-group tone-lessons">
+            <YearFolders scope="lessons" lessons={worship} tone="lessons" prefix="" />
+            <SubEntry
+              tone="lessons"
+              icon={BookText}
+              label="Verses from lessons"
+              active={route === '/lesson-verses'}
+              testId="side-lesson-verses"
+              onClick={() => go('/lesson-verses')}
+              count={<Count n={counts.lesson} testId="side-lesson-verses-count" title={`${counts.lesson} verses read from lesson PDFs: ${counts.lesson - counts.lessonToReview} verified, ${counts.lessonToReview} to review`} />}
+            />
+          </div>
         </div>
-        {adding && (
-          <form
-            className="mb-1 flex gap-1 px-1"
-            onSubmit={async (e) => {
-              e.preventDefault();
-              try {
-                await api.createFolder(newName);
-                setNewName('');
-                setAdding(false);
-                await refreshAll();
-              } catch (err) {
-                toast(errorText(err), 'error');
-              }
-            }}
-          >
-            <input autoFocus className="field !min-h-8 !py-1 !text-[13px] max-lg:!min-h-11" placeholder="Folder name" aria-label="Folder name" data-testid="folder-name" value={newName} onChange={(e) => setNewName(e.target.value)} />
-            <button className="btn !min-h-8 max-lg:!min-h-11" data-testid="folder-save" disabled={!newName.trim()}>Add</button>
-          </form>
-        )}
-        {foldersOpen && (
-          <ul className="m-0 list-none space-y-0.5 p-0" data-testid="folder-list">
-            {years.map(([year, n]) => (
-              <li key={year}>
-                <div className="flex items-center">
-                  <button className="icon-btn !h-8 !w-6 max-lg:!h-11 max-lg:!w-8" aria-label={`${expanded[`y${year}`] ? 'Collapse' : 'Expand'} ${year}`} aria-expanded={!!expanded[`y${year}`]} data-testid={`year-expand-${year}`} onClick={() => toggle(`y${year}`)}>
-                    {expanded[`y${year}`] ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                  </button>
-                  <button className={rowClass(f.year === year)} data-testid={`year-${year}`} onClick={() => { updateFilters({ year: f.year === year ? null : year }); goVault(); }}>
-                    <Folder size={14} className="flex-none text-accent2" /> {year}
-                    <Count n={n} />
-                  </button>
-                </div>
-                {expanded[`y${year}`] && <LessonChildren list={lessons.filter((l) => l.year === year)} />}
-              </li>
-            ))}
-            {folders.map((fd) => (
-              <li key={fd.id} className="flex items-center">
-                <span className="w-6 flex-none max-lg:w-8" />
-                <button className={rowClass(f.folderId === fd.id)} data-testid="custom-folder" onClick={() => { updateFilters({ folderId: f.folderId === fd.id ? null : fd.id }); goVault(); }}>
-                  <Folder size={14} className="flex-none text-muted" /> <span className="truncate">{fd.name}</span>
-                  <Count n={lessons.filter((l) => l.folder_id === fd.id).length} />
-                </button>
-                <button
-                  className="icon-btn !h-8 !w-8 max-lg:!h-11 max-lg:!w-11"
-                  aria-label={`Delete folder ${fd.name}`}
-                  data-testid="custom-folder-delete"
-                  onClick={() =>
-                    askConfirm({
-                      title: 'Delete this folder?',
-                      body: `"${fd.name}" will be removed. The lessons inside it stay in your vault.`,
-                      confirmLabel: 'Delete folder',
-                      onConfirm: async () => {
-                        await api.deleteFolder(fd.id);
-                        if (getState().filters.folderId === fd.id) updateFilters({ folderId: null });
-                        await refreshAll();
-                      },
-                    })
-                  }
-                >
-                  <Trash2 size={13} />
-                </button>
-              </li>
-            ))}
-            <li>
-              <div className="flex items-center">
-                <button className="icon-btn !h-8 !w-6 max-lg:!h-11 max-lg:!w-8" aria-label={`${expanded.pv ? 'Collapse' : 'Expand'} Pastoral Visits`} aria-expanded={!!expanded.pv} data-testid="pastoral-expand" onClick={() => toggle('pv')}>
-                  {expanded.pv ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                </button>
-                <button className={rowClass(f.scope === 'all' && f.category === 'pastoral')} data-testid="side-pastoral" onClick={() => { updateFilters({ scope: 'all', category: f.category === 'pastoral' ? 'all' : 'pastoral' }); goVault(); }}>
-                  <MapPin size={14} className="flex-none text-pv" /> Pastoral Visits
-                  <Count n={pastoralCount} testId="side-pastoral-count" />
-                </button>
-              </div>
-              {expanded.pv && <LessonChildren list={lessons.filter((l) => l.category === 'pastoral')} />}
-            </li>
-          </ul>
-        )}
-        <div className="mt-2 flex items-center">
-          <button className="tap flex min-h-8 flex-1 items-center gap-1 rounded-md px-2 text-xs font-medium text-muted hover:text-fg max-lg:min-h-11" aria-expanded={versesOpen} data-testid="verses-toggle" onClick={() => setVersesOpen(!versesOpen)}>
-            Verses {versesOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-            <Count n={groups.length} testId="side-verses-count" />
-          </button>
+
+        <div className="mt-1">
+          <Entry tone="pv" icon={MapPin} label="Pastoral Visits" active={plain && f.scope === 'pastoral'} testId="side-pv" title="Pastoral visits, with their own upload" onClick={() => openScope('pastoral')} count={<Count n={visits.length} testId="side-pv-count" />} />
+          <div className="nav-group tone-pv">
+            <YearFolders scope="pastoral" lessons={visits} tone="pv" prefix="pv-" />
+            <SubEntry
+              tone="pv"
+              icon={BookMarked}
+              label="Verse Library"
+              active={route === '/bibles'}
+              testId="side-bibles"
+              title="Verses read from pastoral visit PDFs and imported from Excel files"
+              onClick={() => go('/bibles')}
+              count={<Count n={counts.verse} testId="side-bibles-count" title={`${counts.verse} verses: ${counts.verse - counts.verseToReview} verified, ${counts.verseToReview} to review`} />}
+            />
+            <SubEntry
+              tone="pv"
+              icon={FileSpreadsheet}
+              label="Import Verses"
+              active={route === '/import'}
+              testId="side-import"
+              title="Import verses from an Excel file into the Verse Library"
+              onClick={() => go('/import')}
+              count={rowsToFix > 0 ? <Count n={rowsToFix} testId="side-import-count" title={`${rowsToFix} imported ${rowsToFix === 1 ? 'row' : 'rows'} to fix`} /> : undefined}
+            />
+          </div>
         </div>
-        {versesOpen && (
-          <ul className="m-0 list-none space-y-0.5 p-0" data-testid="verse-list">
-            {groups.length === 0 && <li className="px-2 py-1 text-xs text-muted">Verses appear here after you upload a lesson.</li>}
-            {shownGroups.map((g) => (
-              <VerseRow key={g.key} verseKey={g.key} label={g.label} count={g.lessons} active={f.verseKey === g.key} />
-            ))}
-          </ul>
-        )}
+
+        <Heading>Tools</Heading>
+        <Entry tone="assist" icon={Sparkles} label="Lesson Assistant" active={route === '/lecture'} testId="side-lecture" title="Lecture Maker: builds a lecture from the verses in both libraries" onClick={() => go('/lecture')} />
+        <div className="mt-0.5">
+          <Entry
+            tone="review"
+            icon={ListChecks}
+            label="Review Verses"
+            active={route === '/review'}
+            testId="side-review"
+            onClick={() => go('/review')}
+            count={<Count n={unverified} testId="side-review-count" title={`${unverified} of ${verses.length} verses still to review: ${counts.verseToReview} in the Verse Library, ${counts.lessonToReview} in the Lesson Library`} />}
+          />
+        </div>
+      </div>
+
+      {/* How far checking has come, and a reminder of where the vault lives. */}
+      <div className="flex-none border-t border-line p-3" data-testid="side-footer">
+        <div className="flex items-baseline justify-between gap-2 text-xs">
+          <span className="font-medium">Verified verses</span>
+          <span className="text-muted tabular-nums" data-testid="side-verified">
+            {verified} of {verses.length}
+          </span>
+        </div>
+        <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-raised" role="progressbar" aria-label="Verified verses" aria-valuemin={0} aria-valuemax={verses.length} aria-valuenow={verified}>
+          <div className="nav-progress h-full rounded-full" style={{ width: `${verses.length ? (verified / verses.length) * 100 : 0}%` }} />
+        </div>
+        <p className="m-0 mt-2 flex items-center gap-1.5 text-[11px] text-muted">
+          <Lock size={11} className="flex-none" /> Encrypted, and kept on this computer only
+        </p>
       </div>
     </nav>
   );

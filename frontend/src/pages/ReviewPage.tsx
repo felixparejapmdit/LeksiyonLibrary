@@ -124,7 +124,7 @@ export function ReviewPage() {
   return (
     <div className="grid h-full grid-cols-1 grid-rows-[minmax(0,1fr)_minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_minmax(320px,440px)] lg:grid-rows-1" data-testid="review-page">
       <div className="min-h-0 min-w-0 border-b border-line lg:border-r lg:border-b-0">
-        {lesson ? <PdfViewer lesson={lesson} /> : <p className="p-6 text-center text-[13px] text-muted" data-testid="review-no-source">{verse.import_source ? `Imported from ${verse.import_source}. Compare it with your original.` : 'This verse has no source page.'}</p>}
+        {lesson ? <PdfViewer lesson={lesson} mark={source && verse.text.trim() ? { text: verse.text, page: source.page } : null} /> : <p className="p-6 text-center text-[13px] text-muted" data-testid="review-no-source">{verse.import_source ? `Imported from ${verse.import_source}. Compare it with your original.` : 'This verse has no source page.'}</p>}
       </div>
       <div className="scroll-stable min-h-0 space-y-3 p-3" data-testid="review-panel">
         <LibraryTabs library={library} counts={counts} onChange={setLibrary} />

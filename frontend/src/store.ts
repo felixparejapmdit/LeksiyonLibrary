@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { api, ApiError, type Category, type Folder, type Language, type Lecture, type Lesson, type RowToFix, type ScriptureContext, type TagalogContext, type UploadTarget, type Verse, type VerseContext } from './api';
+import { api, ApiError, type Category, type Language, type Lecture, type Lesson, type RowToFix, type ScriptureContext, type TagalogContext, type UploadTarget, type Verse, type VerseContext } from './api';
 
 export type SortMode = 'newest' | 'oldest' | 'title';
 
@@ -15,7 +15,6 @@ export interface Filters {
   scope: Scope;
   category: Category | 'all';
   year: number | null;
-  folderId: string | null;
   verseKey: string | null;
   query: string;
   /** Only lessons not yet checked against their PDF. */
@@ -63,7 +62,6 @@ export interface State {
   rowsToFix: RowToFix[];
   lastBackupAt: string | null;
   editingContextKey: string | null;
-  folders: Folder[];
   lectures: Lecture[];
   filters: Filters;
   sort: SortMode;
@@ -82,9 +80,12 @@ export interface State {
   confirm: Confirmation | null;
   toasts: Toast[];
   theme: 'dark' | 'light';
+  /** The welcome screen, shown as the app opens unless it was turned off. */
+  welcomeOpen: boolean;
+  welcomeOnOpen: boolean;
 }
 
-const emptyFilters: Filters = { scope: 'all', category: 'all', year: null, folderId: null, verseKey: null, query: '', toCheck: false };
+const emptyFilters: Filters = { scope: 'all', category: 'all', year: null, verseKey: null, query: '', toCheck: false };
 
 function stored(key: string, fallback: string): string {
   try {
@@ -106,7 +107,6 @@ let state: State = {
   rowsToFix: [],
   lastBackupAt: null,
   editingContextKey: null,
-  folders: [],
   lectures: [],
   filters: emptyFilters,
   sort: 'newest',
@@ -124,6 +124,8 @@ let state: State = {
   confirm: null,
   toasts: [],
   theme: stored('lv.theme', 'dark') === 'light' ? 'light' : 'dark',
+  welcomeOpen: stored('lv.welcome', 'on') !== 'off',
+  welcomeOnOpen: stored('lv.welcome', 'on') !== 'off',
 };
 
 const listeners = new Set<() => void>();
@@ -182,13 +184,12 @@ export function errorText(e: unknown) {
 }
 
 export async function refreshAll() {
-  const [lessons, verses, contexts, scripture, tagalog, folders, lectures, rowsToFix, status] = await Promise.all([
+  const [lessons, verses, contexts, scripture, tagalog, lectures, rowsToFix, status] = await Promise.all([
     api.lessons(),
     api.verses(),
     api.verseContexts(),
     api.scriptureContexts(),
     api.contextTagalog(),
-    api.folders(),
     api.lectures(),
     api.rowsToFix(),
     api.status(),
@@ -202,7 +203,6 @@ export async function refreshAll() {
     tagalog,
     rowsToFix,
     lastBackupAt: status.last_backup_at,
-    folders,
     lectures,
     selectedId: selectedStillExists ? state.selectedId : (newestFirst(lessons)[0]?.id ?? null),
     viewerPage: selectedStillExists ? state.viewerPage : 1,
@@ -242,6 +242,16 @@ export function setContextLanguage(contextLanguage: Language) {
     /* private mode: the choice still applies for this session */
   }
   setState({ contextLanguage });
+}
+
+/** Whether the welcome screen shows when the app opens. Only this choice is stored. */
+export function setWelcomePref(on: boolean) {
+  try {
+    localStorage.setItem('lv.welcome', on ? 'on' : 'off');
+  } catch {
+    /* private mode: it still applies for this session */
+  }
+  setState({ welcomeOnOpen: on });
 }
 
 export function setPanelPref(key: 'sidebarOpen' | 'viewerOpen', open: boolean) {
@@ -303,8 +313,8 @@ export function matchesFilters(l: Lesson, f: Filters, contentMatches: string[] |
   if (f.scope === 'lessons' && l.category === 'pastoral') return false;
   if (f.scope === 'pastoral' && l.category !== 'pastoral') return false;
   if (!ignoreCategory && f.category !== 'all' && l.category !== f.category) return false;
-  if (f.year !== null && l.year !== f.year) return false;
-  if (f.folderId !== null && l.folder_id !== f.folderId) return false;
+  // Year 0 is the folder of lessons with no date.
+  if (f.year !== null && (f.year === 0 ? !!l.year : l.year !== f.year)) return false;
   if (f.verseKey !== null && !l.verse_keys.includes(f.verseKey)) return false;
   if (f.toCheck && !l.needs_check) return false;
   const q = f.query.trim().toLowerCase();

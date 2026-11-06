@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { test, expect } from '@playwright/test';
 import { coverageFile, perfFile } from '../support/fixtures';
 
-const isYear = (id: string) => /^year-(expand-)?\d+$/.test(id);
+const isYear = (id: string) => /^(pv-)?year-(expand-)?\d+$|^pv-folder-\d+$/.test(id);
 
 test('every visible button and link was actually clicked by a test', () => {
   const { clicked, seen, unnamed } = JSON.parse(readFileSync(coverageFile, 'utf8'));

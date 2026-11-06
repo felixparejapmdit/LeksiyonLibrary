@@ -1,5 +1,5 @@
 import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
-import { BadgeCheck, Check, ChevronDown, ChevronLeft, ChevronRight, Columns2, Copy, FileSearch, FileSpreadsheet, LayoutList, ListChecks, Lock, Loader2, PencilLine, Search, ShieldAlert, Sparkles, Table2, X } from 'lucide-react';
+import { BadgeCheck, Check, ChevronDown, ChevronLeft, ChevronRight, Columns2, Copy, FileSearch, FileSpreadsheet, FileText, LayoutList, ListChecks, Lock, Loader2, PencilLine, Search, ShieldAlert, Sparkles, Table2, X } from 'lucide-react';
 import { api, type Verse } from '../api';
 import { VerseCorrectionDialog } from '../components/Overlays';
 import { Highlight } from '../components/LessonList';
@@ -21,13 +21,38 @@ export async function copyVerse(v: Verse) {
   }
 }
 
+/** Where a verse came from: an Excel file that was imported, or a PDF that was uploaded and read. */
+type Origin = 'import' | 'pdf';
+const originOf = (v: Verse): Origin => (v.import_source ? 'import' : 'pdf');
+
+/** Says plainly whether a verse was imported or read from an uploaded PDF, and from which. */
+function OriginBadge({ verse, compact }: { verse: Verse; compact?: boolean }) {
+  const source = verse.sources[0];
+  const lesson = useStore((s) => (source ? s.lessons.find((l) => l.id === source.lesson_id) : undefined));
+  if (originOf(verse) === 'import') {
+    return (
+      <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-ok/50 bg-ok/10 px-1.5 font-medium text-ok" data-testid="verse-origin" data-origin="import" title={`Imported from ${verse.import_source}`}>
+        <FileSpreadsheet size={12} className="flex-none" /> <span className="truncate">{compact ? 'Excel' : 'Imported from Excel'}</span>
+      </span>
+    );
+  }
+  const kind = source?.pastoral ? 'Pastoral visit PDF' : 'Lesson PDF';
+  return (
+    <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-pv/50 bg-pv/10 px-1.5 font-medium text-pv" data-testid="verse-origin" data-origin="pdf" title={lesson ? `Read from the uploaded PDF ${lesson.title}, page ${source?.page}` : 'Read from an uploaded PDF'}>
+      <FileText size={12} className="flex-none" /> <span className="truncate">{compact ? 'PDF' : `From ${kind.charAt(0).toLowerCase()}${kind.slice(1)}`}</span>
+    </span>
+  );
+}
+
 const VerseCard = memo(function VerseCard({ verse, query, alone }: { verse: Verse; query: string; alone: boolean }) {
   const [correcting, setCorrecting] = useState(false);
   const verified = verse.status === 'verified';
   const source = verse.sources[0];
+  const lessonTitle = useStore((s) => (source ? s.lessons.find((l) => l.id === source.lesson_id)?.title : undefined));
   return (
-    <div className={`flex h-full flex-col ${alone ? '' : 'rounded-md border border-line p-2.5'}`} data-testid="verse-card" data-verse-id={verse.id} data-language={verse.language} data-status={verse.status}>
+    <div className={`flex h-full flex-col ${alone ? '' : 'rounded-md border border-line p-2.5'}`} data-testid="verse-card" data-verse-id={verse.id} data-language={verse.language} data-status={verse.status} data-origin={originOf(verse)}>
       <div className="mb-1.5 flex flex-wrap items-center gap-1.5 text-xs">
+        <OriginBadge verse={verse} />
         <span className="rounded border border-line px-1 font-semibold">{verse.language === 'tl' ? 'Tagalog' : 'English'}</span>
         {verse.version && <span className="rounded border border-line px-1 text-muted" data-testid="verse-version">{verse.version}</span>}
         {/* The heading already gives the reference, unless this record prints it differently. */}
@@ -43,7 +68,8 @@ const VerseCard = memo(function VerseCard({ verse, query, alone }: { verse: Vers
         {verse.text ? <Highlight text={verse.text} query={query} /> : <span className="text-muted">Reference only. No text was printed in this lesson.</span>}
       </p>
       <div className="mt-1.5 flex flex-wrap items-center gap-1">
-        {verse.import_source && <span className="mr-auto text-xs text-muted" data-testid="verse-import-source">From {verse.import_source}</span>}
+        {verse.import_source && <span className="mr-auto min-w-0 truncate text-xs text-muted" data-testid="verse-import-source">From {verse.import_source}</span>}
+        {!verse.import_source && lessonTitle && <span className="mr-auto min-w-0 truncate text-xs text-muted" data-testid="verse-pdf-source" title={lessonTitle}>From {lessonTitle}</span>}
         <button className="btn !min-h-8 max-lg:!min-h-11" data-testid="verse-copy" disabled={!verse.text} onClick={() => copyVerse(verse)}>
           <Copy size={13} /> Copy
         </button>
@@ -143,13 +169,14 @@ interface View {
   query: string;
   language: 'all' | 'en' | 'tl';
   status: 'all' | 'verified' | 'unverified';
+  origin: 'all' | Origin;
   translation: string;
   book: number | 'all';
   page: number;
   pageSize: number;
 }
 
-const NO_FILTERS = { query: '', language: 'all', status: 'all', translation: 'all', book: 'all' } as const;
+const NO_FILTERS = { query: '', language: 'all', status: 'all', origin: 'all', translation: 'all', book: 'all' } as const;
 
 // Kept while the app is open, so coming back to either library finds it as it was left.
 const startView = (): View => ({ ...NO_FILTERS, layout: storedLayout(), left: 'lang:en', right: 'lang:tl', bothSides: false, page: 1, pageSize: 25 });
@@ -273,6 +300,7 @@ const TableRow = memo(function TableRow({ verse, query }: { verse: Verse; query:
             {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
           </button>
         </td>
+        <td className={cell} data-testid="table-origin"><OriginBadge verse={verse} compact /></td>
         <td className={cell} data-testid="table-translation">{verse.version}</td>
         <td className={cell} data-testid="table-book">{book}</td>
         <td className={`${cell} tabular-nums`} data-testid="table-chapter">{chapter}</td>
@@ -285,7 +313,7 @@ const TableRow = memo(function TableRow({ verse, query }: { verse: Verse; query:
       </tr>
       {open && (
         <tr>
-          <td colSpan={8} className="border-b border-line bg-panel p-3" data-testid="table-row-detail">
+          <td colSpan={9} className="border-b border-line bg-panel p-3" data-testid="table-row-detail">
             <VerseCard verse={verse} query={query} alone />
           </td>
         </tr>
@@ -303,6 +331,7 @@ function VerseTable({ rows, query }: { rows: Verse[]; query: string }) {
         <thead className="bg-panel">
           <tr>
             <th className={heading}><span className="sr-only">Open</span></th>
+            <th className={heading}>Source</th>
             <th className={heading}>Translation</th>
             <th className={heading}>Book</th>
             <th className={heading}>Chapter</th>
@@ -330,6 +359,7 @@ function ParallelSide({ verses, side, query, testId }: { verses: Verse[]; side: 
       {verses.map((v) => (
         <div key={v.id} data-testid="parallel-verse" data-verse-id={v.id}>
           <div className="mb-0.5 flex flex-wrap items-center gap-1.5 text-xs">
+            <OriginBadge verse={v} compact />
             {v.version && <span className="rounded border border-line px-1 text-muted">{v.version}</span>}
             <StatusMark verse={v} />
             <button className="icon-btn ml-auto !h-6 !w-6 max-lg:!h-11 max-lg:!w-11" aria-label={`Copy ${v.ref_printed} ${v.version}`} data-testid="parallel-copy" disabled={!v.text} onClick={() => copyVerse(v)}><Copy size={12} /></button>
@@ -352,7 +382,7 @@ export function BiblesPage({ library }: { library: Library }) {
   const verses = useMemo(() => all.filter((v) => libraryOf(v) === library), [all, library]);
   const rowsToFix = useStore((s) => (library === 'verse' ? s.rowsToFix.length : 0));
   const [view, setViewState] = useState<View>(savedViews[library]);
-  const { layout, left, right, bothSides, query, language, status, translation, book, pageSize } = view;
+  const { layout, left, right, bothSides, query, language, status, origin, translation, book, pageSize } = view;
   const parallel = layout === 'parallel';
   const setView = (patch: Partial<View>) => setViewState((v) => ({ ...v, page: 1, ...patch }));
   useEffect(() => {
@@ -378,7 +408,7 @@ export function BiblesPage({ library }: { library: Library }) {
     setMeaningBusy(false);
   };
 
-  const stats = useMemo(() => ({ verified: verses.filter((v) => v.status === 'verified').length, total: verses.length }), [verses]);
+  const stats = useMemo(() => ({ verified: verses.filter((v) => v.status === 'verified').length, total: verses.length, imported: verses.filter((v) => originOf(v) === 'import').length }), [verses]);
   const translations = useMemo(() => [...new Set(verses.map((v) => v.version).filter(Boolean))].sort((a, b) => a.localeCompare(b)), [verses]);
   const books = useMemo(() => {
     const names = new Map<number, string>();
@@ -395,6 +425,7 @@ export function BiblesPage({ library }: { library: Library }) {
       // In the parallel view, the two sides choose the language and translation instead.
       (parallel || language === 'all' || v.language === language) &&
       (status === 'all' || v.status === status) &&
+      (origin === 'all' || originOf(v) === origin) &&
       (parallel || translation === 'all' || v.version === translation) &&
       (book === 'all' || v.book_id === book) &&
       (meaningKeys !== null || !q || searchTextOf(v).includes(q));
@@ -405,7 +436,7 @@ export function BiblesPage({ library }: { library: Library }) {
       })
       .filter((g) => g.items.length > 0);
     return meaningKeys ? matching.sort((a, b) => meaningKeys.indexOf(a.key) - meaningKeys.indexOf(b.key)) : matching;
-  }, [sorted, deferredQuery, parallel, language, status, translation, book, meaningKeys]);
+  }, [sorted, deferredQuery, parallel, language, status, origin, translation, book, meaningKeys]);
 
   const tableRows = useMemo(() => (layout === 'table' ? groups.flatMap((g) => g.items) : []), [layout, groups]);
   const parallelRows = useMemo(() => {
@@ -424,7 +455,7 @@ export function BiblesPage({ library }: { library: Library }) {
   const visibleParallel = useMemo(() => parallelRows.slice(start, start + pageSize), [parallelRows, start, pageSize]);
   const shownCount = Math.min(pageSize, total - start);
   const records = useMemo(() => groups.reduce((n, g) => n + g.items.length, 0), [groups]);
-  const filtered = query !== '' || (!parallel && (language !== 'all' || translation !== 'all')) || status !== 'all' || book !== 'all' || meaningKeys !== null;
+  const filtered = query !== '' || (!parallel && (language !== 'all' || translation !== 'all')) || status !== 'all' || origin !== 'all' || book !== 'all' || meaningKeys !== null;
   const rangeText =
     total === 0
       ? ''
@@ -458,6 +489,12 @@ export function BiblesPage({ library }: { library: Library }) {
             : 'Verses read from your worship service lesson PDFs, exactly as printed or scanned. Verses from pastoral visits and Excel files are kept apart, in the Verse Library.'}{' '}
           Verified text is locked permanently, and the AI can never change it. {stats.verified} of {stats.total} verified.
         </p>
+        {library === 'verse' && stats.total > 0 && (
+          <p className="m-0 -mt-1.5 mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted" data-testid="bibles-origin-counts">
+            <span className="inline-flex items-center gap-1"><FileText size={12} className="text-pv" /> {stats.total - stats.imported} read from uploaded PDFs</span>
+            <span className="inline-flex items-center gap-1"><FileSpreadsheet size={12} className="text-ok" /> {stats.imported} imported from Excel</span>
+          </p>
+        )}
         {rowsToFix > 0 && (
           <p className="m-0 mb-3 flex flex-wrap items-center gap-2 rounded-md border border-line bg-panel px-3 py-2 text-[13px] text-warn" data-testid="bibles-rows-to-fix">
             {rowsToFix} imported {rowsToFix === 1 ? 'row was' : 'rows were'} left out and {rowsToFix === 1 ? 'needs' : 'need'} fixing.
@@ -510,6 +547,13 @@ export function BiblesPage({ library }: { library: Library }) {
                   <option value="en">English</option>
                 </select>
               </>
+            )}
+            {library === 'verse' && (
+              <select className="field !min-h-[34px] !w-auto !py-1 !text-xs max-lg:!min-h-11" aria-label="Filter by source" data-testid="bibles-origin" value={origin} onChange={(e) => setView({ origin: e.target.value as View['origin'] })}>
+                <option value="all">All sources</option>
+                <option value="pdf">Read from uploaded PDFs</option>
+                <option value="import">Imported from Excel</option>
+              </select>
             )}
             <select className="field !min-h-[34px] !w-auto !py-1 !text-xs max-lg:!min-h-11" aria-label="Filter by status" data-testid="bibles-status" value={status} onChange={(e) => setView({ status: e.target.value as View['status'] })}>
               <option value="all">All statuses</option>

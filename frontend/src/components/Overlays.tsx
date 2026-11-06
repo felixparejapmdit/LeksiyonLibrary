@@ -531,9 +531,8 @@ function LessonVerse({ verse, lessonId, page, part, question }: { verse: Verse; 
 export function EditLessonDialog() {
   const id = useStore((s) => s.editingLessonId);
   const lesson = useStore((s) => s.lessons.find((l) => l.id === s.editingLessonId) ?? null);
-  const folders = useStore((s) => s.folders);
   const verses = useStore((s) => s.verses);
-  const [form, setForm] = useState({ title: '', category: 'weekend' as Category, language: 'en' as Language, lesson_date: '', location: '', author: '', folder_id: '', issue: '', objectives: '' });
+  const [form, setForm] = useState({ title: '', category: 'weekend' as Category, language: 'en' as Language, lesson_date: '', location: '', author: '', issue: '', objectives: '' });
   const [saving, setSaving] = useState(false);
   // Fixed when the dialog opens, so confirming does not change the dialog under the user.
   const [checking, setChecking] = useState(false);
@@ -546,7 +545,6 @@ export function EditLessonDialog() {
         lesson_date: lesson.lesson_date ?? '',
         location: lesson.location,
         author: lesson.author,
-        folder_id: lesson.folder_id ?? '',
         issue: lesson.issue,
         objectives: lesson.objectives.join('\n'),
       });
@@ -633,15 +631,6 @@ export function EditLessonDialog() {
               <label className="text-xs text-muted">
                 Date
                 <input className="field mt-1" type="date" data-testid="edit-date" value={form.lesson_date} onChange={set('lesson_date')} />
-              </label>
-              <label className="text-xs text-muted">
-                Folder
-                <select className="field mt-1" data-testid="edit-folder" value={form.folder_id} onChange={set('folder_id')}>
-                  <option value="">No folder</option>
-                  {folders.map((f) => (
-                    <option key={f.id} value={f.id}>{f.name}</option>
-                  ))}
-                </select>
               </label>
               <label className="text-xs text-muted">
                 Location

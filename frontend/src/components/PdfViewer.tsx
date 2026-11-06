@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import { ArrowLeft, ChevronLeft, ChevronRight, ClipboardCheck, ExternalLink, FileText, Languages, Maximize, Pencil, RotateCw, ZoomIn, ZoomOut } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, ClipboardCheck, Crosshair, ExternalLink, FileText, Highlighter, Languages, Loader2, Maximize, Pencil, RotateCw, SearchX, ZoomIn, ZoomOut } from 'lucide-react';
 import { lessonFileUrl, type Lesson } from '../api';
+import { findVerse, turned, type Found } from '../highlight';
 import { cachedPage, lessonDocument, rememberPage, renderToCanvas } from '../pdf';
 import { selectLesson, setState, useStore } from '../store';
 
@@ -76,8 +77,17 @@ function LessonSummary({ lesson }: { lesson: Lesson }) {
  * step, so the page on screen is never blank. Zoom resizes the current image
  * immediately via CSS, then swaps in a sharp render when it is ready.
  */
-/** `embedded` is the copy beside the check dialog's form, which already shows the lesson's details. */
-export function PdfViewer({ lesson, onBack, embedded }: { lesson: Lesson; onBack?: () => void; embedded?: boolean }) {
+/** A verse to mark on its page: its text as printed, found again on the page itself. */
+export interface VerseMark {
+  text: string;
+  page: number;
+}
+
+/**
+ * `embedded` is the copy beside the check dialog's form, which already shows the lesson's details.
+ * `mark` highlights a verse on its page and scrolls to it.
+ */
+export function PdfViewer({ lesson, onBack, embedded, mark }: { lesson: Lesson; onBack?: () => void; embedded?: boolean; mark?: VerseMark | null }) {
   const page = useStore((s) => s.viewerPage);
   const counterpart = useStore((s) =>
     s.lessons.find((l) => l.id !== lesson.id && l.language !== lesson.language && l.lesson_date && l.lesson_date === lesson.lesson_date && l.category === lesson.category),
@@ -94,6 +104,9 @@ export function PdfViewer({ lesson, onBack, embedded }: { lesson: Lesson; onBack
   const [pageSize, setPageSize] = useState({ w: 595, h: 842 });
   const scrollRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const frameRef = useRef<HTMLDivElement>(null);
+  const [found, setFound] = useState<{ key: string; where: Found | null } | null>(null);
+  const [showMark, setShowMark] = useState(0);
   const effectiveZoom = zoom ?? fitZoom;
   const pageCount = doc?.numPages ?? lesson.page_count;
   const currentPage = Math.min(Math.max(1, page), Math.max(1, pageCount));
@@ -196,9 +209,59 @@ export function PdfViewer({ lesson, onBack, embedded }: { lesson: Lesson; onBack
     };
   }, [doc, url, currentPage, effectiveZoom, rotation]);
 
-  useEffect(() => {
+  // Before the verse mark below, so that a page opened at its mark is not sent back to the top.
+  useLayoutEffect(() => {
     scrollRef.current?.scrollTo({ top: 0 });
   }, [currentPage, url]);
+
+  // The verse is found on its page again each time, so it is marked where it is actually printed.
+  const markText = mark?.text.trim() ?? '';
+  const markPage = mark?.page ?? 0;
+  const markKey = mark && markText ? `${url}|${markPage}|${markText}` : null;
+  useEffect(() => {
+    if (!doc || !markKey || markPage < 1 || markPage > doc.numPages) return;
+    let alive = true;
+    findVerse(doc, url, markPage, markText)
+      .then((where) => alive && setFound({ key: markKey, where }))
+      .catch(() => alive && setFound({ key: markKey, where: null }));
+    return () => {
+      alive = false;
+    };
+  }, [doc, url, markKey, markPage, markText]);
+  const result = found && found.key === markKey ? found : null;
+  const where = result?.where ?? null;
+  const markState = !markKey ? null : error || markPage > pageCount ? 'missing' : !result ? 'finding' : where ? 'found' : 'missing';
+  const boxes = useMemo(() => where?.boxes[currentPage]?.map((b) => turned(b, rotation)) ?? null, [where, currentPage, rotation]);
+  const markPages = where ? Object.keys(where.boxes).map(Number) : [];
+  // A verse that begins on the next page is shown there, once, as soon as it is found.
+  const movedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!where || !markKey || movedFor.current === markKey) return;
+    movedFor.current = markKey;
+    if (!where.boxes[currentPage]) setPage(where.page);
+  }, [where, markKey, currentPage, setPage]);
+  const shownW = Math.floor(pageSize.w * effectiveZoom);
+  const shownH = Math.floor(pageSize.h * effectiveZoom);
+
+  // Brings the marked lines to the middle of the view, whether they are at the top of the page or the bottom.
+  useLayoutEffect(() => {
+    const box = scrollRef.current;
+    const frame = frameRef.current;
+    if (!boxes?.length || !box || !frame) return;
+    const top = Math.min(...boxes.map((b) => b[1])) * shownH;
+    const bottom = Math.max(...boxes.map((b) => b[3])) * shownH;
+    const left = Math.min(...boxes.map((b) => b[0])) * shownW;
+    const right = Math.max(...boxes.map((b) => b[2])) * shownW;
+    const f = frame.getBoundingClientRect();
+    const c = box.getBoundingClientRect();
+    const y = box.scrollTop + f.top - c.top + top;
+    const x = box.scrollLeft + f.left - c.left + left;
+    box.scrollTo({
+      top: Math.max(0, y - Math.max(24, (box.clientHeight - (bottom - top)) / 2)),
+      left: Math.max(0, x - Math.max(24, (box.clientWidth - (right - left)) / 2)),
+      behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+    });
+  }, [boxes, shownW, shownH, showMark]);
 
   const changeZoom = (delta: number) => setZoom(Math.round(Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, effectiveZoom + delta)) * 10) / 10);
 
@@ -249,21 +312,66 @@ export function PdfViewer({ lesson, onBack, embedded }: { lesson: Lesson; onBack
         </div>
       )}
       {!embedded && <LessonSummary lesson={lesson} />}
+      {markState && (
+        <div className="no-print flex min-h-9 flex-none flex-wrap items-center gap-2 border-b border-line bg-panel px-3 py-1 text-xs" role="status" data-testid="viewer-mark-status" data-state={markState}>
+          {markState === 'finding' && (
+            <>
+              <Loader2 size={13} className="flex-none animate-spin text-muted" />
+              <span className="text-muted">Finding this verse on page {markPage}…</span>
+            </>
+          )}
+          {markState === 'found' && (
+            <>
+              <Highlighter size={13} className="flex-none text-warn" />
+              <span className="min-w-0 flex-1">This verse is highlighted on {markPages.length > 1 ? `pages ${markPages.join(' and ')}` : `page ${markPages[0]}`}.</span>
+              <button
+                className="btn !min-h-7 max-lg:!min-h-11"
+                data-testid="viewer-mark-show"
+                onClick={() => {
+                  setPage(where?.boxes[currentPage] ? currentPage : (where?.page ?? markPage));
+                  setShowMark((n) => n + 1);
+                }}
+              >
+                <Crosshair size={13} /> Show it
+              </button>
+            </>
+          )}
+          {markState === 'missing' && (
+            <>
+              <SearchX size={13} className="flex-none text-muted" />
+              <span className="min-w-0 flex-1 text-muted">This verse could not be matched on page {markPage}, so nothing is highlighted. Compare it with the page by eye.</span>
+            </>
+          )}
+        </div>
+      )}
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto p-4" data-testid="viewer-scroll" style={{ overscrollBehavior: 'contain', scrollbarGutter: 'stable' }}>
         {error ? (
           <p className="m-auto mt-10 max-w-xs text-center text-muted" data-testid="viewer-error">This PDF could not be opened. Try downloading it instead.</p>
         ) : (
-          <canvas
-            ref={canvasRef}
-            data-testid="viewer-canvas"
-            className="mx-auto block rounded-sm bg-white"
-            aria-label={`Page ${currentPage} of ${lesson.title}`}
-            role="img"
-            style={{
-              width: Math.floor(pageSize.w * effectiveZoom),
-              height: Math.floor(pageSize.h * effectiveZoom),
-            }}
-          />
+          <div ref={frameRef} className="relative mx-auto" style={{ width: shownW, height: shownH }} data-testid="viewer-frame">
+            <canvas
+              ref={canvasRef}
+              data-testid="viewer-canvas"
+              className="block rounded-sm bg-white"
+              aria-label={`Page ${currentPage} of ${lesson.title}`}
+              role="img"
+              style={{ width: shownW, height: shownH }}
+            />
+            {boxes?.map((b, i) => (
+              <div
+                key={`${markKey}|${i}`}
+                className="verse-mark"
+                data-testid="viewer-mark"
+                aria-hidden="true"
+                style={{
+                  left: `calc(${b[0] * 100}% - 3px)`,
+                  top: `calc(${b[1] * 100}% - 2px)`,
+                  width: `calc(${(b[2] - b[0]) * 100}% + 6px)`,
+                  height: `calc(${(b[3] - b[1]) * 100}% + 4px)`,
+                }}
+              />
+            ))}
+          </div>
         )}
       </div>
     </section>

@@ -45,11 +45,6 @@ export interface Verse {
   import_source: string;
 }
 
-export interface Folder {
-  id: string;
-  name: string;
-}
-
 export interface Lecture {
   id: string;
   title: string;
@@ -230,9 +225,6 @@ export const api = {
   removeLessonVerse: (id: string, verseId: string) => request(`/lessons/${id}/verses/${verseId}`, { method: 'DELETE' }),
   search: (q: string) => request<{ lesson_ids: string[] }>(`/search?q=${encodeURIComponent(q)}`),
 
-  folders: () => request<Folder[]>('/folders'),
-  createFolder: (name: string) => request<Folder>('/folders', json('POST', { name })),
-  deleteFolder: (id: string) => request(`/folders/${id}`, { method: 'DELETE' }),
 
   verses: () => request<Verse[]>('/verses'),
   correctVerse: (id: string, patch: { text?: string; reference?: string }) => request<Verse>(`/verses/${id}`, json('PATCH', patch)),

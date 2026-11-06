@@ -40,9 +40,15 @@ test('selecting a lesson highlights it and loads it in the viewer', async ({ app
 });
 
 test('year folders filter, show a chip, expand, and clear', async ({ app: page }) => {
+  // The Lesson Library's years sit under it, and open its lessons of that year.
   await page.getByTestId('year-2026').click();
+  await expect(page.getByTestId('list-title')).toHaveText('Lesson Library');
+  await expect(page.getByTestId('year-2026')).toHaveAttribute('aria-current', 'page');
   await expect(page.getByTestId('chip-year')).toContainText('Year: 2026');
   await expect(page.getByTestId('item-count')).toHaveText('2 items');
+  await page.getByTestId('year-2026').click();
+  await expect(page.getByTestId('chip-year'), 'a second click opens the whole library again').toHaveCount(0);
+  await page.getByTestId('year-2026').click();
   await page.getByTestId('chip-year-clear').click();
   await expect(page.getByTestId('chip-year')).toHaveCount(0);
 
@@ -95,30 +101,59 @@ test('All Archives, the Lesson Library and Pastoral Visits each list their own l
   await page.getByTestId('upload-done').click();
 });
 
-test('pastoral entry filters and expands', async ({ app: page }) => {
-  await expect(page.getByTestId('side-pastoral-count')).toHaveText('1');
-  await page.getByTestId('side-pastoral').click();
+test('Pastoral Visits has year folders of its own visits', async ({ app: page }) => {
+  const lessons: any[] = await (await page.request.get('/api/lessons')).json();
+  const visit = lessons.find((l) => l.category === 'pastoral' && l.year);
+  expect(visit, 'a dated pastoral visit').toBeTruthy();
+  const sameYear = lessons.filter((l) => l.category === 'pastoral' && l.year === visit.year).length;
+  // Only the libraries' own year folders: no folder for pastoral visits, and none made by hand.
+  for (const gone of ['side-pastoral', 'folder-add', 'custom-folder', 'folders-toggle', 'verses-toggle', 'side-verse']) await expect(page.getByTestId(gone)).toHaveCount(0);
+  const worshipYears = new Set(lessons.filter((l) => l.category !== 'pastoral' && l.year).map((l) => l.year));
+  await expect(page.getByTestId('folders').getByRole('button', { name: /^\d{4}/ })).toHaveCount(worshipYears.size);
+
+  await page.getByTestId(`pv-year-${visit.year}`).click();
   await expect(page.getByTestId('list-title')).toHaveText('Pastoral Visits');
-  await page.getByTestId('side-pastoral').click();
-  await expect(page.getByTestId('list-title')).toHaveText('All Archives');
-  await page.getByTestId('pastoral-expand').click();
-  await expect(page.getByTestId('tree-lesson')).toHaveCount(1);
-  await page.getByTestId('pastoral-expand').click();
+  await expect(page.getByTestId('chip-year')).toContainText(`Year: ${visit.year}`);
+  await expect(page.getByTestId('item-count')).toHaveText(`${sameYear} ${sameYear === 1 ? 'item' : 'items'}`);
+  await page.getByTestId(`pv-year-expand-${visit.year}`).click();
+  await expect(page.getByTestId('tree-lesson')).toHaveCount(sameYear);
+  await page.getByTestId('tree-lesson').first().click();
+  await expect(page.locator('[data-testid="lesson-row"][data-selected="true"]')).toHaveCount(1);
+  await page.getByTestId(`pv-year-expand-${visit.year}`).click();
+  await expect(page.getByTestId('tree-lesson')).toHaveCount(0);
+
+  // The Pastoral Visits page has the same year folders as tabs of its own.
+  await page.getByTestId('side-pv').click();
+  const visits = lessons.filter((l) => l.category === 'pastoral');
+  await expect(page.getByTestId('pv-folder-all')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByTestId('pv-folder-all')).toContainText(`All years${visits.length}`);
+  await page.getByTestId(`pv-folder-${visit.year}`).click();
+  await expect(page.getByTestId(`pv-folder-${visit.year}`)).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByTestId('chip-year')).toContainText(`Year: ${visit.year}`);
+  await expect(page.getByTestId('item-count')).toHaveText(`${sameYear} ${sameYear === 1 ? 'item' : 'items'}`);
+  const undated = visits.filter((l) => !l.year).length;
+  if (undated > 0) {
+    await page.getByTestId('pv-folder-none').click();
+    await expect(page.getByTestId('chip-year')).toContainText('Year: no date');
+    await expect(page.getByTestId('item-count')).toHaveText(`${undated} ${undated === 1 ? 'item' : 'items'}`);
+  } else {
+    await expect(page.getByTestId('pv-folder-none'), 'no folder for undated visits when every visit has a date').toHaveCount(0);
+  }
+  await page.getByTestId('pv-folder-all').click();
+  await expect(page.getByTestId('chip-year')).toHaveCount(0);
+  await expect(page.getByTestId('pv-folders-hint')).toHaveCount(0);
 });
 
-test('the verses list filters by reference across languages', async ({ app: page }) => {
-  await page.getByTestId('side-verse').filter({ hasText: samples.firstRefEn }).click();
+test('a verse found by search filters the lessons by reference across languages', async ({ app: page }) => {
+  await page.goto('/search');
+  await page.getByTestId('page-search-input').fill(samples.firstRefEn);
+  await page.getByTestId('search-verse').filter({ hasText: samples.firstRefEn }).first().click();
   await expect(page.getByTestId('chip-verse')).toBeVisible();
   await expect(page.getByTestId('item-count')).toHaveText('2 items');
   await expect(row(page, samples.tl.short)).toBeVisible();
   await expect(row(page, samples.en.short)).toBeVisible();
   await page.getByTestId('chip-verse-clear').click();
   await expect(page.getByTestId('item-count')).toHaveText('5 items');
-
-  await page.getByTestId('verses-toggle').click();
-  await expect(page.getByTestId('verse-list')).toHaveCount(0);
-  await page.getByTestId('verses-toggle').click();
-  await expect(page.getByTestId('verse-list')).toBeVisible();
 });
 
 test('search matches titles instantly, lesson text after, and highlights', async ({ app: page }) => {
@@ -170,40 +205,17 @@ test('search stays correct under hostile characters', async ({ app: page }) => {
   expect(await page.locator('img[src="x"]').count()).toBe(0);
 });
 
-test('custom folders can be created, filled, filtered and deleted', async ({ app: page }) => {
-  await page.getByTestId('folder-add').click();
-  await page.getByTestId('folder-name').fill('Pagdadalaw 2015');
-  await page.getByTestId('folder-save').click();
-  await expect(page.getByTestId('custom-folder')).toContainText('Pagdadalaw 2015');
-
-  await page.getByTestId('folder-add').click();
-  await page.getByTestId('folder-name').fill('Pagdadalaw 2015');
-  await page.getByTestId('folder-save').click();
-  await expect(page.getByTestId('toast')).toContainText('already exists');
-  await page.getByTestId('folder-add').click();
-
-  const r = row(page, 'Halimbawa ng Tungkulin');
-  await r.getByTestId('lesson-edit').click();
-  await page.getByTestId('edit-folder').selectOption({ label: 'Pagdadalaw 2015' });
-  await page.getByTestId('edit-save').click();
-  await expect(page.getByTestId('edit-dialog')).toHaveCount(0);
-
-  await page.getByTestId('custom-folder').click();
-  await expect(page.getByTestId('chip-folder')).toContainText('Pagdadalaw 2015');
-  await expect(page.getByTestId('item-count')).toHaveText('1 item');
-  await page.getByTestId('chip-folder-clear').click();
-
-  await page.getByTestId('custom-folder').click();
-  await page.getByTestId('custom-folder-delete').click();
-  await page.getByTestId('confirm-accept').click();
-  await expect(page.getByTestId('custom-folder')).toHaveCount(0);
-  await expect(page.getByTestId('chip-folder')).toHaveCount(0);
-  await expect(page.getByTestId('item-count')).toHaveText('5 items');
-
-  await page.getByTestId('folders-toggle').click();
-  await expect(page.getByTestId('folder-list')).toHaveCount(0);
-  await page.getByTestId('folders-toggle').click();
-  await expect(page.getByTestId('folder-list')).toBeVisible();
+test('the sidebar gives each part one colour, shared by its icon and its label', async ({ app: page }) => {
+  await page.getByTestId('side-pv').click();
+  for (const id of ['side-all', 'side-lessons', 'side-pv', 'side-lecture', 'side-review', 'side-bibles', 'side-lesson-verses', 'side-import']) {
+    const entry = page.getByTestId(id);
+    const [label, icon] = await Promise.all([entry.evaluate((el) => getComputedStyle(el).color), entry.locator('svg').first().evaluate((el) => getComputedStyle(el).color)]);
+    expect(icon, `${id}: the icon is the colour of its label`).toBe(label);
+  }
+  const colours = await Promise.all(['side-lessons', 'side-pv', 'side-lecture', 'side-review'].map((id) => page.getByTestId(id).evaluate((el) => getComputedStyle(el).color)));
+  expect(new Set(colours).size, 'each part has its own colour').toBe(4);
+  await expect(page.getByTestId('side-verified')).toHaveText(/^\d+ of \d+$/);
+  await expect(page.getByTestId('edit-folder')).toHaveCount(0);
 });
 
 test('editing lesson details saves, and can be cancelled', async ({ app: page }) => {

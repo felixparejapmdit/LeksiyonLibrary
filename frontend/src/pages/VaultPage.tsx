@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ArrowDownUp, FolderSearch, FolderTree, MapPin, PanelRight, UploadCloud } from 'lucide-react';
 import { ResizeHandle, useIsDesktop } from '../components/Layout';
-import { CategoryTabs, FilterChips, LessonRows, useVisibleLessons } from '../components/LessonList';
+import { CategoryTabs, FilterChips, LessonRows, useVisibleLessons, YearFolderTabs } from '../components/LessonList';
 import { PdfViewer } from '../components/PdfViewer';
 import { Sidebar } from '../components/Sidebar';
 import { addPastoralVisits, PastoralDrop } from '../components/PastoralDrop';
@@ -101,7 +101,7 @@ export function VaultPage() {
       <div className="flex-none px-3 pt-3 pb-2">
         <div className="flex items-center gap-2">
           {!desktop && (
-            <button className="icon-btn" aria-label="Open folders and verses" data-testid="open-drawer" onClick={() => setState({ drawerOpen: true })}>
+            <button className="icon-btn" aria-label="Open the library menu" data-testid="open-drawer" onClick={() => setState({ drawerOpen: true })}>
               <FolderTree size={18} />
             </button>
           )}
@@ -132,9 +132,7 @@ export function VaultPage() {
           )}
         </div>
         {pastoralPage && <PastoralDrop dragging={dragging} />}
-        <div className="mt-2">
-          <CategoryTabs pool={pool} />
-        </div>
+        <div className="mt-2">{pastoralPage ? <YearFolderTabs /> : <CategoryTabs pool={pool} />}</div>
         <FilterChips />
         <div className="mt-1.5 flex justify-between border-b border-line pb-1 text-xs text-muted">
           <span>Name</span>
@@ -156,7 +154,7 @@ export function VaultPage() {
             <div className="h-full w-[84vw] max-w-80 border-r border-line bg-panel">
               <Sidebar />
             </div>
-            <button className="flex-1 border-0 bg-black/60" aria-label="Close folders and verses" data-testid="drawer-close" onClick={() => setState({ drawerOpen: false })} />
+            <button className="flex-1 border-0 bg-black/60" aria-label="Close the library menu" data-testid="drawer-close" onClick={() => setState({ drawerOpen: false })} />
           </div>
         )}
         {mobileViewer && selected && (
