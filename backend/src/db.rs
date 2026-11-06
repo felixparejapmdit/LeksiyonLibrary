@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS lessons (
   objectives TEXT NOT NULL DEFAULT '[]',
   created_at TEXT NOT NULL,
   needs_check INTEGER NOT NULL DEFAULT 0,
+  outline TEXT NOT NULL DEFAULT '',
   UNIQUE (user_id, sha256)
 );
 CREATE INDEX IF NOT EXISTS lessons_user ON lessons(user_id);
@@ -85,7 +86,9 @@ CREATE TABLE IF NOT EXISTS lesson_verses (
   lesson_id TEXT NOT NULL REFERENCES lessons(id) ON DELETE CASCADE,
   verse_id TEXT NOT NULL REFERENCES verses(id) ON DELETE CASCADE,
   page INTEGER NOT NULL,
-  ordinal INTEGER NOT NULL
+  ordinal INTEGER NOT NULL,
+  section INTEGER NOT NULL DEFAULT -1,
+  question TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS lesson_verses_lesson ON lesson_verses(lesson_id);
 CREATE INDEX IF NOT EXISTS lesson_verses_verse ON lesson_verses(verse_id);
@@ -236,6 +239,10 @@ pub fn init(conn: &Connection) -> rusqlite::Result<()> {
         ("verses", "import_source", "TEXT NOT NULL DEFAULT ''"),
         // Lessons already in a vault were added before this check existed, so they start as checked.
         ("lessons", "needs_check", "INTEGER NOT NULL DEFAULT 0"),
+        // Empty until the lesson's parts are read; see outline::backfill.
+        ("lessons", "outline", "TEXT NOT NULL DEFAULT ''"),
+        ("lesson_verses", "section", "INTEGER NOT NULL DEFAULT -1"),
+        ("lesson_verses", "question", "TEXT NOT NULL DEFAULT ''"),
     ] {
         let present: bool = conn.query_row(&format!("SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1)"), [column], |r| r.get(0))?;
         if !present {
@@ -248,6 +255,7 @@ pub fn init(conn: &Connection) -> rusqlite::Result<()> {
     // Teaching history was removed from the app.
     conn.execute_batch("DROP TABLE IF EXISTS teachings;")?;
     crate::verse_import::repair_leading_numbers(conn)?;
+    crate::outline::backfill(conn)?;
     Ok(())
 }
 

@@ -1,12 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, BookMarked, Copy, FileDown, FilePlus2, FileText, Loader2, Lock, MonitorPlay, PencilLine, Plus, Printer, Save, Sparkles, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, BookMarked, ChevronDown, Copy, FileDown, FilePlus2, FileText, Loader2, Lock, MonitorPlay, PencilLine, Plus, Printer, Save, Sparkles, Trash2, X } from 'lucide-react';
 import { PresentationMode } from '../components/Presentation';
 import { backgroundAsText, backgroundOf, ContextPanel } from '../components/VerseContext';
-import { api, saveFile, type Lecture, type Suggestion, type Verse } from '../api';
-import { askConfirm, errorText, getState, libraryOf, refreshAll, setState, toast, useStore } from '../store';
+import { api, saveFile, type Lecture, type LessonMatch, type Suggestion, type Verse } from '../api';
+import { askConfirm, errorText, getState, libraryOf, partName, refreshAll, setState, toast, useStore } from '../store';
 
 type NotesStatus = 'idle' | 'loading' | 'ready' | 'offline';
-type Group = { title: string | null; objective: string; logId: string; suggestions: Suggestion[]; status: NotesStatus; notes: Record<string, string> };
+type Group = {
+  title: string | null;
+  objective: string;
+  /** Verses asked for at a time; absent for best matches overall. */
+  count?: number;
+  logId: string;
+  suggestions: Suggestion[];
+  status: NotesStatus;
+  notes: Record<string, string>;
+  /** Asking for more found nothing new. */
+  exhausted: boolean;
+  loadingMore: boolean;
+};
 type Coverage = 'best' | '3' | '4' | '5';
 
 const objectiveLines = (text: string) => text.split('\n').map((l) => l.trim()).filter(Boolean);
@@ -35,6 +47,35 @@ export function VerseOrigin({ verse }: { verse: Verse }) {
         </span>
       ))}
     </span>
+  );
+}
+
+/**
+ * The lessons a suggestion was found in, for the objective or topic asked about: the lesson,
+ * its PDF file, the part of the lesson and the question the verse answers there.
+ */
+function FoundInLessons({ found }: { found: LessonMatch[] }) {
+  const lessons = useStore((s) => s.lessons);
+  if (found.length === 0) return null;
+  return (
+    <ul className="m-0 mb-2 list-none space-y-1 rounded-md border border-pv/40 bg-pv/5 p-2 text-xs" data-testid="suggestion-lessons" aria-label="Found in the Lesson Library">
+      {found.map((m) => {
+        const lesson = lessons.find((l) => l.id === m.lesson_id);
+        const part = partName(m.section, lesson?.language ?? 'en', lesson?.objectives.length ?? 0);
+        return (
+          <li key={m.lesson_id} className="min-w-0" data-testid="suggestion-from-lesson">
+            <span className="flex min-w-0 flex-wrap items-center gap-x-1.5">
+              <FileText size={12} className="flex-none text-pv" />
+              <span className="font-semibold text-fg" data-testid="from-lesson-title">{m.title}</span>
+              <span className="text-muted" data-testid="from-lesson-file">{m.file_name}</span>
+              {part && <span className="text-pv" data-testid="from-lesson-part">{part}</span>}
+            </span>
+            {m.objective && <span className="mt-0.5 block text-muted" data-testid="from-lesson-objective">The lesson's objective: {m.objective}</span>}
+            {m.question && <span className="mt-0.5 block text-muted" data-testid="from-lesson-question">Under the question: {m.question}</span>}
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
@@ -116,10 +157,13 @@ export function LecturePage() {
       const next: Group[] = wanted.map((w, i) => ({
         title: w.title,
         objective: w.objective,
+        count: w.count,
         logId: found[i].log_id,
         suggestions: found[i].suggestions,
         status: found[i].suggestions.length ? 'loading' : 'idle',
         notes: {},
+        exhausted: false,
+        loadingMore: false,
       }));
       setGroups(next);
       setUsedMeaning(found.some((f) => f.meaning));
@@ -145,6 +189,30 @@ export function LecturePage() {
         setGroups((g) => g && g.map((x) => (x.status === 'loading' ? { ...x, status: 'offline' } : x)));
         toast(errorText(err), 'error');
       }
+    }
+  };
+
+  /** More verses for one objective, leaving out those it already shows. */
+  const suggestMore = async (groupIndex: number) => {
+    const seq = requestSeq.current;
+    const g = groups?.[groupIndex];
+    if (!g) return;
+    const patch = (p: Partial<Group> | ((x: Group) => Partial<Group>)) =>
+      setGroups((all) => all && all.map((x, n) => (n === groupIndex ? { ...x, ...(typeof p === 'function' ? p(x) : p) } : x)));
+    patch({ loadingMore: true });
+    try {
+      const found = await api.aiSuggest(issue, g.objective, g.count, g.suggestions.map((s) => s.canonical_key));
+      if (seq !== requestSeq.current) return;
+      const fresh = found.suggestions.filter((s) => !g.suggestions.some((x) => x.canonical_key === s.canonical_key));
+      patch((x) => ({ suggestions: [...x.suggestions, ...fresh], exhausted: fresh.length === 0, loadingMore: false }));
+      if (fresh.length === 0) return;
+      const n = await api.aiNotes(found.log_id);
+      if (seq !== requestSeq.current || !n.available) return;
+      patch((x) => ({ notes: { ...x.notes, ...n.notes } }));
+      setState({ contexts: n.context, scripture: n.scripture });
+    } catch (err) {
+      patch({ loadingMore: false });
+      toast(errorText(err), 'error');
     }
   };
 
@@ -287,6 +355,7 @@ export function LecturePage() {
                       {s.matched_terms.length > 0 && <span className="text-xs text-muted">Matches: {s.matched_terms.join(', ')}</span>}
                       {s.meaning && <span className="text-xs text-muted" data-testid="suggestion-meaning">Related in meaning</span>}
                     </div>
+                    <FoundInLessons found={s.from_lessons ?? []} />
                     <ContextPanel verseKey={s.canonical_key} reference={s.ref_en} referenceTl={s.ref_tl} testId="verse-context" note={g.notes[s.canonical_key]}>
                       <div className="mb-2">{contextButton(s.canonical_key, 'context-edit')}</div>
                     </ContextPanel>
@@ -316,6 +385,14 @@ export function LecturePage() {
                   </article>
                 );
               })}
+              {g.suggestions.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <button className="btn !min-h-8 max-lg:!min-h-11" data-testid="objective-more" disabled={g.loadingMore || g.exhausted} onClick={() => suggestMore(groupIndex)}>
+                    {g.loadingMore ? <Loader2 size={13} className="animate-spin" /> : <ChevronDown size={13} />} Suggest more{g.objective && g.count ? ' for this objective' : ''}
+                  </button>
+                  {g.exhausted && <span className="text-xs text-muted" data-testid="objective-no-more">No more verses in your libraries match. Try other words.</span>}
+                </div>
+              )}
               </div>
               ))}
             </section>

@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { BellRing, CheckCircle2, CircleAlert, ClipboardCheck, FileUp, FolderUp, Loader2, PencilLine, Trash2, UploadCloud, X } from 'lucide-react';
 import { api, saveFile, type Category, type Language, type Verse } from '../api';
 import { enqueueFiles, enqueueFolder } from '../ingest';
-import { askConfirm, errorText, getState, refreshAll, selectLesson, setState, toast, useStore } from '../store';
+import { askConfirm, errorText, getState, partName, refreshAll, selectLesson, setState, toast, useStore } from '../store';
 import { PdfViewer } from './PdfViewer';
 import { backgroundOf, ContextLanguageSwitch, scopeNames, tagalogItems } from './VerseContext';
 
@@ -455,7 +455,7 @@ const closeEdit = () => setState({ editingLessonId: null });
 const replaceVerse = (v: Verse) => setState({ verses: getState().verses.map((x) => (x.id === v.id ? v : x)) });
 
 /** A verse read from this lesson, which can be corrected, or removed if it is not a verse at all. */
-function LessonVerse({ verse, lessonId, page }: { verse: Verse; lessonId: string; page: number }) {
+function LessonVerse({ verse, lessonId, page, part, question }: { verse: Verse; lessonId: string; page: number; part: string | null; question: string }) {
   const [correcting, setCorrecting] = useState(false);
   const verified = verse.status === 'verified';
   return (
@@ -465,6 +465,11 @@ function LessonVerse({ verse, lessonId, page }: { verse: Verse; lessonId: string
         <span className="text-muted">{verse.language === 'tl' ? 'Tagalog' : 'English'}{verse.version ? ` · ${verse.version}` : ''} · page {page}</span>
         <span className={verified ? 'text-ok' : 'text-warn'}>{verified ? 'Verified' : 'Unverified'}</span>
       </div>
+      {part && (
+        <p className="m-0 mt-0.5 text-xs text-pv" data-testid="check-verse-part" title="The part of the lesson it is printed in. A lesson teaches objective 1 in the beginning, objective 2 in I., and so on.">
+          {part}{question ? <span className="text-muted"> · {question}</span> : null}
+        </p>
+      )}
       <p className="m-0 mt-1 line-clamp-3 text-[13px] leading-relaxed" data-testid="check-verse-text">{verse.text || 'Reference only. No text was printed.'}</p>
       <div className="mt-1.5 flex flex-wrap gap-1">
         {!verified && (
@@ -549,7 +554,7 @@ export function EditLessonDialog() {
     return verses
       .flatMap((v) => {
         const source = v.sources.find((x) => x.lesson_id === lesson.id);
-        return source ? [{ verse: v, page: source.page }] : [];
+        return source ? [{ verse: v, page: source.page, part: partName(source.section, lesson.language, lesson.objectives.length), question: source.question }] : [];
       })
       .sort((a, b) => a.page - b.page || order(a.verse) - order(b.verse) || a.verse.language.localeCompare(b.verse.language));
   }, [verses, lesson]);
@@ -640,13 +645,13 @@ export function EditLessonDialog() {
             <section className="mt-4" aria-label="Verses found" data-testid="check-verses">
               <h3 className="m-0 text-[13px] font-semibold" data-testid="check-verses-title">Verses found ({found.length})</h3>
               <p className="m-0 mt-0.5 mb-2 text-xs text-muted">
-                Correct a verse that was misread, or remove anything that is not a verse of this lesson. Each verse's wording is checked word for word later, in Review Verses.
+                Check that each verse sits under the right objective and part, correct a verse that was misread, or remove anything that is not a verse of this lesson. Each verse's wording is checked word for word later, in Review Verses.
               </p>
               {found.length === 0 ? (
                 <p className="m-0 text-[13px] text-muted" data-testid="check-verses-empty">No verses were found in this PDF.</p>
               ) : (
                 <ul className="m-0 list-none space-y-2 p-0">
-                  {found.map(({ verse, page }) => <LessonVerse key={verse.id} verse={verse} lessonId={lesson.id} page={page} />)}
+                  {found.map(({ verse, page, part, question }) => <LessonVerse key={verse.id} verse={verse} lessonId={lesson.id} page={page} part={part} question={question} />)}
                 </ul>
               )}
             </section>

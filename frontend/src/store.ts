@@ -324,6 +324,25 @@ export const libraryOf = (v: Verse): Library => (v.import_source || v.sources.le
 
 export const libraryName: Record<Library, string> = { verse: 'Verse Library', lesson: 'Lesson Library' };
 
+const roman = (n: number) =>
+  ([[10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']] as const).reduce((out, [value, digits]) => {
+    while (n >= value) {
+      out += digits;
+      n -= value;
+    }
+    return out;
+  }, '');
+
+/**
+ * The part of a lesson a verse is printed in, named as the lesson prints it. A lesson teaches
+ * objective n in part n: the beginning (Pasimula) first, then I., II. and so on.
+ */
+export function partName(section: number, language: Language, objectives: number): string | null {
+  const name = section === 1 ? (language === 'tl' ? 'Pasimula' : 'Introduction') : section === 99 ? (language === 'tl' ? 'Konklusyon' : 'Conclusion') : section >= 2 ? `${roman(section - 1)}.` : null;
+  if (!name) return null;
+  return section !== 99 && section <= objectives ? `Objective ${section} · ${name}` : name;
+}
+
 export function formatLessonDate(l: Lesson) {
   if (l.date_label) return l.date_label;
   if (!l.lesson_date) return 'Date not set';

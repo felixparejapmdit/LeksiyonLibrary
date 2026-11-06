@@ -173,7 +173,8 @@ test.describe('reviewing AI context', () => {
     await setAiMode('good');
     await withEmptyVault(page, async () => {
       // Same chapter, and another chapter of the same book.
-      await addLesson(page, 'shared.pdf', 'Shared Lesson', [VERSES[0], VERSES[1], ['Juan 4:1', 'A made up verse about a different chapter of vocation.']]);
+      // Each verse mentions the objective: a lesson's other verses are not pulled in by one shared word.
+      await addLesson(page, 'shared.pdf', 'Shared Lesson', [VERSES[0], ['Juan 3:6', 'Another made up verse in the same chapter, about a vocation.'], ['Juan 4:1', 'A made up verse about a different chapter of vocation.']]);
       await ask(page, 'vocation');
       await expect(page.getByTestId('suggestion')).toHaveCount(3);
       const chapters = await page.getByTestId('verse-context-chapter').allInnerTexts();

@@ -17,6 +17,22 @@ pub struct ParsedVerse {
     pub text: String,
     pub raw: String,
     pub page: u32,
+    /// The part of the lesson the verse is printed in: 0 before the lesson proper, 1 the
+    /// beginning (Pasimula), 2 for I., 3 for II. and so on, `CONCLUSION` for the conclusion.
+    /// Objective n of a lesson is taught in section n.
+    pub section: u32,
+    /// The question the verse answers, when the section asks one before it.
+    pub question: String,
+}
+
+pub const CONCLUSION: u32 = 99;
+
+/// A headed part of the lesson and the questions it asks.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Section {
+    pub number: u32,
+    pub heading: String,
+    pub questions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -34,6 +50,7 @@ pub struct ParsedLesson {
     pub objectives: Vec<String>,
     pub content: String,
     pub verses: Vec<ParsedVerse>,
+    pub outline: Vec<Section>,
 }
 
 macro_rules! re {
@@ -97,6 +114,63 @@ re!(
     r"\b([A-Z][A-Z]+(?:\s+[A-Z]\.)?\s+[A-Z][A-Z]+(?:\s+(?:JR|SR|III)\.?)?)\s*$"
 );
 re!(BY_LINE, r"(?i)^by\s*:\s*(.+)$");
+re!(BEGIN_MARK, r"(?i)^(?:pasimula|introduction|simula|beginning)\s*(?::\s*(.*))?$");
+re!(ROMAN_HEAD, r"^(IX|IV|VI{0,3}|I{1,3}|X)\s*\.\s+(\S.*)$");
+re!(CONCLUSION_MARK, r"(?i)^(?:konklusyon|conclusion|pangwakas)\b\s*:?\s*(.*)$");
+re!(QUESTION, r"^[QT]\s*\.\s+(\S.*)$");
+re!(ANSWER, r"^[AS]\s*\.\s+\S");
+
+const MAX_OUTLINE_CHARS: usize = 240;
+
+fn roman_value(s: &str) -> u32 {
+    let mut total = 0i32;
+    let digits: Vec<i32> = s.chars().map(|c| match c { 'I' => 1, 'V' => 5, 'X' => 10, _ => 0 }).collect();
+    for (i, d) in digits.iter().enumerate() {
+        if digits.get(i + 1).is_some_and(|n| n > d) { total -= d } else { total += d }
+    }
+    total.max(0) as u32
+}
+
+fn clip(s: &str) -> String {
+    s.chars().take(MAX_OUTLINE_CHARS).collect::<String>().trim().to_string()
+}
+
+/// A heading or question with the lines that continue it, when printed over more than one line.
+/// Headings are printed in capitals, so only a line in capitals continues one.
+fn with_continuation(lines: &[(u32, String)], from: usize, first: &str, capitals_only: bool) -> String {
+    let mut out = first.trim().to_string();
+    for (_, next) in lines.iter().skip(from).take(2) {
+        let letters: Vec<char> = next.chars().filter(|c| c.is_alphabetic()).collect();
+        let capitals = letters.iter().filter(|c| c.is_uppercase()).count() * 10 >= letters.len() * 8;
+        if out.ends_with('?') || (capitals_only && !capitals) || is_verse_terminator(next) || citation_ref(next).is_some() || ANSWER.is_match(next) || BEGIN_MARK.is_match(next) || ROMAN_HEAD.is_match(next) {
+            break;
+        }
+        out.push(' ');
+        out.push_str(next);
+    }
+    out
+}
+
+/// A line opening a new part of the lesson, as (section number, heading).
+fn section_start(line: &str, current: u32) -> Option<(u32, String)> {
+    if current == CONCLUSION {
+        return None;
+    }
+    if let Some(c) = CONCLUSION_MARK.captures(line) {
+        return Some((CONCLUSION, c[1].trim().to_string()));
+    }
+    if let Some(c) = BEGIN_MARK.captures(line) {
+        // Said again later, it is a word in the lesson, not a new part.
+        return (current == 0).then(|| (1, c.get(1).map_or("", |m| m.as_str()).trim().to_string()));
+    }
+    let c = ROMAN_HEAD.captures(line)?;
+    if citation_ref(line).is_some() {
+        return None;
+    }
+    // After the first heading the parts go in order: OCR often misreads III as II.
+    let number = if current == 0 { roman_value(&c[1]) + 1 } else { current + 1 };
+    Some((number, c[2].trim().to_string()))
+}
 
 /// Known translations: every alias maps to a canonical short code.
 static VERSIONS: &[(&str, &[&str])] = &[
@@ -469,10 +543,33 @@ pub fn parse(pages: &[String], file_name: &str) -> ParsedLesson {
         }
     }
 
-    // Verses.
+    // Verses, and the part of the lesson and question each one is printed under.
+    // Headings are looked for only after the objectives, which are numbered too.
+    let outline_from = obj_at.map_or(0, |o| o + 1);
+    let (mut section, mut question) = (0u32, String::new());
     let mut i = 0;
     while i < lines.len() {
         let (page, line) = &lines[i];
+        if i >= outline_from {
+            if let Some((number, heading)) = section_start(line, section) {
+                // A heading on its own line ("PASIMULA:") has nothing to continue.
+                let heading = if heading.is_empty() { heading } else { with_continuation(&lines, i + 1, &heading, true) };
+                section = number;
+                question.clear();
+                lesson.outline.push(Section { number, heading: clip(&heading), questions: vec![] });
+                i += 1;
+                continue;
+            }
+            if let Some(c) = QUESTION.captures(line) {
+                question = clip(&with_continuation(&lines, i + 1, &c[1], false));
+                if lesson.outline.last().is_none_or(|s| s.number != section) {
+                    lesson.outline.push(Section { number: section, ..Default::default() });
+                }
+                if let Some(s) = lesson.outline.last_mut() {
+                    s.questions.push(question.clone());
+                }
+            }
+        }
         let Some((reference, rest)) = citation_ref(line) else {
             i += 1;
             continue;
@@ -509,6 +606,8 @@ pub fn parse(pages: &[String], file_name: &str) -> ParsedLesson {
             raw: collected.join("\n"),
             text: join_verse_lines(&collected),
             page: *page,
+            section,
+            question: question.clone(),
         });
     }
 
@@ -619,6 +718,7 @@ mod tests {
         // The verse text crosses a page break and must exclude the running header.
         assert!(l.verses[1].text.starts_with(text(want, "secondVerseStart")), "{}", l.verses[1].text);
         assert!(l.verses[1].text.ends_with(text(want, "secondVerseEnd")), "{}", l.verses[1].text);
+        assert_sections_follow_the_objectives(&l);
         for v in &l.verses {
             assert!(!v.text.is_empty(), "empty text for {}", v.ref_printed);
             assert!(v.text.len() < 1200, "runaway capture for {}: {}", v.ref_printed, v.text);
@@ -644,10 +744,23 @@ mod tests {
         }
         assert!(l.verses[0].text.starts_with(text(want, "firstVerseStart")), "{}", l.verses[0].text);
         assert!(l.verses[0].text.ends_with(text(want, "firstVerseEnd")), "{}", l.verses[0].text);
+        assert_sections_follow_the_objectives(&l);
         for v in &l.verses {
             assert!(!v.text.is_empty(), "empty text for {}", v.ref_printed);
             assert!(v.text.len() < 1200, "runaway capture for {}: {}", v.ref_printed, v.text);
         }
+    }
+
+    /// The sample lessons teach objective n in part n: the beginning, then I., II. and III.
+    fn assert_sections_follow_the_objectives(l: &ParsedLesson) {
+        let numbers: Vec<u32> = l.outline.iter().map(|s| s.number).collect();
+        for n in 1..=l.objectives.len() as u32 {
+            assert!(numbers.contains(&n), "part {n} not found: {numbers:?}");
+            assert!(l.verses.iter().any(|v| v.section == n), "no verse in part {n}");
+        }
+        let order: Vec<u32> = l.verses.iter().map(|v| v.section).collect();
+        assert!(order.windows(2).all(|w| w[0] <= w[1]), "parts out of order: {order:?}");
+        assert!(l.outline.iter().filter(|s| (1..=4).contains(&s.number)).all(|s| s.number == 1 || !s.heading.is_empty()), "a numbered part has no heading");
     }
 
     #[test]
@@ -661,6 +774,61 @@ mod tests {
         assert_eq!(l.verses[0].canonical_key, "52.5:1-6");
         assert_eq!(l.verses[0].text, "");
         assert_eq!(l.verses[1].version, "MB2012");
+    }
+
+    /// A made-up lesson laid out like the real ones: four objectives, an opening, the beginning,
+    /// then parts I to III with questions, the last one misread by OCR as a second II.
+    fn outlined_lesson() -> String {
+        [
+            "Isyu", "Ang pagbabantay ay nakakalimutan ng marami.",
+            "Mga Layunin", "1. Maunawaan ang tawag sa pagbabantay.", "2. Makilala ang mga bantay na tapat.",
+            "3. Malaman ang tungkulin ng bantay.", "4. Maitaguyod ang pagbabantay sa gabi.",
+            "PANIMULA", "Isang pambungad na salita.",
+            "PASIMULA:", "T. Ano ang tawag sa mga bantay?", "S. Sila ay tinawag ..... Juan 3:5 NIRV", "Ang mga bantay ay gising sa magdamag.",
+            "I. SINO ANG MGA BANTAY NA TAPAT", "SA BAYAN NG DIYOS",
+            "T. Sino ang tapat", "na bantay ayon sa aklat?", "S. Ang tapat ..... Juan 3:6 NIRV", "Ang ilaw ng lampara ay hindi namamatay.",
+            "II. ANO ANG TUNGKULIN NG BANTAY", "Prose that follows the heading.",
+            "Juan 3:7 NIRV", "Ang bantay ay sumisigaw sa pintuan.",
+            "II. PAPAANO MAITATAGUYOD ANG PAGBABANTAY",
+            "T. Paano tayo magbabantay?", "S. Sa gabi ..... Juan 3:8 NIRV", "Ang bantay ay hindi natutulog.",
+            "KONKLUSYON", "Juan 3:9 NIRV", "Ang wakas ng bantay.",
+        ]
+        .join("\n")
+    }
+
+    #[test]
+    fn each_verse_knows_the_part_of_the_lesson_and_the_question_it_is_under() {
+        let l = parse(&[outlined_lesson()], "x.pdf");
+        assert_eq!(l.objectives.len(), 4);
+        let parts: Vec<(&str, u32, &str)> = l.verses.iter().map(|v| (v.canonical_key.as_str(), v.section, v.question.as_str())).collect();
+        assert_eq!(
+            parts,
+            vec![
+                ("43.3:5", 1, "Ano ang tawag sa mga bantay?"),
+                ("43.3:6", 2, "Sino ang tapat na bantay ayon sa aklat?"),
+                ("43.3:7", 3, ""),
+                ("43.3:8", 4, "Paano tayo magbabantay?"),
+                ("43.3:9", CONCLUSION, ""),
+            ]
+        );
+        let numbers: Vec<u32> = l.outline.iter().map(|s| s.number).collect();
+        assert_eq!(numbers, vec![1, 2, 3, 4, CONCLUSION]);
+        assert_eq!(l.outline[1].heading, "SINO ANG MGA BANTAY NA TAPAT SA BAYAN NG DIYOS");
+        assert_eq!(l.outline[2].heading, "ANO ANG TUNGKULIN NG BANTAY", "prose is not part of a heading");
+        assert_eq!(l.outline[0].questions, vec!["Ano ang tawag sa mga bantay?"]);
+        assert_eq!(l.verses[0].text, "Ang mga bantay ay gising sa magdamag.");
+    }
+
+    #[test]
+    fn a_lesson_without_the_beginning_heading_starts_at_its_numeral() {
+        let page = "I. THE FIRST PART\nJuan 3:5 NIRV\nSome words.\nII. THE SECOND PART\nJuan 3:6 NIRV\nMore words.".to_string();
+        let sections: Vec<u32> = parse(&[page], "x.pdf").verses.iter().map(|v| v.section).collect();
+        assert_eq!(sections, vec![2, 3]);
+    }
+
+    #[test]
+    fn roman_numerals() {
+        assert_eq!([("I", 1), ("II", 2), ("III", 3), ("IV", 4), ("V", 5), ("VI", 6), ("IX", 9), ("X", 10)].map(|(r, _)| roman_value(r)), [1, 2, 3, 4, 5, 6, 9, 10]);
     }
 
     #[test]

@@ -39,7 +39,8 @@ export interface Verse {
   status: 'unverified' | 'verified';
   ref_note: string;
   verified_at: string | null;
-  sources: { lesson_id: string; page: number }[];
+  /** Where it is printed in each lesson: the part of the lesson (see partName) and the question it answers. */
+  sources: { lesson_id: string; page: number; section: number; question: string }[];
   /** Where an imported verse came from, such as "Translations.xlsx, row 17". Empty otherwise. */
   import_source: string;
 }
@@ -68,6 +69,17 @@ export interface Suggestion {
   matched_terms: string[];
   verse_ids: string[];
   meaning: boolean;
+  /** The lessons, and the part of each, where it was found for this objective or topic. */
+  from_lessons: LessonMatch[];
+}
+
+export interface LessonMatch {
+  lesson_id: string;
+  title: string;
+  file_name: string;
+  section: number;
+  objective: string;
+  question: string;
 }
 
 export interface VerseContext {
@@ -221,8 +233,9 @@ export const api = {
   status: () => request<{ last_backup_at: string | null; has_saved_sheet: boolean }>('/status'),
 
   aiStatus: () => request<{ available: boolean; reachable: boolean; model: string; meaning: boolean }>('/ai/status'),
-  aiSuggest: (issue: string, objective: string, count?: number) =>
-    request<{ log_id: string; suggestions: Suggestion[]; meaning: boolean }>('/ai/suggest', json('POST', { issue, objective, count })),
+  /** `exclude` leaves out verses already shown, by canonical key, to suggest more. */
+  aiSuggest: (issue: string, objective: string, count?: number, exclude: string[] = []) =>
+    request<{ log_id: string; suggestions: Suggestion[]; meaning: boolean }>('/ai/suggest', json('POST', { issue, objective, count, exclude })),
   aiNotes: (logId: string) =>
     request<{ available: boolean; notes: Record<string, string>; context: Record<string, VerseContext>; scripture: Record<string, ScriptureContext>; model?: string }>('/ai/notes', json('POST', { log_id: logId })),
 

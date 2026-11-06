@@ -346,3 +346,23 @@ Added at the project owner's choice: a verse review queue, editable AI context, 
 **A bug was fixed: deleting a lesson deleted every unverified imported verse.** The cleanup kept only verses a lesson or lecture still used, and imported verses are used by neither. It now leaves imported verses alone. No lesson had been deleted since the import, so no data was lost.
 
 **Test results:** Rust 90 of 90, Playwright 153 of 153 in one full run. An earlier full run failed the 400-lesson speed test (366 ms against 200). Run alone, it failed twice and then passed four times with no code change between, and the previous code passed twice. No cause in the change was found, but one is not ruled out.
+
+## 18. Verses for each objective (6 November 2026)
+
+**Asked for:** 3 to 5 verses per objective in the Lesson Assistant, a way to ask for more when none suit, and Lesson Library verses chosen by how a lesson is built. A lesson teaches objective 1 in the beginning (Pasimula or Introduction), objective 2 in I., objective 3 in II. and so on, and each part asks questions with verses under them. It must work across many lessons, an issue or topic alone should draw on whole lessons, and each suggestion should name the lesson file it came from.
+
+**What the parser now records.** Each lesson verse keeps the part it is printed in and the question it answers (`lesson_verses.section`, `lesson_verses.question`), and each lesson keeps its parts' headings and questions (`lessons.outline`). After the first numbered heading, parts are numbered in order rather than by the numeral printed, because OCR read "III." as a second "II." in the English sample. Both private sample lessons divide into parts 1 to 4 in order. Lessons already stored have their parts read from their saved text when the vault opens, and lessons in an older backup when it is restored. Verses are matched back in order by reference, falling back to chapter and verse when a book number was corrected.
+
+**How Lesson Library verses are chosen** (`backend/src/outline.rs`):
+- For an objective: it is compared with every lesson's objective n, together with part n's heading and questions. Only the verses of a part that matches are suggested, those under a matching question first. Rare words count for more, words found in almost every objective ("maunawaan", "kapatid") are ignored, a single shared word with a longer objective is not a match, and a word of five or more letters also matches a longer word containing it ("bantay" in "pagbabantay"). A matching issue favours lessons about the same issue.
+- A lesson with no objectives, such as a pastoral or outline-only lesson, cannot be divided this way, so it is matched as a whole.
+- For an issue or topic alone, and for "Best matches overall": whole lessons are compared, using title, issue, objectives, headings and questions. Verses come from across each matching lesson: the first verse of each part before a second verse of any part.
+- This replaces the earlier weak signal, which counted every verse of any lesson containing a query word anywhere.
+
+**Ranking.** Matching lesson parts, verse wording and meaning are merged by rank. A close match with a lesson's part counts for up to three times a wording match, because the lesson chose that verse for that purpose. Verse Library verses are still matched by wording and meaning.
+
+**Suggest more.** Each objective has a Suggest more button. It sends the verses already shown (`exclude`), and gets the next matches until none are left.
+
+**Shown with each suggestion:** for each lesson it was found in (up to three), the lesson title, its PDF file name, the objective and part ("Objective 2 · I."), the lesson's own objective and the question it answers. The lesson check dialog shows each verse's objective and part, so a wrong grouping can be caught.
+
+**Not done:** the meaning model is not used to compare objectives with lesson parts, only words are. Tagalog word forms that change inside the root are not matched.

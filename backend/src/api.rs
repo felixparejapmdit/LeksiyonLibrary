@@ -1,4 +1,4 @@
-use crate::{ai, backup, export, parser, semantic, verse_import, AppState};
+use crate::{ai, backup, export, outline, parser, semantic, verse_import, AppState};
 use axum::{
     body::Body,
     extract::{DefaultBodyLimit, FromRequestParts, Multipart, Path, Query, State},
@@ -11,7 +11,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::{HashMap, HashSet}, sync::Arc};
 
 pub(crate) type S = Arc<AppState>;
 
@@ -218,9 +218,9 @@ async fn upload_lesson(State(s): State<S>, u: User, mut mp: Multipart) -> ApiRes
         let tx = c.transaction()?;
         let ts = now();
         tx.execute(
-            "INSERT INTO lessons (id,user_id,title,category,language,lesson_date,date_label,year,location,author,code,file_name,sha256,byte_size,page_count,source_kind,content,issue,objectives,created_at,needs_check)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,1)",
-            params![id2, uid, parsed.title, parsed.category, parsed.language, parsed.lesson_date, parsed.date_label, parsed.year, parsed.location, parsed.author, parsed.code, safe_name, sha, byte_size, page_count, source_kind, parsed.content, parsed.issue, json!(parsed.objectives).to_string(), ts],
+            "INSERT INTO lessons (id,user_id,title,category,language,lesson_date,date_label,year,location,author,code,file_name,sha256,byte_size,page_count,source_kind,content,issue,objectives,created_at,needs_check,outline)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,1,?21)",
+            params![id2, uid, parsed.title, parsed.category, parsed.language, parsed.lesson_date, parsed.date_label, parsed.year, parsed.location, parsed.author, parsed.code, safe_name, sha, byte_size, page_count, source_kind, parsed.content, parsed.issue, json!(parsed.objectives).to_string(), ts, json!(parsed.outline).to_string()],
         )?;
         for (ordinal, v) in parsed.verses.iter().enumerate() {
             let existing: Option<String> = tx
@@ -243,8 +243,8 @@ async fn upload_lesson(State(s): State<S>, u: User, mut mp: Multipart) -> ApiRes
                 }
             };
             tx.execute(
-                "INSERT INTO lesson_verses VALUES (?1,?2,?3,?4,?5,?6)",
-                params![new_id(), uid, id2, verse_id, v.page, ordinal as i64],
+                "INSERT INTO lesson_verses (id,user_id,lesson_id,verse_id,page,ordinal,section,question) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+                params![new_id(), uid, id2, verse_id, v.page, ordinal as i64, v.section, v.question],
             )?;
         }
         reconcile_with_pair(&tx, &uid, &id2)?;
@@ -531,10 +531,14 @@ async fn delete_folder(State(s): State<S>, u: User, Path(id): Path<String>) -> A
 fn verses_for(c: &Connection, user_id: &str) -> rusqlite::Result<Vec<Value>> {
     let mut sources: HashMap<String, Vec<Value>> = HashMap::new();
     {
-        let mut st = c.prepare("SELECT lv.verse_id, lv.lesson_id, lv.page FROM lesson_verses lv WHERE lv.user_id=?1")?;
-        for row in st.query_map([user_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)))? {
-            let (v, l, p) = row?;
-            sources.entry(v).or_default().push(json!({ "lesson_id": l, "page": p }));
+        let mut st = c.prepare("SELECT lv.verse_id, lv.lesson_id, lv.page, lv.section, lv.question FROM lesson_verses lv WHERE lv.user_id=?1 ORDER BY lv.ordinal")?;
+        for row in st.query_map([user_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, i64>(3)?, r.get::<_, String>(4)?)))? {
+            let (v, l, p, section, question) = row?;
+            let list = sources.entry(v).or_default();
+            // Printed twice in one lesson, it is listed once, where it first appears.
+            if !list.iter().any(|x| x["lesson_id"] == l.as_str()) {
+                list.push(json!({ "lesson_id": l, "page": p, "section": section, "question": question }));
+            }
         }
     }
     let mut st = c.prepare(
@@ -931,6 +935,9 @@ struct SuggestBody {
     objective: String,
     /// Verses wanted for this one objective (3 to 5). Absent means best matches overall.
     count: Option<usize>,
+    /// Verses already shown, by canonical key, when more are asked for.
+    #[serde(default)]
+    exclude: Vec<String>,
 }
 
 fn contexts_for(c: &Connection, user_id: &str) -> rusqlite::Result<serde_json::Map<String, Value>> {
@@ -952,15 +959,26 @@ async fn ai_suggest(State(s): State<S>, u: User, Json(b): Json<SuggestBody>) -> 
     let embed_model = s.config.embed_model.clone();
     let res = with_db(&s, move |c| {
         let limit = b.count.map_or(8, |n| n.clamp(3, 5));
-        let keyword = match b.count {
-            Some(_) => ai::retrieve_for_objective(c, &u.id, &b.issue, &b.objective, limit)?,
-            None => ai::retrieve(c, &u.id, &b.issue, &b.objective, limit)?,
+        let exclude: HashSet<String> = b.exclude.iter().take(500).cloned().collect();
+        // Enough of each list to still fill the places once the verses already shown are left out.
+        let wanted = limit + exclude.len();
+        let (keyword, lessons) = match b.count {
+            // For one objective, lessons give the verses of their part that teaches the same thing.
+            Some(_) if !b.objective.trim().is_empty() => (
+                ai::retrieve_for_objective(c, &u.id, &b.issue, &b.objective, wanted)?,
+                outline::for_objective(c, &u.id, &b.issue, &b.objective, wanted)?,
+            ),
+            // For an issue or topic alone, they give verses from across each matching lesson.
+            _ => (
+                ai::retrieve(c, &u.id, &b.issue, &b.objective, wanted)?,
+                outline::for_topic(c, &u.id, &format!("{} {}", b.issue, b.objective), wanted)?,
+            ),
         };
         let related = match &vector {
-            Some(v) => semantic::rank(c, &u.id, &embed_model, v, limit)?,
+            Some(v) => semantic::rank(c, &u.id, &embed_model, v, wanted)?,
             None => vec![],
         };
-        let suggestions = ai::merge_meaning(c, &u.id, keyword, &related, limit)?;
+        let suggestions = ai::fuse(c, &u.id, lessons, keyword, &related, &exclude, limit)?;
         let id = new_id();
         let ids: Vec<&String> = suggestions.iter().flat_map(|x| x.verse_ids.iter()).collect();
         c.execute(
@@ -1610,7 +1628,13 @@ async fn post_restore(State(s): State<S>, u: User, mut mp: Multipart) -> ApiResu
         .map_err(|_| ApiError::bad("The backup could not be read."))?
         .map_err(ApiError::bad)?;
     let state = s.clone();
-    let count = with_db(&s, move |c| backup::restore(c, &state.vault, &u.id, &archive).map_err(ApiError::bad)).await?;
+    let count = with_db(&s, move |c| {
+        let count = backup::restore(c, &state.vault, &u.id, &archive).map_err(ApiError::bad)?;
+        // A backup made before lessons' parts were recorded has them read now.
+        outline::backfill(c)?;
+        Ok(count)
+    })
+    .await?;
     semantic::kick(s.clone());
     Ok(Json(json!({ "ok": true, "lessons": count })))
 }

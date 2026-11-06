@@ -5,6 +5,7 @@ mod books;
 mod db;
 mod export;
 mod language;
+mod outline;
 mod parser;
 mod semantic;
 mod vault;

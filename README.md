@@ -57,7 +57,11 @@ A verse that no lesson cites any more, such as one you verified before deleting 
 
 ## Lesson Assistant
 
-Write one objective per line and choose 3, 4 or 5 verses per objective. Verses come only from your two libraries, shown exactly as stored. If fewer match, the app says so instead of adding unrelated verses.
+Write one objective per line and choose 3, 4 or 5 verses per objective. Verses come only from your two libraries, shown exactly as stored. If fewer match, the app says so instead of adding unrelated verses. If none of them suit you, **Suggest more** brings the next matches for that objective, never repeating one already shown, until nothing else matches.
+
+Verses from the Lesson Library follow how a lesson is built. A lesson teaches its first objective in the beginning (Pasimula or Introduction), its second in part I., its third in II., and so on, and each part asks questions with verses under them. Your objective is compared with every lesson's own objectives, together with each part's heading and questions, and only the verses printed in a part that matches are suggested, those answering a matching question first. One objective can draw verses from several lessons. If you enter only an issue or topic, it is compared with whole lessons instead, and their verses come from across each lesson. Each such suggestion shows the lesson, its PDF file, the objective and part it was found under, and the question it answers there. Verse Library verses are matched by their wording.
+
+When you check an uploaded lesson, each verse shows the objective and part it was read under, so a wrong grouping can be caught.
 
 With the local AI running, each verse also has details, folded away until you open them: who is speaking, a **chapter context**, a **book context** and a **historical and political context**. These are the model's reading, not scripture, and can be wrong, so they are labelled until you review or correct them. Each context is written once and shared by all its verses, so a correction applies everywhere and later searches are quicker. Your wording is kept, later AI runs leave it alone, and it never changes the verse.
 

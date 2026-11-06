@@ -28,15 +28,21 @@ const STOPWORDS: &[&str] = &[
     "kaniya", "kanilang", "kaniyang", "ating", "aming", "inyong", "iyong", "may", "mga",
 ];
 
-pub fn query_terms(input: &str) -> Vec<String> {
+/// The words of a text that carry its meaning, each once, in order.
+pub fn content_words(input: &str) -> Vec<String> {
     let mut seen = HashSet::new();
     input
         .split(|c: char| !c.is_alphanumeric() && c != '-')
         .map(|w| w.trim_matches('-').to_lowercase())
         .filter(|w| w.chars().count() >= 3 && !STOPWORDS.contains(&w.as_str()))
         .filter(|w| seen.insert(w.clone()))
-        .take(24)
         .collect()
+}
+
+pub fn query_terms(input: &str) -> Vec<String> {
+    let mut terms = content_words(input);
+    terms.truncate(24);
+    terms
 }
 
 /// Builds a safe FTS5 MATCH expression from free text.
@@ -58,6 +64,8 @@ pub struct Suggestion {
     pub verse_ids: Vec<String>,
     /// Found because it means something similar, not because it shares words.
     pub meaning: bool,
+    /// The lessons, and the part of each, where it was found for this objective or topic.
+    pub from_lessons: Vec<crate::outline::LessonMatch>,
 }
 
 pub fn retrieve(conn: &Connection, user_id: &str, issue: &str, objective: &str, limit: usize) -> rusqlite::Result<Vec<Suggestion>> {
@@ -83,20 +91,7 @@ pub fn retrieve(conn: &Connection, user_id: &str, issue: &str, objective: &str, 
             *score = score.max(3.0 * -bm);
         }
     }
-    // Verses cited by lessons about the same topic are a weaker signal.
-    {
-        let mut stmt = conn.prepare(
-            "SELECT DISTINCT v.canonical_key, bm25(lessons_fts)
-             FROM lessons_fts JOIN lessons l ON l.seq = lessons_fts.rowid
-             JOIN lesson_verses lv ON lv.lesson_id = l.id JOIN verses v ON v.id = lv.verse_id
-             WHERE lessons_fts MATCH ?1 AND l.user_id = ?2",
-        )?;
-        let rows = stmt.query_map(params![q, user_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?)))?;
-        for row in rows {
-            let (key, bm) = row?;
-            *scores.entry(key).or_default() += 0.5 * -bm;
-        }
-    }
+    // Which lessons a verse belongs with is decided by the lesson's parts: see outline.rs.
 
     let mut ranked: Vec<(String, f64)> = scores.into_iter().collect();
     ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal).then(a.0.cmp(&b.0)));
@@ -126,29 +121,50 @@ fn build_suggestion(conn: &Connection, user_id: &str, key: &str, score: f64, ter
         matched_terms: terms.iter().filter(|t| haystack.contains(t.as_str())).cloned().collect(),
         verse_ids: rows.iter().map(|r| r.0.clone()).collect(),
         meaning,
+        from_lessons: vec![],
     }))
 }
 
-/// Combines keyword and meaning results, ranking well in either list counting for more
-/// than the raw scores, which are not comparable with each other.
-pub fn merge_meaning(conn: &Connection, user_id: &str, keyword: Vec<Suggestion>, meaning: &[(String, f32)], limit: usize) -> rusqlite::Result<Vec<Suggestion>> {
+/// Combines the matching lesson parts with keyword and meaning results, leaving out verses
+/// already shown. Ranking well in any list counts for more than the raw scores, which are not
+/// comparable with each other. A close match with a lesson's part counts for up to three
+/// times a keyword match, because the lesson itself chose that verse for that purpose.
+pub fn fuse(
+    conn: &Connection,
+    user_id: &str,
+    lessons: Vec<crate::outline::LessonHit>,
+    keyword: Vec<Suggestion>,
+    meaning: &[(String, f32)],
+    exclude: &HashSet<String>,
+    limit: usize,
+) -> rusqlite::Result<Vec<Suggestion>> {
     const DAMPING: f64 = 60.0;
     let mut fused: HashMap<String, f64> = HashMap::new();
-    for (i, s) in keyword.iter().enumerate() {
-        *fused.entry(s.canonical_key.clone()).or_default() += 1.0 / (DAMPING + i as f64 + 1.0);
-    }
-    for (i, (key, _)) in meaning.iter().enumerate() {
-        *fused.entry(key.clone()).or_default() += 1.0 / (DAMPING + i as f64 + 1.0);
+    let lists: [Vec<(String, f64)>; 3] = [
+        lessons.iter().map(|h| (h.canonical_key.clone(), 1.0 + 2.0 * h.score.min(1.0))).collect(),
+        keyword.iter().map(|s| (s.canonical_key.clone(), 1.0)).collect(),
+        meaning.iter().map(|(k, _)| (k.clone(), 1.0)).collect(),
+    ];
+    for list in lists {
+        for (rank, (key, weight)) in list.into_iter().filter(|(k, _)| !exclude.contains(k)).enumerate() {
+            *fused.entry(key).or_default() += weight / (DAMPING + rank as f64 + 1.0);
+        }
     }
     let mut order: Vec<(String, f64)> = fused.into_iter().collect();
     order.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal).then(a.0.cmp(&b.0)));
     order.truncate(limit);
     let mut by_key: HashMap<String, Suggestion> = keyword.into_iter().map(|s| (s.canonical_key.clone(), s)).collect();
+    let mut sources: HashMap<String, Vec<crate::outline::LessonMatch>> = lessons.into_iter().map(|h| (h.canonical_key, h.sources)).collect();
+    let in_meaning: HashSet<&String> = meaning.iter().map(|(k, _)| k).collect();
     let mut out = Vec::new();
     for (key, score) in order {
-        match by_key.remove(&key) {
-            Some(s) => out.push(s),
-            None => out.extend(build_suggestion(conn, user_id, &key, score, &[], true)?),
+        let found = match by_key.remove(&key) {
+            Some(s) => Some(s),
+            None => build_suggestion(conn, user_id, &key, score, &[], in_meaning.contains(&key) && !sources.contains_key(&key))?,
+        };
+        if let Some(mut s) = found {
+            s.from_lessons = sources.remove(&key).unwrap_or_default();
+            out.push(s);
         }
     }
     Ok(out)
@@ -510,13 +526,13 @@ mod tests {
         let c = library();
         let keyword = retrieve(&c, "u", "", "election", 5).unwrap();
         assert!(keyword.iter().all(|s| !s.meaning));
-        let merged = merge_meaning(&c, "u", keyword.clone(), &[("1.1:3".to_string(), 0.9), (keyword[0].canonical_key.clone(), 0.8)], 5).unwrap();
+        let merged = fuse(&c, "u", vec![], keyword.clone(), &[("1.1:3".to_string(), 0.9), (keyword[0].canonical_key.clone(), 0.8)], &HashSet::new(), 5).unwrap();
         assert_eq!(merged[0].canonical_key, keyword[0].canonical_key, "found both ways ranks first");
         let added = merged.iter().find(|s| s.canonical_key == "1.1:3").unwrap();
         assert!(added.meaning && added.matched_terms.is_empty());
         assert!(!merged[0].meaning);
-        assert!(merge_meaning(&c, "u", vec![], &[("1.1:3".to_string(), 0.9)], 5).unwrap().len() == 1);
-        assert_eq!(merge_meaning(&c, "u", keyword, &[("1.1:3".to_string(), 0.9)], 1).unwrap().len(), 1);
+        assert!(fuse(&c, "u", vec![], vec![], &[("1.1:3".to_string(), 0.9)], &HashSet::new(), 5).unwrap().len() == 1);
+        assert_eq!(fuse(&c, "u", vec![], keyword, &[("1.1:3".to_string(), 0.9)], &HashSet::new(), 1).unwrap().len(), 1);
     }
 
     #[test]
