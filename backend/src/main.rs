@@ -5,6 +5,7 @@ mod books;
 mod db;
 mod export;
 mod language;
+mod models;
 mod outline;
 mod parser;
 mod semantic;
@@ -32,7 +33,6 @@ pub struct Config {
     pub ollama_url: String,
     pub ollama_model: String,
     pub embed_model: String,
-    pub sheets_url: String,
 }
 
 pub struct AppState {
@@ -42,6 +42,9 @@ pub struct AppState {
     pub owner_id: String,
     pub vault: vault::Vault,
     pub indexing: AtomicBool,
+    /// The model download started from Settings, if any.
+    pub pull: Mutex<Option<models::Pull>>,
+    pub pull_task: Mutex<Option<tokio::task::AbortHandle>>,
 }
 
 const CSP: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; \
@@ -86,7 +89,6 @@ async fn main() {
         // bge-m3 because it separates related from unrelated questions in Tagalog as well as
         // English. paraphrase-multilingual, tested first, could not do so for Tagalog.
         embed_model: env("LV_OLLAMA_EMBED_MODEL", "bge-m3"),
-        sheets_url: env("LV_SHEETS_URL", "https://docs.google.com"),
     };
 
     // There is no sign-in, so the app must never be reachable from other computers.
@@ -131,7 +133,7 @@ async fn main() {
     let data_shown = config.data_dir.display().to_string();
     let spa = ServeDir::new(&config.static_dir).fallback(ServeFile::new(index));
 
-    let state = Arc::new(AppState { conn: Mutex::new(conn), config, http, owner_id, vault, indexing: AtomicBool::new(false) });
+    let state = Arc::new(AppState { conn: Mutex::new(conn), config, http, owner_id, vault, indexing: AtomicBool::new(false), pull: Mutex::new(None), pull_task: Mutex::new(None) });
 
     semantic::kick(state.clone());
 

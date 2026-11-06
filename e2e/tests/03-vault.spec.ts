@@ -68,22 +68,20 @@ test('All Archives, the Lesson Library and Pastoral Visits each list their own l
   await expect(page.getByTestId('list-title')).toHaveText('Lesson Library');
   await expect(page.getByTestId('item-count')).toHaveText(`${lessons.length - visits} items`);
   await expect(page.getByTestId('tab-pastoral')).toHaveCount(0);
-  await expect(page.getByTestId('pastoral-upload')).toHaveCount(0);
+  await expect(page.getByTestId('pv-drop')).toHaveCount(0);
   await page.getByTestId('tab-weekend').click();
   await expect(page.getByTestId('list-title')).toHaveText('Weekend');
 
-  // Pastoral Visits lists only them, with its own upload.
+  // Pastoral Visits lists only them, with its own place to drop them.
   await page.getByTestId('side-pv').click();
   await expect(page.getByTestId('list-title')).toHaveText('Pastoral Visits');
   await expect(page.getByTestId('item-count')).toHaveText(`${visits} ${visits === 1 ? 'item' : 'items'}`);
   await expect(page.getByTestId('category-tabs')).toHaveCount(0);
-  await page.getByTestId('pastoral-upload').click();
-  await expect(page.getByTestId('upload-dialog')).toHaveAccessibleName('Upload Pastoral Visit PDF');
-  await expect(page.getByTestId('upload-target')).toHaveText('Drop pastoral visit PDFs here or browse your device');
-  await page.getByTestId('upload-done').click();
+  await expect(page.getByTestId('pv-drop')).toContainText('Drop pastoral visit PDFs here');
   // The header's upload goes to the list that is open.
   await page.getByTestId('header-upload').click();
   await expect(page.getByTestId('upload-dialog')).toHaveAccessibleName('Upload Pastoral Visit PDF');
+  await expect(page.getByTestId('upload-target')).toHaveText('Drop pastoral visit PDFs here or browse your device');
   await page.getByTestId('upload-done').click();
 
   // All Archives brings them together again.

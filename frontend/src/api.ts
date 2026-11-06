@@ -170,6 +170,27 @@ async function fetchFile(path: string, body: unknown, fallbackName: string) {
   return { blob: await res.blob(), name };
 }
 
+/** A model download started from Settings, or the last one that ended. */
+export interface ModelPull {
+  model: string;
+  step: number;
+  steps: number;
+  status: string;
+  completed: number;
+  total: number;
+  done: boolean;
+  error: string | null;
+}
+
+export interface AiStatus {
+  available: boolean;
+  reachable: boolean;
+  model: string;
+  meaning: boolean;
+  embed_model: string;
+  pull: ModelPull | null;
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -202,7 +223,7 @@ export const api = {
     if (target === 'pastoral') form.set('category', 'pastoral');
     form.set('pages', JSON.stringify(pages));
     form.set('file', file, file.name);
-    return request<{ lesson: Lesson; verse_count: number }>('/lessons', { method: 'POST', body: form });
+    return request<{ lesson: Lesson; verse_count: number; unread: { page: number; text: string }[] }>('/lessons', { method: 'POST', body: form });
   },
   patchLesson: (id: string, patch: Record<string, string | string[] | boolean>) => request<Lesson>(`/lessons/${id}`, json('PATCH', patch)),
   deleteLesson: (id: string) => request(`/lessons/${id}`, { method: 'DELETE' }),
@@ -222,7 +243,6 @@ export const api = {
     form.set('file', file, file.name);
     return request<ImportReport>('/verses/import', { method: 'POST', body: form });
   },
-  importGoogleSheet: (sheet: string, commit: boolean) => request<ImportReport>('/verses/import/google', json('POST', { sheet, commit })),
   rowsToFix: () => request<RowToFix[]>('/verses/import/rows'),
   fixRow: (id: string, row: RowCorrection) => request<RowToFix[]>(`/verses/import/rows/${id}`, json('POST', row)),
   dismissRow: (id: string) => request<RowToFix[]>(`/verses/import/rows/${id}`, { method: 'DELETE' }),
@@ -237,9 +257,13 @@ export const api = {
   scriptureContexts: () => request<Record<string, ScriptureContext>>('/scripture-context'),
   saveScriptureContext: (scope: string, context: string) => request<Record<string, ScriptureContext>>('/scripture-context', json('POST', { scope, context })),
   searchMeaning: (q: string) => request<{ available: boolean; keys: string[] }>(`/search/meaning?q=${encodeURIComponent(q)}`),
-  status: () => request<{ last_backup_at: string | null; has_saved_sheet: boolean }>('/status'),
+  status: () => request<{ last_backup_at: string | null }>('/status'),
 
-  aiStatus: () => request<{ available: boolean; reachable: boolean; model: string; meaning: boolean }>('/ai/status'),
+  aiStatus: () => request<AiStatus>('/ai/status'),
+  /** Has Ollama download and install whichever of the app's models it does not have yet. */
+  aiInstall: () => request<{ pull: ModelPull | null }>('/ai/pull', { method: 'POST' }),
+  aiInstallProgress: () => request<{ pull: ModelPull | null }>('/ai/pull'),
+  aiCancelInstall: () => request<{ pull: ModelPull | null }>('/ai/pull', { method: 'DELETE' }),
   /** `exclude` leaves out verses already shown, by canonical key, to suggest more. */
   aiSuggest: (issue: string, objective: string, count?: number, exclude: string[] = []) =>
     request<{ log_id: string; suggestions: Suggestion[]; meaning: boolean }>('/ai/suggest', json('POST', { issue, objective, count, exclude })),

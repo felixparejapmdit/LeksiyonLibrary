@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import AdmZip from 'adm-zip';
 import type { Page } from '@playwright/test';
-import { test, expect, setAiMode, STUB, withEmptyVault, TEST_PASSPHRASE, fillObjectives } from '../support/fixtures';
+import { test, expect, setAiMode, withEmptyVault, TEST_PASSPHRASE, fillObjectives } from '../support/fixtures';
 import { makePdf } from '../support/pdf';
 import { xlsx } from '../support/xlsx';
 
@@ -23,12 +23,6 @@ const ROWS: string[][] = [
   ['NIV', 'John', '1', '7', `9${tl('mali')}`], // number does not match the verse
   ['TLB', 'Peter', '2', '21', tl('walang bilang')], // which Peter?
 ];
-
-const SHEET = '1abcDEFghiJKLmnoPQRstuVWXyz_0123456789-abcd';
-const LINK = `https://docs.google.com/spreadsheets/d/${SHEET}/edit?gid=0#gid=0`;
-
-const csv = (rows: string[][]) => rows.map((r) => r.map((c) => `"${c.replace(/"/g, '""')}"`).join(',')).join('\n');
-const setSheet = (sheet: { body?: string; status?: number; type?: string }) => fetch(`${STUB}/__sheet`, { method: 'POST', body: JSON.stringify(sheet) });
 
 async function chooseFile(page: Page, name: string, buffer: Buffer) {
   const chooser = page.waitForEvent('filechooser');
@@ -51,11 +45,20 @@ const everyFile = (dir: string): string[] => readdirSync(dir, { withFileTypes: t
 test.describe('importing verses', () => {
   test('an Excel file is previewed, then imported with its slips corrected and reported', async ({ page }) => {
     await withEmptyVault(page, async () => {
-      // Importing is done in the Verse Library, open while it is still empty.
+      // Importing has its own page under Pastoral Visits, reached from Settings, the sidebar and the Verse Library.
       await page.goto('/settings');
       await page.getByTestId('settings-open-import').click();
+      await expect(page.getByTestId('import-title')).toHaveText('Import Verses');
+      await expect(page.getByTestId('import-from-google'), 'Google Sheets are downloaded as Excel first').toContainText('Microsoft Excel (.xlsx)');
+      await expect(page.getByTestId('import-sheet'), 'there is no Google Sheets option').toHaveCount(0);
+      await page.getByTestId('import-open-library').click();
       await expect(page.getByTestId('bibles-title')).toHaveText('Verse Library');
-      await expect(page.getByTestId('import-panel')).toHaveAttribute('open', '');
+      await expect(page.getByTestId('bibles-search'), 'the search is the first thing under the title').toBeInViewport();
+      await page.getByTestId('bibles-import').click();
+      await expect(page.getByTestId('import-page')).toBeVisible();
+      await page.getByTestId('side-bibles').click();
+      await page.getByTestId('side-import').click();
+      await expect(page.getByTestId('import-page')).toBeVisible();
       await chooseFile(page, 'made-up.xlsx', xlsx(ROWS));
 
       await expect(page.getByTestId('import-summary')).toHaveText('6 new verses ready to import from made-up.xlsx');
@@ -80,8 +83,10 @@ test.describe('importing verses', () => {
       await chooseFile(page, 'made-up.xlsx', xlsx(ROWS));
       await page.getByTestId('import-confirm').click();
       await expect(page.getByTestId('import-count')).toHaveText('6 imported verses in your vault.');
-      await expect(page.getByTestId('import-panel-counts')).toHaveText('6 imported, 1 row to fix');
+      await expect(page.getByTestId('side-import-count')).toHaveText('1');
+      await page.getByTestId('side-bibles').click();
       await expect(page.getByTestId('verse-group')).toHaveCount(4);
+      await page.getByTestId('side-import').click();
 
       const saved = await verses(page);
       const byRow = (n: number) => saved.find((v) => v.import_source === `made-up.xlsx, row ${n}`);
@@ -147,7 +152,7 @@ test.describe('importing verses', () => {
 
   test('a row left out can be fixed in the app, and stays sealed until then', async ({ page }) => {
     await withEmptyVault(page, async () => {
-      await page.goto('/bibles');
+      await page.goto('/import');
       await chooseFile(page, 'made-up.xlsx', xlsx(ROWS));
       await expect(page.getByTestId('rows-to-fix'), 'a preview keeps nothing').toHaveCount(0);
       await page.getByTestId('import-confirm').click();
@@ -168,11 +173,11 @@ test.describe('importing verses', () => {
       expect(await (await page.request.get('/api/verses/import/rows')).json()).toEqual([]);
       await page.request.post('/api/restore', { multipart: { passphrase: TEST_PASSPHRASE, file: { name: 'b.lvbackup', mimeType: 'application/octet-stream', buffer: backup } } });
 
-      // The Verse Library points to it, and opens the panel it is fixed in.
+      // The Verse Library points to it, and opens the page it is fixed on.
       await page.goto('/bibles');
       await expect(page.getByTestId('bibles-rows-to-fix')).toContainText('1 imported row was left out');
-      await expect(page.getByTestId('import-panel'), 'closed once verses are imported').not.toHaveAttribute('open', '');
       await page.getByTestId('bibles-rows-to-fix-open').click();
+      await expect(page.getByTestId('import-page')).toBeVisible();
       await expect(page.getByTestId('rows-to-fix')).toBeVisible();
       await expect(page.getByTestId('rows-to-fix')).toBeInViewport();
 
@@ -202,16 +207,16 @@ test.describe('importing verses', () => {
     await withEmptyVault(page, async () => {
       const send = (rows: string[][]) => page.request.post('/api/verses/import', { multipart: { commit: '1', file: { name: 'made-up.xlsx', mimeType: 'application/octet-stream', buffer: xlsx(rows) } } });
       await send(ROWS);
-      await page.goto('/bibles');
-      await page.getByTestId('import-panel-toggle').click();
+      await page.goto('/import');
       await page.getByTestId('fix-row-dismiss').click();
       await page.getByTestId('confirm-accept').click();
       await expect(page.getByTestId('rows-to-fix')).toHaveCount(0);
 
       // The sheet still has the slip, so importing it brings the row back.
       await send(ROWS);
-      await page.reload();
+      await page.goto('/bibles');
       await page.getByTestId('bibles-rows-to-fix-open').click();
+      await expect(page).toHaveURL(/\/import#rows-to-fix$/);
       await expect(page.getByTestId('rows-to-fix-title')).toHaveText('Rows to fix (1)');
 
       // Fixed in the sheet, it becomes a verse and leaves the list.
@@ -255,7 +260,7 @@ test.describe('importing verses', () => {
 
   test('a file that is not right is refused with a clear reason', async ({ page }) => {
     await withEmptyVault(page, async () => {
-      await page.goto('/bibles');
+      await page.goto('/import');
       await chooseFile(page, 'wrong.xlsx', xlsx([['Name', 'Age'], ['A', '1']]));
       await expect(page.getByTestId('toast').filter({ hasText: 'needs a sheet with these columns' })).toBeVisible();
       await chooseFile(page, 'text.xlsx', Buffer.from('not a spreadsheet'));
@@ -290,8 +295,7 @@ test.describe('importing verses', () => {
       await page.request.post(`/api/verses/${verified.id}/verify`);
       await page.request.post('/api/lectures', { data: { title: 'Keeps it', issue: '', objective: '', verse_ids: [used.id] } });
 
-      await page.goto('/bibles');
-      await page.getByTestId('import-panel-toggle').click();
+      await page.goto('/import');
       await page.getByTestId('import-remove').click();
       await page.getByTestId('confirm-accept').click();
       await expect(page.getByTestId('import-count')).toHaveText('2 imported verses in your vault.');
@@ -492,71 +496,6 @@ test.describe('a large Bibles Library', () => {
       await load(page);
       const res = await page.request.get('/api/verses');
       expect(res.headers()['cache-control']).toBe('no-store');
-    });
-  });
-});
-
-test.describe('importing from Google Sheets', () => {
-  test('a link loads the sheet, and after that the gid alone is enough', async ({ page }) => {
-    await withEmptyVault(page, async () => {
-      await setSheet({ body: csv(ROWS) });
-      await page.goto('/bibles');
-      await expect(page.getByTestId('import-sheet-warning')).toContainText('anyone who gets the link can read it');
-      await expect(page.getByTestId('import-sheet-saved')).toHaveCount(0);
-
-      // A gid means nothing until a spreadsheet is known.
-      await page.getByTestId('import-sheet').fill('0');
-      await page.getByTestId('import-sheet-load').click();
-      await expect(page.getByTestId('toast').filter({ hasText: 'Paste the whole Google Sheets link' })).toBeVisible();
-
-      await page.getByTestId('import-sheet').fill(LINK);
-      await page.getByTestId('import-sheet-load').click();
-      await expect(page.getByTestId('import-summary')).toHaveText('6 new verses ready to import from Google Sheet');
-      expect(await verses(page), 'a preview saves nothing').toEqual([]);
-      await page.getByTestId('import-confirm').click();
-      await expect(page.getByTestId('import-count')).toHaveText('6 imported verses in your vault.');
-      expect((await verses(page)).some((v) => v.import_source === 'Google Sheet, row 2')).toBe(true);
-      await expect(page.getByTestId('import-sheet-saved')).toBeVisible();
-
-      // Another tab of the same spreadsheet, by gid alone.
-      await setSheet({ body: csv([HEADER, ['NLT', 'John', '3', '5', `5${tl('ibang tab')}`]]) });
-      await page.getByTestId('import-sheet').fill('1945');
-      await page.getByTestId('import-sheet-load').click();
-      await expect(page.getByTestId('import-summary')).toHaveText('1 new verse ready to import from Google Sheet');
-      await page.getByTestId('import-cancel').click();
-
-      // Reset forgets the spreadsheet too.
-      await page.request.post('/api/reset', { data: { confirm: 'RESET' } });
-      expect((await (await page.request.get('/api/status')).json()).has_saved_sheet).toBe(false);
-    });
-  });
-
-  test('a private or missing sheet explains what to do, and saves nothing', async ({ page }) => {
-    await withEmptyVault(page, async () => {
-      await page.goto('/bibles');
-      const load = async (value: string) => {
-        await page.getByTestId('import-sheet').fill(value);
-        await page.getByTestId('import-sheet-load').click();
-      };
-      // Google answers a private sheet with a sign-in page, not an error.
-      await setSheet({ status: 200, type: 'text/html', body: '<!doctype html><title>Sign in</title>' });
-      await load(LINK);
-      await expect(page.getByTestId('toast').filter({ hasText: 'Anyone with the link' }).last()).toBeVisible();
-
-      await setSheet({ status: 403, type: 'text/html', body: 'no' });
-      await load(LINK);
-      await expect(page.getByTestId('toast').filter({ hasText: 'Anyone with the link' }).last()).toBeVisible();
-
-      await setSheet({ status: 404, type: 'text/html', body: 'no' });
-      await load(LINK);
-      await expect(page.getByTestId('toast').filter({ hasText: 'could not find that spreadsheet' })).toBeVisible();
-
-      await load('https://evil.example/data.csv');
-      await expect(page.getByTestId('toast').filter({ hasText: 'not a Google Sheets link' })).toBeVisible();
-
-      expect(await verses(page)).toEqual([]);
-      expect((await (await page.request.get('/api/status')).json()).has_saved_sheet, 'a sheet that failed is not remembered').toBe(false);
-      await setSheet({ status: 200, type: 'text/csv', body: '' });
     });
   });
 });

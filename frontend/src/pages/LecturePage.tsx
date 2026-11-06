@@ -132,6 +132,9 @@ export function LecturePage() {
   const [presenting, setPresenting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [groups, setGroups] = useState<Group[] | null>(null);
+  // With more than one objective, each has its own tab, so switching never needs scrolling.
+  const [activeTab, setActiveTab] = useState(0);
+  const tabsRef = useRef<HTMLDivElement>(null);
   // The issue the shown suggestions were found for: objectives already answered for it are kept.
   const groupsIssue = useRef('');
   const contexts = useStore((s) => s.contexts);
@@ -175,6 +178,9 @@ export function LecturePage() {
       });
       groupsIssue.current = issue.trim();
       setGroups(next);
+      // The first objective that was just asked about opens; otherwise the open tab stays.
+      const firstNew = found.findIndex((f) => f);
+      setActiveTab((t) => (kept.length === 0 ? 0 : firstNew >= 0 ? firstNew : t < next.length ? t : 0));
       if (found.some((f) => f)) setUsedMeaning(found.some((f) => f?.meaning));
       setSearching(false);
       // One objective at a time: the local model can only do one well on a CPU.
@@ -233,6 +239,7 @@ export function LecturePage() {
     setPicked([]);
     setObjectiveOf({});
     setGroups(null);
+    setActiveTab(0);
   };
 
   const load = (l: Lecture) => {
@@ -292,6 +299,9 @@ export function LecturePage() {
     );
   };
 
+  const tabbed = !!groups && groups.length > 1 && groups.some((g) => g.suggestions.length > 0);
+  const shownTab = groups && activeTab < groups.length ? activeTab : 0;
+
   return (
     <div className="scroll-stable h-full" data-testid="lecture-page">
       {presenting && <PresentationMode title={title || 'Lecture'} slides={slides} onClose={() => setPresenting(false)} />}
@@ -331,6 +341,7 @@ export function LecturePage() {
                         const removed = o.trim();
                         setObjectives((all) => all.filter((_, n) => n !== i));
                         setGroups((g) => g && g.filter((x) => x.title !== removed));
+                        setActiveTab(0);
                       }}
                     >
                       <X size={14} />
@@ -368,8 +379,56 @@ export function LecturePage() {
               </div>
               <p className="m-0 text-xs text-muted" data-testid="match-mode">{usedMeaning ? 'Matched by meaning and words' : 'Matched by words only'}</p>
               {groups.every((g) => g.suggestions.length === 0) && <p className="m-0 rounded-lg border border-line p-4 text-center text-[13px] text-muted" data-testid="suggestions-empty">No verses in your library match. Try other words, or upload more lessons.</p>}
+              {tabbed && (
+                <div
+                  ref={tabsRef}
+                  className="sticky top-0 z-10 -mx-1 flex gap-1 overflow-x-auto border-b border-line bg-bg px-1 pt-1"
+                  role="tablist"
+                  aria-label="Objectives"
+                  data-testid="objective-tabs"
+                  onKeyDown={(e) => {
+                    // Arrow keys move between tabs, as in any tab list.
+                    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+                    e.preventDefault();
+                    const next = (shownTab + (e.key === 'ArrowRight' ? 1 : groups.length - 1)) % groups.length;
+                    setActiveTab(next);
+                    tabsRef.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
+                  }}
+                >
+                  {groups.map((g, i) => {
+                    const chosen = g.suggestions.reduce((n, s) => n + s.verse_ids.filter((id) => picked.includes(id)).length, 0);
+                    return (
+                      <button
+                        key={i}
+                        type="button"
+                        role="tab"
+                        id={`objective-tab-${i}`}
+                        aria-selected={i === shownTab}
+                        aria-controls={`objective-panel-${i}`}
+                        tabIndex={i === shownTab ? 0 : -1}
+                        title={g.title ?? undefined}
+                        className={`tap -mb-px flex max-w-64 min-w-0 flex-none items-center gap-1.5 rounded-t-md border border-b-0 px-2.5 py-1.5 text-left text-xs max-lg:min-h-11 ${i === shownTab ? 'border-line bg-panel font-semibold text-fg' : 'border-transparent bg-transparent text-muted hover:text-fg'}`}
+                        data-testid="objective-tab"
+                        onClick={() => setActiveTab(i)}
+                      >
+                        <span className="flex-none text-accent2 tabular-nums">{i + 1}.</span>
+                        <span className="min-w-0 truncate">{g.title}</span>
+                        <span className="flex-none rounded-full bg-raised px-1.5 text-[11px] font-normal text-muted tabular-nums" data-testid="objective-tab-count" title={`${g.suggestions.length} suggested${chosen ? `, ${chosen} added to the lecture` : ''}`}>
+                          {chosen ? `${chosen}/` : ''}{g.suggestions.length}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
               {groups.some((g) => g.suggestions.length > 0) && groups.map((g, groupIndex) => (
-              <div key={groupIndex} className="space-y-2" data-testid="objective-group">
+              <div
+                key={groupIndex}
+                className="space-y-2"
+                data-testid="objective-group"
+                hidden={tabbed && groupIndex !== shownTab}
+                {...(tabbed ? { role: 'tabpanel', id: `objective-panel-${groupIndex}`, 'aria-labelledby': `objective-tab-${groupIndex}` } : {})}
+              >
                 {g.title && (
                   <div className="mt-3 first:mt-0">
                     <h3 className="m-0 text-[13px] font-semibold text-accent2" data-testid="objective-title">{g.title}</h3>

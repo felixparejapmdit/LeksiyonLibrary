@@ -1,11 +1,7 @@
 import { useRef, useState } from 'react';
-import { Check, FileSpreadsheet, Link2, Loader2, Trash2, Upload } from 'lucide-react';
+import { Check, FileSpreadsheet, Loader2, Trash2, Upload } from 'lucide-react';
 import { api, type ImportReport, type RowToFix } from '../api';
 import { askConfirm, errorText, refreshAll, setState, toast, useStore } from '../store';
-
-type Source = { kind: 'file'; file: File } | { kind: 'sheet'; sheet: string };
-
-const run = (source: Source, commit: boolean) => (source.kind === 'file' ? api.importVerses(source.file, commit) : api.importGoogleSheet(source.sheet, commit));
 
 function FixList({ title, fixes, testId }: { title: string; fixes: ImportReport['book_fixes']; testId: string }) {
   if (fixes.length === 0) return null;
@@ -106,23 +102,20 @@ function RowFix({ row }: { row: RowToFix }) {
   );
 }
 
-/** Bulk verses from an Excel file or Google Sheet, always previewed before anything is saved. Shown inside the Verse Library. */
+/** Bulk verses from an Excel file, always previewed before anything is saved. Shown on the Import Verses page. */
 export function VerseImport() {
   const verses = useStore((s) => s.verses);
   const rowsToFix = useStore((s) => s.rowsToFix);
-  const hasSavedSheet = useStore((s) => s.hasSavedSheet);
   const inputRef = useRef<HTMLInputElement>(null);
-  const [sheet, setSheet] = useState('');
   const [busy, setBusy] = useState(false);
-  const [preview, setPreview] = useState<{ source: Source; report: ImportReport } | null>(null);
+  const [preview, setPreview] = useState<{ file: File; report: ImportReport } | null>(null);
   const imported = verses.filter((v) => v.import_source).length;
 
-  const inspect = async (source: Source) => {
+  const inspect = async (file: File) => {
     setBusy(true);
     setPreview(null);
     try {
-      setPreview({ source, report: await run(source, false) });
-      if (source.kind === 'sheet') setState({ hasSavedSheet: true });
+      setPreview({ file, report: await api.importVerses(file, false) });
     } catch (e) {
       toast(errorText(e), 'error');
     }
@@ -133,10 +126,9 @@ export function VerseImport() {
     if (!preview) return;
     setBusy(true);
     try {
-      const report = await run(preview.source, true);
+      const report = await api.importVerses(preview.file, true);
       await refreshAll();
       setPreview(null);
-      setSheet('');
       const left = report.problems.length;
       toast(left > 0 ? `${report.new_verses} verses imported and encrypted. ${left} ${left === 1 ? 'row' : 'rows'} to fix below.` : `${report.new_verses} verses imported and encrypted`);
     } catch (e) {
@@ -149,10 +141,12 @@ export function VerseImport() {
   return (
     <section className="p-3" data-testid="verse-import">
       <p className="m-0 mb-2 text-[13px] text-muted">
-        Add translations from a sheet with these columns: Translation (or PET), Book, Chapter, Verse and Content. You see what will happen before anything is saved. Imported verses are encrypted with the rest of your vault and stay unverified until you check them.
+        Add translations from an Excel file with these columns: Translation (or PET), Book, Chapter, Verse and Content. You see what will happen before anything is saved. Imported verses go to the Verse Library, encrypted with the rest of your vault, and stay unverified until you check them.
+      </p>
+      <p className="m-0 mb-2 text-xs text-muted" data-testid="import-from-google">
+        Verses kept in Google Sheets: in Google Sheets choose File, Download, Microsoft Excel (.xlsx), then choose that file here.
       </p>
 
-      <h3 className="m-0 mb-1 text-[13px] font-semibold">From an Excel file (most private)</h3>
       <input
         ref={inputRef}
         type="file"
@@ -162,37 +156,12 @@ export function VerseImport() {
         onChange={(e) => {
           const file = e.target.files?.[0];
           e.target.value = '';
-          if (file) inspect({ kind: 'file', file });
+          if (file) inspect(file);
         }}
       />
       <button className="btn" data-testid="import-choose" disabled={busy} onClick={() => inputRef.current?.click()}>
         <FileSpreadsheet size={14} /> Choose .xlsx file
       </button>
-
-      <h3 className="m-0 mt-3 mb-1 text-[13px] font-semibold">From Google Sheets</h3>
-      <form
-        className="flex flex-wrap gap-1.5"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (sheet.trim()) inspect({ kind: 'sheet', sheet: sheet.trim() });
-        }}
-      >
-        <input
-          className="field min-w-52 flex-1"
-          aria-label="Google Sheets link or gid"
-          data-testid="import-sheet"
-          placeholder={hasSavedSheet ? 'gid of a tab, or a new Google Sheets link' : 'Paste the Google Sheets link'}
-          value={sheet}
-          onChange={(e) => setSheet(e.target.value)}
-        />
-        <button className="btn" data-testid="import-sheet-load" disabled={busy || !sheet.trim()}>
-          <Link2 size={14} /> Load sheet
-        </button>
-      </form>
-      <p className="m-0 mt-1 text-xs text-warn" data-testid="import-sheet-warning">
-        The sheet must be shared as "Anyone with the link", which means anyone who gets the link can read it, not only you. For sensitive verses, turn that sharing off again after importing, or use an Excel file instead.
-      </p>
-      {hasSavedSheet && <p className="m-0 mt-1 text-xs text-muted" data-testid="import-sheet-saved">Your spreadsheet is remembered, so the gid alone is enough for its other tabs. The gid is the number after gid= in the sheet's address.</p>}
 
       {busy && <p className="m-0 mt-2 flex items-center gap-1 text-xs text-muted" data-testid="import-busy"><Loader2 size={12} className="animate-spin" /> Working</p>}
 

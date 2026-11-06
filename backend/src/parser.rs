@@ -54,6 +54,15 @@ pub struct ParsedLesson {
     pub content: String,
     pub verses: Vec<ParsedVerse>,
     pub outline: Vec<Section>,
+    /// Lines that cite a verse whose book could not be read, such as a scan's "Xyq: 4:9 ABC".
+    /// Their verses are left out rather than guessed, and the user is told so they can add them.
+    pub unread: Vec<Unread>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Unread {
+    pub page: u32,
+    pub text: String,
 }
 
 macro_rules! re {
@@ -109,6 +118,8 @@ re!(VERSION_HINT, r"(?i)\b(?:version|bible|translation|edition|bersiyon|biblia)\
 re!(VERSION_CODE, r"^[A-Z]{2,6}\d{0,4}$");
 // A version printed alone after a reference standing on its own line, such as "Lamsa".
 re!(VERSION_WORD, r"^[A-Z][A-Za-z]{1,6}\d{0,4}$");
+// A citation whose book is unreadable: a word ending in a stop, then chapter:verse and a version.
+re!(UNREAD_CITATION, r"(\S+[.:,])\s*(\d{1,3})\s*:\s*(\d{1,3}[a-z]?(?:\s*-\s*\d{1,3})?)\s+([A-Z][A-Z0-9]{1,7})\s*$");
 re!(DATE_PREFIX, r"^(\d{4})(\d{2})(\d{2})_");
 re!(ISSUE_MARK, r"(?i)^(?:isyu|issu[ea]|lssue)\s*:?$");
 re!(OBJECTIVE_MARK, r"(?i)^(?:mga\s+layunin|objectives?)\s*:?$");
@@ -312,6 +323,16 @@ fn is_version_continuation(line: &str) -> bool {
 
 fn is_verse_terminator(line: &str) -> bool {
     BULLET.is_match(line) || STOP_LINE.is_match(line) || CITATION.is_match(line) || SIGNATURE.is_match(line)
+}
+
+/// A line ending in chapter:verse and a version, whose book is not one this app knows. Times
+/// such as "10:30 AM" are not citations.
+fn unread_citation(line: &str) -> Option<String> {
+    let c = UNREAD_CITATION.captures(line)?;
+    if ["AM", "PM", "NN"].contains(&&c[4]) || !find_references(line).is_empty() {
+        return None;
+    }
+    Some(line[c.get(1)?.start()..].trim().to_string())
 }
 
 /// A line that cites a verse printed underneath it: "label ..... II Sam. 7:24 ESV".
@@ -655,6 +676,9 @@ pub fn parse(pages: &[String], file_name: &str) -> ParsedLesson {
             }
         }
         let Some((reference, rest)) = citation_ref(line) else {
+            if let Some(m) = unread_citation(line) {
+                lesson.unread.push(Unread { page: *page, text: m });
+            }
             i += 1;
             continue;
         };
@@ -967,6 +991,24 @@ mod tests {
     }
 
     #[test]
+    fn a_citation_whose_book_cannot_be_read_is_reported_not_guessed() {
+        let page = [
+            "ANG MGA BANTAY",
+            "1. Ang dapat gawin ..........Juan 3:5 NIRV",
+            "Ang mga bantay ay gising sa gabi.",
+            "2. Ang aral wnmsoee oom]) Xyq: 4:9 ABC",
+            "Ang tagapag-ingat ay hindi natutulog.",
+            "Ang pulong ay sa 10:30 AM.",
+        ]
+        .join("\n");
+        let lesson = parse(&[page], "20210110_Sample.pdf");
+        assert_eq!(lesson.verses.len(), 1);
+        assert!(!lesson.verses[0].text.contains("tagapag-ingat"), "the unread verse is not added to the one before it");
+        assert_eq!(lesson.unread.len(), 1, "{:?}", lesson.unread);
+        assert_eq!((lesson.unread[0].page, lesson.unread[0].text.as_str()), (1, "Xyq: 4:9 ABC"));
+    }
+
+    #[test]
     fn ocr_misreadings_of_references_are_understood() {
         let cases = [
             ("Il Tim. 3:1-5", "55.3:1-5"),
@@ -1002,3 +1044,4 @@ mod tests {
         assert_eq!(l.title, "Ang Halimbawa ng Tungkulin");
     }
 }
+

@@ -390,3 +390,13 @@ Added at the project owner's choice: a verse review queue, editable AI context, 
 On the three samples, this went from 27 verse records, with English and Tagalog run together, to 44, each in one language. One reference stays unread because OCR garbled it.
 
 **Lesson Assistant:** up to four objective fields with Add objective and remove, five verses asked for each, a note when fewer than three match. Pressing Suggest verses after adding an objective fetches only the new one; those already found stay. Lessons without objectives, such as pastoral visits, are matched as a whole. A suggestion found in a pastoral visit says so.
+
+## 20. Model install, objective tabs, dropping visits, Import Verses page (6 November 2026)
+
+**Settings, AI assistant:** one **Download and install** button on the right of the card. The backend asks Ollama (`POST /api/pull`, streamed) for whichever of the app's two models it lacks, the notes model (`LV_OLLAMA_MODEL`, llama3.2:3b) and then bge-m3, and keeps the progress in memory (`GET /ai/pull`; `DELETE` cancels, and Ollama resumes later). Only these two names can be pulled. Choosing among other models was tried and dropped at the user's request: one model, the current one. Without Ollama the card links to ollama.com/download and offers Check again. After bge-m3 installs, verse indexing starts.
+
+**Lesson Assistant:** with more than one objective, each has a tab (WAI tablist, arrow keys) showing suggested and added counts. Tabs suit this better than one long list: each objective holds 3 to 5 verses or more with notes and context, so the second objective was several screens down, and the work is done one objective at a time. All groups stay in the page, the others hidden, so suggestions and notes are kept when switching. Adding an objective opens its tab.
+
+**Pastoral Visits:** a drop area at the top of the page takes several PDFs at once (or files, or a folder), skips other files, and shows progress and a summary on the page; dropping anywhere on the list works too. A line ending in chapter:verse and a version whose book cannot be read (one sample has such a line) is now reported with its page in the upload's attention text, instead of passing silently; the verse is still not guessed. On the three samples: 44 of 45 verses read, the remaining one reported.
+
+**Import Verses:** its own page under Pastoral Visits (`/import`), reached from the sidebar, the Verse Library's Import from Excel button and Settings, so the Verse Library opens on its search. Google Sheets import removed entirely (UI, route, CSV reader, the `csv` crate and `LV_SHEETS_URL`); a remembered sheet ID is deleted on start. The app no longer contacts anything but this computer and Ollama.

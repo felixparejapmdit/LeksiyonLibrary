@@ -4,7 +4,6 @@ import { api, type Verse } from '../api';
 import { VerseCorrectionDialog } from '../components/Overlays';
 import { Highlight } from '../components/LessonList';
 import { scopeNames } from '../components/VerseContext';
-import { VerseImport } from '../components/VerseImport';
 import { openReview } from './ReviewPage';
 import { askConfirm, errorText, getState, libraryOf, navigate, resetFilters, selectLesson, setState, toast, useStore, verseGroups, type Library } from '../store';
 
@@ -155,44 +154,6 @@ const NO_FILTERS = { query: '', language: 'all', status: 'all', translation: 'al
 // Kept while the app is open, so coming back to either library finds it as it was left.
 const startView = (): View => ({ ...NO_FILTERS, layout: storedLayout(), left: 'lang:en', right: 'lang:tl', bothSides: false, page: 1, pageSize: 25 });
 const savedViews: Record<Library, View> = { verse: startView(), lesson: startView() };
-let importOpen: boolean | null = null;
-
-/** Importing from a sheet is one way verses come into the Verse Library, so it is done here. Pastoral visit PDFs are the other. */
-function ImportPanel({ imported, rowsToFix }: { imported: number; rowsToFix: number }) {
-  const [open, setOpen] = useState(importOpen ?? imported === 0);
-  useEffect(() => {
-    const show = () => {
-      importOpen = true;
-      setOpen(true);
-      requestAnimationFrame(() => document.querySelector('[data-testid="rows-to-fix"]')?.scrollIntoView({ block: 'start' }));
-    };
-    window.addEventListener('lv:fix-rows', show);
-    return () => window.removeEventListener('lv:fix-rows', show);
-  }, []);
-  return (
-    <details
-      className="mb-3 rounded-lg border border-line bg-panel"
-      data-testid="import-panel"
-      open={open}
-      onToggle={(e) => {
-        const next = e.currentTarget.open;
-        importOpen = next;
-        setOpen(next);
-      }}
-    >
-      <summary className="tap flex cursor-pointer flex-wrap items-center gap-2 px-3 py-2 text-[13px] font-semibold max-lg:min-h-11" data-testid="import-panel-toggle">
-        <FileSpreadsheet size={15} className="flex-none text-accent2" /> Import verses from Excel or Google Sheets
-        <span className="text-xs font-normal text-muted" data-testid="import-panel-counts">
-          {imported} imported{rowsToFix > 0 ? `, ${rowsToFix} ${rowsToFix === 1 ? 'row' : 'rows'} to fix` : ''}
-        </span>
-      </summary>
-      <div className="border-t border-line">
-        <VerseImport />
-      </div>
-    </details>
-  );
-}
-
 // The caches below live in memory only and go when the app closes. Verses are sensitive, so
 // none of this may be written to the disk or the browser's cache.
 const searchText = new WeakMap<Verse, string>();
@@ -389,7 +350,6 @@ function ParallelSide({ verses, side, query, testId }: { verses: Verse[]; side: 
 export function BiblesPage({ library }: { library: Library }) {
   const all = useStore((s) => s.verses);
   const verses = useMemo(() => all.filter((v) => libraryOf(v) === library), [all, library]);
-  const imported = useMemo(() => verses.filter((v) => v.import_source).length, [verses]);
   const rowsToFix = useStore((s) => (library === 'verse' ? s.rowsToFix.length : 0));
   const [view, setViewState] = useState<View>(savedViews[library]);
   const { layout, left, right, bothSides, query, language, status, translation, book, pageSize } = view;
@@ -483,19 +443,25 @@ export function BiblesPage({ library }: { library: Library }) {
     <div className="scroll-stable h-full" data-testid="bibles-page">
       <div ref={top} />
       <div className="mx-auto max-w-6xl p-3 lg:p-4">
-        <h1 className="m-0 text-lg font-semibold" data-testid="bibles-title">{library === 'verse' ? 'Verse Library' : 'Verses from lessons'}</h1>
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="m-0 text-lg font-semibold" data-testid="bibles-title">{library === 'verse' ? 'Verse Library' : 'Verses from lessons'}</h1>
+          {library === 'verse' && (
+            <button className="btn ml-auto !min-h-[34px] max-lg:!min-h-11" data-testid="bibles-import" onClick={() => navigate('/import')}>
+              <FileSpreadsheet size={14} /> Import from Excel
+            </button>
+          )}
+        </div>
         <p className="m-0 mt-0.5 mb-3 flex items-start gap-1.5 text-[13px] text-muted" data-testid="bibles-policy">
           <BadgeCheck size={15} className="mt-0.5 flex-none text-ok" />
           {library === 'verse'
-            ? 'Verses read from your pastoral visit PDFs and imported from your Excel files and Google Sheets. Verses read from worship service lessons are kept apart, in the Lesson Library.'
-            : 'Verses read from your worship service lesson PDFs, exactly as printed or scanned. Verses from pastoral visits and sheets are kept apart, in the Verse Library.'}{' '}
+            ? 'Verses read from your pastoral visit PDFs and imported from your Excel files. Verses read from worship service lessons are kept apart, in the Lesson Library.'
+            : 'Verses read from your worship service lesson PDFs, exactly as printed or scanned. Verses from pastoral visits and Excel files are kept apart, in the Verse Library.'}{' '}
           Verified text is locked permanently, and the AI can never change it. {stats.verified} of {stats.total} verified.
         </p>
-        {library === 'verse' && <ImportPanel imported={imported} rowsToFix={rowsToFix} />}
         {rowsToFix > 0 && (
           <p className="m-0 mb-3 flex flex-wrap items-center gap-2 rounded-md border border-line bg-panel px-3 py-2 text-[13px] text-warn" data-testid="bibles-rows-to-fix">
             {rowsToFix} imported {rowsToFix === 1 ? 'row was' : 'rows were'} left out and {rowsToFix === 1 ? 'needs' : 'need'} fixing.
-            <button className="btn !min-h-8 max-lg:!min-h-11" data-testid="bibles-rows-to-fix-open" onClick={() => window.dispatchEvent(new Event('lv:fix-rows'))}>Fix them</button>
+            <button className="btn !min-h-8 max-lg:!min-h-11" data-testid="bibles-rows-to-fix-open" onClick={() => navigate('/import#rows-to-fix')}>Fix them</button>
           </p>
         )}
         <div className="z-10 -mx-3 mb-3 border-b border-line bg-bg px-3 pb-2 lg:sticky lg:top-0 lg:-mx-4 lg:px-4 lg:pt-1" data-testid="bibles-toolbar">
@@ -586,7 +552,7 @@ export function BiblesPage({ library }: { library: Library }) {
         )}
         {total === 0 ? (
           <p className="py-14 text-center text-[13px] text-muted" data-testid="bibles-empty">
-            {verses.length === 0 ? (library === 'verse' ? 'No verses yet. Import an Excel file or a Google Sheet above, and its verses will appear here.' : 'No verses yet. Upload a lesson PDF, and the verses read from it will appear here.') : meaningKeys ? 'No verses are close in meaning.' : parallel && groups.length > 0 ? 'No verses match these two sides. Choose another side, or turn off "Only verses on both sides".' : 'No verses match these filters.'}
+            {verses.length === 0 ? (library === 'verse' ? 'No verses yet. Upload a pastoral visit PDF, or import an Excel file, and its verses will appear here.' : 'No verses yet. Upload a lesson PDF, and the verses read from it will appear here.') : meaningKeys ? 'No verses are close in meaning.' : parallel && groups.length > 0 ? 'No verses match these two sides. Choose another side, or turn off "Only verses on both sides".' : 'No verses match these filters.'}
           </p>
         ) : (
           <>

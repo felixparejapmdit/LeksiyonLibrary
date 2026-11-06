@@ -254,6 +254,8 @@ pub fn init(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute("UPDATE verse_context SET context = '' WHERE reviewed_at IS NULL AND context <> ''", [])?;
     // Teaching history was removed from the app.
     conn.execute_batch("DROP TABLE IF EXISTS teachings;")?;
+    // Importing from Google Sheets was removed: the spreadsheet it remembered is forgotten.
+    conn.execute("DELETE FROM app_settings WHERE key='import_sheet_id'", [])?;
     crate::verse_import::repair_leading_numbers(conn)?;
     crate::outline::backfill(conn)?;
     Ok(())

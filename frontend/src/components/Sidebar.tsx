@@ -1,5 +1,5 @@
 import { memo, useMemo, useState } from 'react';
-import { Archive, BookMarked, BookOpen, BookText, ChevronDown, ChevronRight, ClipboardCheck, Folder, FolderPlus, ListChecks, MapPin, Sparkles, Trash2 } from 'lucide-react';
+import { Archive, BookMarked, BookOpen, BookText, ChevronDown, ChevronRight, ClipboardCheck, FileSpreadsheet, Folder, FolderPlus, ListChecks, MapPin, Sparkles, Trash2 } from 'lucide-react';
 import { api } from '../api';
 import { useProgressive } from './Layout';
 import {
@@ -56,6 +56,7 @@ export function Sidebar() {
   const lessons = useStore((s) => s.lessons);
   const folders = useStore((s) => s.folders);
   const verses = useStore((s) => s.verses);
+  const rowsToFix = useStore((s) => s.rowsToFix.length);
   const f = useStore((s) => s.filters);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [foldersOpen, setFoldersOpen] = useState(true);
@@ -142,9 +143,13 @@ export function Sidebar() {
           <MapPin size={15} className="flex-none text-pv" /> Pastoral Visits
           <Count n={pastoralCount} testId="side-pv-count" />
         </button>
-        <button className={`${rowClass(route === '/bibles')} !pl-7`} data-testid="side-bibles" title="Verses read from pastoral visit PDFs and imported from Excel or Google Sheets" onClick={() => navigate('/bibles')}>
+        <button className={`${rowClass(route === '/bibles')} !pl-7`} data-testid="side-bibles" title="Verses read from pastoral visit PDFs and imported from Excel files" onClick={() => navigate('/bibles')}>
           <BookMarked size={14} className="flex-none" /> Verse Library
           <Count n={counts.verse} testId="side-bibles-count" title={`${counts.verse} verses: ${counts.verse - counts.verseToReview} verified, ${counts.verseToReview} to review`} />
+        </button>
+        <button className={`${rowClass(route === '/import')} !pl-7`} data-testid="side-import" title="Import verses from an Excel file into the Verse Library" onClick={() => navigate('/import')}>
+          <FileSpreadsheet size={14} className="flex-none" /> Import Verses
+          {rowsToFix > 0 && <Count n={rowsToFix} testId="side-import-count" title={`${rowsToFix} imported ${rowsToFix === 1 ? 'row' : 'rows'} to fix`} />}
         </button>
         <button className={rowClass(route === '/lecture')} data-testid="side-lecture" title="Lecture Maker: builds a lecture from the verses in both libraries" onClick={() => navigate('/lecture')}>
           <Sparkles size={15} className="flex-none" /> Lesson Assistant

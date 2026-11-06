@@ -4,6 +4,7 @@ import { ResizeHandle, useIsDesktop } from '../components/Layout';
 import { CategoryTabs, FilterChips, LessonRows, useVisibleLessons } from '../components/LessonList';
 import { PdfViewer } from '../components/PdfViewer';
 import { Sidebar } from '../components/Sidebar';
+import { addPastoralVisits, PastoralDrop } from '../components/PastoralDrop';
 import { categoryLabel, getState, openUpload, resetFilters, scopeTitle, selectLesson, setPanelPref, setState, updateFilters, useStore, type SortMode } from '../store';
 
 const DESKTOP = '(min-width: 1024px)';
@@ -24,6 +25,9 @@ export function VaultPage() {
   const sidebarOpen = useStore((s) => s.sidebarOpen);
   const drawerOpen = useStore((s) => s.drawerOpen);
   const [mobileViewer, setMobileViewer] = useState(false);
+  // PDFs dragged anywhere over the Pastoral Visits list are taken as pastoral visits.
+  const [dragging, setDragging] = useState(false);
+  const pastoralPage = scope === 'pastoral';
 
   const onOpen = useCallback((id: string) => {
     selectLesson(id);
@@ -53,7 +57,7 @@ export function VaultPage() {
       <div className="flex flex-col items-center px-4 py-16 text-center" data-testid="empty-pastoral">
         <MapPin size={30} className="text-pv" />
         <h2 className="m-0 mt-3 text-base font-semibold">No pastoral visits yet</h2>
-        <p className="m-0 mt-1 mb-4 max-w-xs text-[13px] text-muted">Upload a pastoral visit PDF. Its verses go to the Verse Library.</p>
+        <p className="m-0 mt-1 mb-4 max-w-xs text-[13px] text-muted">Drop pastoral visit PDFs above, as many as you like. Their verses go to the Verse Library.</p>
       </div>
     ) : (
       <div className="flex flex-col items-center px-4 py-16 text-center" data-testid="empty-filter">
@@ -74,7 +78,26 @@ export function VaultPage() {
     );
 
   const listPane = (
-    <section className="flex h-full min-w-0 flex-1 flex-col bg-bg" aria-label="Lessons" data-testid="list-pane">
+    <section
+      className="flex h-full min-w-0 flex-1 flex-col bg-bg"
+      aria-label="Lessons"
+      data-testid="list-pane"
+      onDragOver={(e) => {
+        if (!pastoralPage || !e.dataTransfer.types.includes('Files')) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+        if (!dragging) setDragging(true);
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+      }}
+      onDrop={(e) => {
+        if (!pastoralPage) return;
+        e.preventDefault();
+        setDragging(false);
+        addPastoralVisits(e.dataTransfer.files);
+      }}
+    >
       <div className="flex-none px-3 pt-3 pb-2">
         <div className="flex items-center gap-2">
           {!desktop && (
@@ -83,11 +106,6 @@ export function VaultPage() {
             </button>
           )}
           <h1 className="m-0 min-w-0 truncate text-lg font-semibold" data-testid="list-title">{title}</h1>
-          {scope === 'pastoral' && (
-            <button className="btn btn-primary !min-h-[34px] max-lg:!min-h-11" data-testid="pastoral-upload" onClick={() => openUpload('pastoral')}>
-              <UploadCloud size={14} /> <span className="max-sm:sr-only">Upload pastoral visit</span>
-            </button>
-          )}
           <label className="ml-auto flex items-center gap-1 text-muted">
             <ArrowDownUp size={13} />
             <span className="sr-only">Sort lessons</span>
@@ -108,6 +126,7 @@ export function VaultPage() {
             </button>
           )}
         </div>
+        {pastoralPage && <PastoralDrop dragging={dragging} />}
         <div className="mt-2">
           <CategoryTabs pool={pool} />
         </div>

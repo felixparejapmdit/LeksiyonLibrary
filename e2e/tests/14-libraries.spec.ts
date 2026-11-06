@@ -154,7 +154,7 @@ test.describe('the Verse Library and the Lesson Library', () => {
       await expect(page.getByTestId('bibles-title')).toHaveText('Verses from lessons');
       await expect(page.getByTestId('verse-card')).toHaveCount(fromLesson.length);
       await expect(page.getByTestId('verse-import-source'), 'no imported verse here').toHaveCount(0);
-      await expect(page.getByTestId('import-panel'), 'importing is only for the Verse Library').toHaveCount(0);
+      await expect(page.getByTestId('bibles-import'), 'importing is only for the Verse Library').toHaveCount(0);
 
       // Review starts on the library it was opened from.
       await page.getByTestId('bibles-review').click();

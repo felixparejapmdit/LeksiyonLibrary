@@ -21,7 +21,6 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 aes-gcm = "0.10"
 argon2 = { version = "0.5", features = ["std"] }
 calamine = "0.30"
-csv = "1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3"

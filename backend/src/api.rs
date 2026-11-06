@@ -1,4 +1,4 @@
-use crate::{ai, backup, export, outline, parser, semantic, verse_import, AppState};
+use crate::{ai, backup, export, models, outline, parser, semantic, verse_import, AppState};
 use axum::{
     body::Body,
     extract::{DefaultBodyLimit, FromRequestParts, Multipart, Path, Query, State},
@@ -21,7 +21,10 @@ impl ApiError {
     pub(crate) fn message(&self) -> &str {
         &self.1
     }
-    fn bad(msg: impl Into<String>) -> Self {
+    pub(crate) fn new(code: StatusCode, msg: impl Into<String>) -> Self {
+        Self(code, msg.into())
+    }
+    pub(crate) fn bad(msg: impl Into<String>) -> Self {
         Self(StatusCode::BAD_REQUEST, msg.into())
     }
     fn not_found() -> Self {
@@ -256,7 +259,7 @@ async fn upload_lesson(State(s): State<S>, u: User, mut mp: Multipart) -> ApiRes
         reconcile_with_pair(&tx, &uid, &id2)?;
         tx.commit()?;
         let lesson = c.query_row(&format!("SELECT {LESSON_COLS} FROM lessons l WHERE l.id = ?1"), [&id2], lesson_row)?;
-        Ok(json!({ "lesson": lesson, "verse_count": parsed.verses.len() }))
+        Ok(json!({ "lesson": lesson, "verse_count": parsed.verses.len(), "unread": parsed.unread }))
     })
     .await;
     if result.is_err() {
@@ -644,7 +647,6 @@ async fn verify_verse(State(s): State<S>, u: User, Path(id): Path<String>) -> Ap
 // ---------- Importing verses ----------
 
 const MAX_WORKBOOK: usize = 32 * 1024 * 1024;
-const SHEET_SETTING: &str = "import_sheet_id";
 
 fn with_counts(fixes: &[verse_import::Fix]) -> Vec<Value> {
     fixes.iter().map(|f| json!({ "from": f.from, "to": f.to, "count": f.count })).collect()
@@ -847,72 +849,6 @@ async fn import_verses(State(s): State<S>, u: User, mut mp: Multipart) -> ApiRes
         .map_err(|_| ApiError::bad("The file could not be read."))?
         .map_err(|e| ApiError(StatusCode::UNSUPPORTED_MEDIA_TYPE, e))?;
     Ok(Json(apply_import(&s, u.id, plan, safe_name, commit).await?))
-}
-
-#[derive(Deserialize)]
-struct SheetBody {
-    /// A link to the sheet, a spreadsheet ID, or the gid of a tab of the last one used.
-    sheet: String,
-    #[serde(default)]
-    commit: bool,
-}
-
-/// Downloads one tab from Google. This is the only thing the app ever sends outside this
-/// computer, and only when asked. The request carries nothing but the sheet's own ID, so
-/// no vault data leaves, and the address is built here, so it can only ever go to Google.
-async fn download_sheet(base_url: &str, id: &str, gid: &str) -> Result<Vec<u8>, ApiError> {
-    const NOT_SHARED: &str = "Google would not share this sheet without signing in. In Google Sheets, choose Share, then General access: Anyone with the link, Viewer. Or download it as .xlsx and use the file option, which keeps it private.";
-    let failed = |e: reqwest::Error| {
-        eprintln!("Google Sheets download failed: {e}");
-        ApiError(StatusCode::BAD_GATEWAY, "Could not reach Google. Check your internet connection and try again.".into())
-    };
-    // Its own client: the app's usual one ignores proxies and gives up quickly, because it
-    // only talks to this computer.
-    let client = reqwest::Client::builder().connect_timeout(std::time::Duration::from_secs(20)).timeout(std::time::Duration::from_secs(120)).build().map_err(failed)?;
-    let url = format!("{}/spreadsheets/d/{id}/export?format=csv&gid={gid}", base_url.trim_end_matches('/'));
-    let mut response = client.get(url).send().await.map_err(failed)?;
-    match response.status() {
-        status if status.is_success() => {}
-        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => return Err(ApiError::bad(NOT_SHARED)),
-        StatusCode::NOT_FOUND => return Err(ApiError::bad("Google could not find that spreadsheet. Check the link.")),
-        StatusCode::BAD_REQUEST => return Err(ApiError::bad("Google could not find that tab. Check the gid.")),
-        status => {
-            eprintln!("Google Sheets answered {status}");
-            return Err(ApiError(StatusCode::BAD_GATEWAY, "Google could not provide this sheet right now. Try again shortly.".into()));
-        }
-    }
-    // A private sheet answers with a sign-in page, not an error.
-    let is_csv = response.headers().get(header::CONTENT_TYPE).and_then(|t| t.to_str().ok()).is_some_and(|t| t.starts_with("text/csv"));
-    if !is_csv {
-        return Err(ApiError::bad(NOT_SHARED));
-    }
-    let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(failed)? {
-        body.extend_from_slice(&chunk);
-        if body.len() > MAX_WORKBOOK {
-            return Err(ApiError(StatusCode::PAYLOAD_TOO_LARGE, "That sheet is larger than 32 MB.".into()));
-        }
-    }
-    Ok(body)
-}
-
-async fn import_google_sheet(State(s): State<S>, u: User, Json(b): Json<SheetBody>) -> ApiResult<Json<Value>> {
-    let remembered: Option<String> = with_db(&s, |c| {
-        Ok(c.query_row("SELECT value FROM app_settings WHERE key=?1", [SHEET_SETTING], |r| r.get(0)).optional()?)
-    })
-    .await?;
-    let (id, gid) = verse_import::sheet_address(&b.sheet, remembered.as_deref()).map_err(ApiError::bad)?;
-    let body = download_sheet(&s.config.sheets_url, &id, &gid).await?;
-    let plan = tokio::task::spawn_blocking(move || verse_import::read_csv(&body).map(|rows| verse_import::plan(&rows)))
-        .await
-        .map_err(|_| ApiError::bad("The sheet could not be read."))?
-        .map_err(ApiError::bad)?;
-    with_db(&s, move |c| {
-        c.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)", params![SHEET_SETTING, id])?;
-        Ok(())
-    })
-    .await?;
-    Ok(Json(apply_import(&s, u.id, plan, "Google Sheet".to_string(), b.commit).await?))
 }
 
 /// Undoes an import. Verses the user has verified, or that a lesson or saved lecture uses,
@@ -1372,30 +1308,8 @@ async fn search_meaning(State(s): State<S>, u: User, Query(q): Query<MeaningQuer
 }
 
 async fn status(State(s): State<S>, _u: User) -> ApiResult<Json<Value>> {
-    let (last, sheet): (Option<String>, Option<String>) = with_db(&s, |c| {
-        let setting = |key: &str| c.query_row("SELECT value FROM app_settings WHERE key=?1", [key], |r| r.get(0)).optional();
-        Ok((setting("last_backup_at")?, setting(SHEET_SETTING)?))
-    })
-    .await?;
-    Ok(Json(json!({ "last_backup_at": last, "has_saved_sheet": sheet.is_some() })))
-}
-
-async fn ai_status(State(s): State<S>, _u: User) -> Json<Value> {
-    let url = format!("{}/api/tags", s.config.ollama_url.trim_end_matches('/'));
-    // Ollama can take several seconds to answer its first request after idling.
-    let resp = s.http.get(url).timeout(std::time::Duration::from_secs(15)).send().await;
-    let model = s.config.ollama_model.clone();
-    match resp {
-        Ok(r) if r.status().is_success() => {
-            let body: Value = r.json().await.unwrap_or(json!({}));
-            let names: Vec<&str> = body["models"].as_array().map(|m| m.iter().filter_map(|x| x["name"].as_str()).collect()).unwrap_or_default();
-            let installed = names.contains(&model.as_str());
-            let embed = &s.config.embed_model;
-            let meaning = names.iter().any(|n| n == embed || n.strip_suffix(":latest") == Some(embed.as_str()));
-            Json(json!({ "available": installed, "reachable": true, "model": model, "meaning": meaning }))
-        }
-        _ => Json(json!({ "available": false, "reachable": false, "model": model, "meaning": false })),
-    }
+    let last: Option<String> = with_db(&s, |c| Ok(c.query_row("SELECT value FROM app_settings WHERE key='last_backup_at'", [], |r| r.get(0)).optional()?)).await?;
+    Ok(Json(json!({ "last_backup_at": last })))
 }
 
 // ---------- Lectures ----------
@@ -1660,7 +1574,6 @@ async fn post_reset(State(s): State<S>, u: User, Json(b): Json<ResetBody>) -> Ap
             eprintln!("reset failed: {e}");
             ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Reset failed.".into())
         })?;
-        c.execute("DELETE FROM app_settings WHERE key=?1", [SHEET_SETTING])?;
         Ok(())
     })
     .await?;
@@ -1702,7 +1615,6 @@ pub fn router(state: S) -> Router {
         .route("/folders/{id}", axum::routing::delete(delete_folder))
         .route("/verses", get(list_verses))
         .route("/verses/import", post(import_verses).delete(remove_imported).layer(DefaultBodyLimit::max(MAX_WORKBOOK + 1024 * 1024)))
-        .route("/verses/import/google", post(import_google_sheet))
         .route("/verses/import/rows", get(list_rows_to_fix))
         .route("/verses/import/rows/{id}", post(fix_row).delete(dismiss_row))
         .route("/verses/{id}", axum::routing::patch(correct_verse))
@@ -1712,7 +1624,8 @@ pub fn router(state: S) -> Router {
         .route("/context-tagalog", get(list_context_tagalog).post(save_context_tagalog))
         .route("/ai/translate", post(translate_context))
         .route("/ai/translate-text", post(translate_text))
-        .route("/ai/status", get(ai_status))
+        .route("/ai/status", get(models::status))
+        .route("/ai/pull", get(models::progress).post(models::start_pull).delete(models::cancel_pull))
         .route("/ai/suggest", post(ai_suggest))
         .route("/ai/notes", post(ai_notes))
         .route("/lectures", get(list_lectures).post(save_lecture))

@@ -1,4 +1,4 @@
-//! Reads verses from an Excel file or a Google Sheet with Translation (or PET), Book, Chapter,
+//! Reads verses from an Excel file with Translation (or PET), Book, Chapter,
 //! Verse and Content columns.
 //!
 //! Spreadsheets kept by hand carry slips, so each is either corrected in a way that cannot
@@ -151,43 +151,6 @@ pub fn read_workbook(bytes: &[u8]) -> Result<Vec<SheetRow>, String> {
         }
     }
     Err(COLUMNS_NEEDED.into())
-}
-
-/// The rows of a sheet downloaded as CSV. Verse text can run over several lines.
-pub fn read_csv(bytes: &[u8]) -> Result<Vec<SheetRow>, String> {
-    let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
-    let mut reader = csv::ReaderBuilder::new().has_headers(false).flexible(true).from_reader(bytes);
-    let mut table = Vec::new();
-    for record in reader.records() {
-        let record = record.map_err(|_| "This sheet could not be read.".to_string())?;
-        table.push(record.iter().map(str::to_string).collect::<Vec<_>>());
-    }
-    rows_under_header(table, 0)?.ok_or_else(|| COLUMNS_NEEDED.into())
-}
-
-static SHEET_LINK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"/spreadsheets/d/([A-Za-z0-9_-]{20,})").unwrap());
-static SHEET_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z0-9_-]{20,}$").unwrap());
-static GID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[?#&]gid=(\d+)").unwrap());
-
-/// Works out the spreadsheet and tab from what the user entered: a link, a spreadsheet's
-/// ID, or the gid alone, which means a tab of the spreadsheet used last. Only letters,
-/// digits, "-" and "_" can come out, so this cannot steer the download anywhere else.
-pub fn sheet_address(input: &str, remembered: Option<&str>) -> Result<(String, String), String> {
-    let input = input.trim();
-    if !input.is_empty() && input.len() <= 18 && input.chars().all(|c| c.is_ascii_digit()) {
-        return match remembered {
-            Some(id) => Ok((id.to_string(), input.to_string())),
-            None => Err("A gid only names one tab of a spreadsheet. Paste the whole Google Sheets link the first time. After that, the gid alone is enough.".into()),
-        };
-    }
-    let id = match SHEET_LINK.captures(input) {
-        Some(c) => c[1].to_string(),
-        None if SHEET_ID.is_match(input) => input.to_string(),
-        None => return Err("That is not a Google Sheets link. It should look like docs.google.com/spreadsheets/d/.../edit?gid=0".into()),
-    };
-    // A link with no tab named opens the first tab, whose gid is 0 unless it was replaced.
-    let gid = GID.captures(input).map_or_else(|| "0".to_string(), |c| c[1].to_string());
-    Ok((id, gid))
 }
 
 static SERIES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^(III|II|I|3|2|1)\s+(.+)$").unwrap());
@@ -769,43 +732,6 @@ mod tests {
         let file = workbook(&[("S", &[&["Content", "Verse", "Chapter", "Book", "Translation"], &["words", "3", "2", "John", "NIV"]])]);
         let rows = read_workbook(&file).unwrap();
         assert_eq!((rows[0].translation.as_str(), rows[0].book.as_str(), rows[0].verse.as_str(), rows[0].content.as_str()), ("NIV", "John", "3", "words"));
-    }
-
-    const SHEET: &str = "1abcDEFghiJKLmnoPQRstuVWXyz_0123456789-abcd";
-
-    #[test]
-    fn a_sheet_is_found_from_a_link_an_id_or_a_gid_alone() {
-        let expect = |id: &str, gid: &str| Ok((id.to_string(), gid.to_string()));
-        let link = format!("https://docs.google.com/spreadsheets/d/{SHEET}/edit?gid=123#gid=123");
-        assert_eq!(sheet_address(&link, None), expect(SHEET, "123"));
-        assert_eq!(sheet_address(&format!(" https://docs.google.com/spreadsheets/d/{SHEET}/edit#gid=7 "), Some("other")), expect(SHEET, "7"), "a new link replaces the saved one");
-        assert_eq!(sheet_address(&format!("https://docs.google.com/spreadsheets/d/{SHEET}/edit"), None), expect(SHEET, "0"));
-        assert_eq!(sheet_address(SHEET, None), expect(SHEET, "0"));
-        assert_eq!(sheet_address("1945", Some(SHEET)), expect(SHEET, "1945"));
-    }
-
-    #[test]
-    fn a_gid_alone_needs_a_spreadsheet_used_before() {
-        assert!(sheet_address("0", None).unwrap_err().contains("whole Google Sheets link"));
-    }
-
-    #[test]
-    fn nothing_but_a_sheet_id_can_reach_the_download_address() {
-        for bad in ["", "hello", "https://evil.example/file.csv", "https://docs.google.com/document/d/abc/edit", "../../etc/passwd", "short/../id"] {
-            assert!(sheet_address(bad, Some(SHEET)).unwrap_err().contains("not a Google Sheets link"), "{bad}");
-        }
-        let (id, gid) = sheet_address(&format!("https://docs.google.com/spreadsheets/d/{SHEET}@evil.example/edit?gid=1&x=2"), None).unwrap();
-        assert_eq!((id.as_str(), gid.as_str()), (SHEET, "1"));
-    }
-
-    #[test]
-    fn a_csv_download_reads_the_same_as_excel_with_text_over_several_lines() {
-        let csv = "\u{FEFF}PET,Book,Chapter,Verse,Content\nMSG,Acts,11,25,\"25Ang talata, ay\nhalimbawa\"\n,,,,\nCEV,Acts,2,18(a),text\n";
-        let rows = read_csv(csv.as_bytes()).unwrap();
-        assert_eq!(rows.len(), 2);
-        assert_eq!((rows[0].row, rows[0].translation.as_str(), rows[0].content.as_str()), (2, "MSG", "25Ang talata, ay\nhalimbawa"));
-        assert_eq!((rows[1].row, rows[1].verse.as_str()), (4, "18(a)"));
-        assert!(read_csv(b"Name,Age\nA,1\n").unwrap_err().contains("needs a sheet"));
     }
 
     #[test]

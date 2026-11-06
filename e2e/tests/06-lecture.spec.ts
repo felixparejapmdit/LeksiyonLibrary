@@ -170,12 +170,36 @@ test('each objective gets up to five verses, and an objective added later gets i
   await notesDone(page);
   const first = await keysOf(page, 0);
 
+  // Each objective has a tab, so the others are one click away rather than further down.
+  const tabs = page.getByTestId('objective-tab');
+  const groups = page.getByTestId('objective-group');
+  await expect(tabs).toHaveCount(2);
+  await expect(tabs.nth(0)).toHaveAttribute('aria-selected', 'true');
+  await expect(tabs.nth(0)).toContainText('Teach that God chose his people');
+  await expect(tabs.nth(0).getByTestId('objective-tab-count')).toHaveText('5');
+  await expect(groups.nth(0)).toBeVisible();
+  await expect(groups.nth(1)).toBeHidden();
+  await tabs.nth(1).click();
+  await expect(tabs.nth(1)).toHaveAttribute('aria-selected', 'true');
+  await expect(groups.nth(0)).toBeHidden();
+  await expect(groups.nth(1)).toBeVisible();
+  await expect(groups.nth(1)).toHaveAttribute('aria-labelledby', 'objective-tab-1');
+  // A verse added from a tab is counted on it.
+  await groups.nth(1).getByTestId('suggestion-add').first().click();
+  await expect(tabs.nth(1).getByTestId('objective-tab-count')).toHaveText('1/5');
+  await page.getByTestId('workspace-remove').first().click();
+  // The arrow keys move between the tabs.
+  await tabs.nth(1).press('ArrowLeft');
+  await expect(tabs.nth(0)).toHaveAttribute('aria-selected', 'true');
+  await expect(tabs.nth(0)).toBeFocused();
+
   // A third objective gets its own verses; those already found for the others stay.
   await page.getByTestId('lecture-objective-add').click();
   await page.getByTestId('lecture-objective').nth(2).fill('Show that God keeps his promises to his people');
   await page.getByTestId('lecture-suggest').click();
   await expect(page.getByTestId('objective-title')).toHaveCount(3);
   await expect(page.getByTestId('objective-title').nth(2)).toHaveText('Show that God keeps his promises to his people');
+  await expect(page.getByTestId('objective-tab').nth(2), 'the new objective opens').toHaveAttribute('aria-selected', 'true');
   expect(await keysOf(page, 0)).toEqual(first);
   await notesDone(page);
 

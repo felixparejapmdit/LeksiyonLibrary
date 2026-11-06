@@ -32,6 +32,8 @@ export interface UploadItem {
   id: number;
   name: string;
   status: 'queued' | 'working' | 'done' | 'error';
+  /** Verses read from it, once it is added. */
+  verseCount?: number;
   message: string;
   attention?: string;
   progress: number;
@@ -58,7 +60,6 @@ export interface State {
   scripture: Record<string, ScriptureContext>;
   tagalog: Record<string, TagalogContext>;
   contextLanguage: Language;
-  hasSavedSheet: boolean;
   rowsToFix: RowToFix[];
   lastBackupAt: string | null;
   editingContextKey: string | null;
@@ -102,7 +103,6 @@ let state: State = {
   scripture: {},
   tagalog: {},
   contextLanguage: stored('lv.contextLanguage', 'en') === 'tl' ? 'tl' : 'en',
-  hasSavedSheet: false,
   rowsToFix: [],
   lastBackupAt: null,
   editingContextKey: null,
@@ -202,7 +202,6 @@ export async function refreshAll() {
     tagalog,
     rowsToFix,
     lastBackupAt: status.last_backup_at,
-    hasSavedSheet: status.has_saved_sheet,
     folders,
     lectures,
     selectedId: selectedStillExists ? state.selectedId : (newestFirst(lessons)[0]?.id ?? null),

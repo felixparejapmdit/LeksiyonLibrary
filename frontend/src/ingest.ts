@@ -55,14 +55,17 @@ export function enqueueFolder(files: Iterable<File>, target: UploadTarget = getS
 }
 
 /** What was missing after reading a lesson, so it can be checked by hand. */
-function needsAttention(lesson: Lesson, verseCount: number) {
+function needsAttention(lesson: Lesson, verseCount: number, unread: { page: number; text: string }[]) {
   const missing = [
     ...(verseCount === 0 ? ['no verses'] : []),
     // A pastoral visit has no issue or objectives printed.
     ...(lesson.category !== 'pastoral' && !lesson.issue && lesson.objectives.length === 0 ? ['no issue or objectives'] : []),
     ...(!lesson.lesson_date && !lesson.date_label ? ['no date'] : []),
   ];
-  return missing.length ? `Check this lesson: ${missing.join(', ')} found.` : undefined;
+  const notes = missing.length ? [`Check this lesson: ${missing.join(', ')} found.`] : [];
+  // A reference the scan garbled is left out rather than guessed; it can be added by hand.
+  for (const u of unread) notes.push(`A reference on page ${u.page} could not be read, so its verse was not added: "${u.text}". Add it by hand.`);
+  return notes.length ? notes.join(' ') : undefined;
 }
 
 /** Files go where the upload dialog was opened from: the Lesson Library or Pastoral Visits. */
@@ -166,11 +169,11 @@ async function ingest(id: number, file: File, target: UploadTarget) {
 
     patch(id, { message: 'Saving to vault', progress: 0.94 });
     const firstLesson = getState().lessons.length === 0;
-    const { lesson, verse_count } = await api.uploadLesson(file, pages, usedOcr ? 'ocr' : 'text', target);
+    const { lesson, verse_count, unread = [] } = await api.uploadLesson(file, pages, usedOcr ? 'ocr' : 'text', target);
     await refreshAll();
     if (firstLesson) selectLesson(lesson.id);
     const found = verse_count === 1 ? '1 verse' : `${verse_count} verses`;
-    patch(id, { status: 'done', progress: 1, message: `Added "${lesson.title}" with ${found}`, attention: needsAttention(lesson, verse_count), lessonId: lesson.id });
+    patch(id, { status: 'done', progress: 1, verseCount: verse_count, message: `Added "${lesson.title}" with ${found}`, attention: needsAttention(lesson, verse_count, unread), lessonId: lesson.id });
     toast(`Added "${lesson.title}" to ${target === 'pastoral' ? 'Pastoral Visits' : 'the Lesson Library'} (${found}). Check what was read before relying on it.`);
   } catch (e) {
     const message = e instanceof ApiError ? e.message : 'This PDF could not be processed.';

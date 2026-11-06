@@ -235,6 +235,7 @@ test.describe('objective groups', () => {
       await expect(page.getByTestId('objective-title')).toHaveText(['planting', 'walking']);
       await expect(page.getByTestId('notes-loading')).toHaveCount(0, { timeout: 15_000 });
       await page.getByTestId('objective-group').nth(0).getByTestId('suggestion-add').first().click();
+      await page.getByTestId('objective-tab').nth(1).click();
       await page.getByTestId('objective-group').nth(1).getByTestId('suggestion-add').first().click();
       await expect(page.getByTestId('workspace-objective')).toHaveText(['planting', 'walking']);
 

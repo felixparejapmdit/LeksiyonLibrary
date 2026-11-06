@@ -43,7 +43,7 @@ To move to another computer, including from Windows to a Mac, make an encrypted 
 
 Files you export, such as a downloaded PDF or a copied lecture, are not encrypted.
 
-The app talks only to this computer, with one exception you start yourself: importing from Google Sheets downloads that sheet. It sends nothing from your vault.
+The app talks only to this computer. The one download it can start is the AI model, when you press **Download and install** in Settings: Ollama fetches it from ollama.com, and nothing from your vault is sent.
 
 ## How it is organised
 
@@ -51,15 +51,16 @@ The parts are kept separate, and they work together:
 
 - **All Archives:** every lesson in one list, worship service lessons and pastoral visits together, with tabs for Midweek, Weekend and Pastoral Visits. **Not checked yet** lists every upload still to check.
 - **Lesson Library:** your worship service lessons. Drop PDFs in, and the title, issue, objectives and verses are read from each one. Every upload is then checked by hand: **Check what was read** opens the PDF beside what was read, where you correct anything wrong, remove anything that is not a verse of the lesson, and confirm. Lessons not checked yet are marked **Check**. **Verses from lessons** lists the verses read from these PDFs.
-- **Pastoral Visits:** your pastoral visit PDFs, with their own upload button. Everything uploaded there is filed as a pastoral visit, whatever the file is called. The title is read from the heading, the date from a file name starting with it (20210110_...), and the verses from the numbered points. A verse printed in English and then in Tagalog, or the other way round, is kept as two verses, one in each language.
-- **Verse Library** (under Pastoral Visits): the verses read from pastoral visit PDFs, and verses imported from Excel files and Google Sheets, imported on that page.
-- **Lesson Assistant** (the Lecture Maker): builds lectures from the verses in both libraries. Every verse is labelled with where it came from: **Verse Library** with the sheet row or the pastoral visit and page, or **Lesson Library** with the lesson and page.
+- **Pastoral Visits:** your pastoral visit PDFs. Drop several at once on the page, or choose files or a folder; each is read in turn, with its progress shown on the page. Everything uploaded there is filed as a pastoral visit, whatever the file is called. The title is read from the heading, the date from a file name starting with it (20210110_...), and the verses from the numbered points. A verse printed in English and then in Tagalog, or the other way round, is kept as two verses, one in each language. When a scan garbles a book name beyond reading, that verse is left out rather than guessed, and the upload names the line and page so you can add it by hand.
+- **Verse Library** (under Pastoral Visits): the verses read from pastoral visit PDFs, and verses imported from Excel files.
+- **Import Verses** (under Pastoral Visits): imports verses from an Excel file into the Verse Library.
+- **Lesson Assistant** (the Lecture Maker): builds lectures from the verses in both libraries. Every verse is labelled with where it came from: **Verse Library** with the Excel row or the pastoral visit and page, or **Lesson Library** with the lesson and page.
 
 A verse cited by a worship service lesson belongs to the Lesson Library, even if a pastoral visit cites it too. A verse that no lesson cites any more, such as one you verified before deleting its lesson, is kept in the Verse Library.
 
 ## Lesson Assistant
 
-Write up to four objectives, one in each field; **Add objective** adds a field. Each objective is given up to five verses, without choosing how many. An objective added later gets its own verses when you press Suggest verses again, and those already found for the others stay. Verses come only from your two libraries, shown exactly as stored. If fewer than three match, the app says so instead of adding unrelated verses. If none of them suit you, **Suggest more** brings the next matches for that objective, never repeating one already shown, until nothing else matches.
+Write up to four objectives, one in each field; **Add objective** adds a field. Each objective is given up to five verses, without choosing how many. With more than one objective, each has its own tab above the suggestions, showing how many verses it has and how many you added; the arrow keys move between them. An objective added later gets its own verses, and its tab opens, when you press Suggest verses again, and those already found for the others stay. Verses come only from your two libraries, shown exactly as stored. If fewer than three match, the app says so instead of adding unrelated verses. If none of them suit you, **Suggest more** brings the next matches for that objective, never repeating one already shown, until nothing else matches.
 
 Verses from the Lesson Library follow how a lesson is built. A lesson teaches its first objective in the beginning (Pasimula or Introduction), its second in part I., its third in II., and so on, and each part asks questions with verses under them. Your objective is compared with every lesson's own objectives, together with each part's heading and questions, and only the verses printed in a part that matches are suggested, those answering a matching question first. One objective can draw verses from several lessons. A lesson without objectives, such as a pastoral visit, is compared as a whole. If you enter only an issue or topic, it is compared with whole lessons instead, and their verses come from across each lesson. Each such suggestion shows the lesson, its PDF file, the objective and part it was found under, and the question it answers there. Verse Library verses are matched by their wording.
 
@@ -73,14 +74,13 @@ Saved lectures keep each verse under its objective. From the workspace you can c
 
 ## Importing verses
 
-The Verse Library has an **Import verses from Excel or Google Sheets** panel at the top. The sheet needs these columns in its first row, in any order: Translation (or PET), Book, Chapter, Verse and Content.
+**Import Verses**, under Pastoral Visits, imports an Excel file into the Verse Library. It is also reached from the Verse Library's **Import from Excel** button. The sheet needs these columns in its first row, in any order: Translation (or PET), Book, Chapter, Verse and Content.
 
-- **From an Excel file:** the most private way. The file is read in memory and not kept. The original on your computer is not encrypted, so keep it somewhere safe or delete it afterwards.
-- **From Google Sheets:** paste the link. After that the spreadsheet is remembered, so the `gid` of another tab is enough. The sheet must be shared as Anyone with the link, which means anyone who gets the link can read it. Turn that off again after importing if the verses are sensitive.
+The file is read in memory and not kept. The original on your computer is not encrypted, so keep it somewhere safe or delete it afterwards. Verses kept in Google Sheets are imported the same way: in Google Sheets choose File, Download, Microsoft Excel (.xlsx), then choose that file.
 
 You see a preview before anything is saved. Language is read from each row's words, because a translation code does not say what language a row is in. Misspelled books and Excel's drag-fill of a code (AMP2015, AMP2016, ...) are corrected and listed. When the text starts with a number other than the Verse column's, stuck to the first word as in `9Ang`, the column is taken as right and the number is removed. A number followed by a space may belong to the sentence, so that row is imported and marked for you to check.
 
-A book missing its number ("Peter") could be either book, so that row is left out and kept under **Rows to fix** in that panel, where you choose the book and save it. You can also fix it in the sheet and import again: rows already in the vault are not added twice.
+A book missing its number ("Peter") could be either book, so that row is left out and kept under **Rows to fix** on the Import Verses page, where you choose the book and save it. You can also fix it in the sheet and import again: rows already in the vault are not added twice.
 
 Imported verses are encrypted like the rest of the vault, and stay unverified until you check them. The original cell is kept beside the cleaned text. **Remove imported verses** undoes an import, keeping anything you verified or use in a saved lecture.
 
@@ -93,6 +93,8 @@ Imported verses are encrypted like the rest of the vault, and stay unverified un
 - **Backup reminder:** appears if you have lessons and no backup in the last 14 days.
 
 ## Local AI (optional)
+
+Install [Ollama](https://ollama.com/download), then open **Settings** and press **Download and install** in the AI assistant card. Ollama downloads and installs both models in one step, about 3.2 GB, with the progress shown. Or from a terminal:
 
     ollama pull llama3.2:3b
     ollama pull bge-m3

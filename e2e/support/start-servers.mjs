@@ -27,8 +27,11 @@ function embed(text) {
 
 let mode = 'good';
 let lastPrompt = null;
-// The sheet that the stand-in for Google answers with. Synthetic, like all test data.
-let sheet = { status: 200, type: 'text/csv; charset=utf-8', body: '' };
+// The models the stand-in has installed. A download adds one; /__models sets them for a test.
+const ALL_MODELS = ['llama3.2:3b', 'bge-m3:latest'];
+let models = [...ALL_MODELS];
+// How a download goes: 'ok', 'fail' (Ollama reports an error) or 'hang' (it never finishes).
+let pullMode = 'ok';
 
 const stub = createServer((req, res) => {
   let body = '';
@@ -43,16 +46,32 @@ const stub = createServer((req, res) => {
       return send(200, { mode });
     }
     if (req.url === '/__last') return send(200, { lastPrompt });
-    if (req.url === '/__sheet') {
-      sheet = { ...sheet, status: 200, type: 'text/csv; charset=utf-8', ...JSON.parse(body) };
-      return send(200, {});
-    }
-    if (req.url.startsWith('/spreadsheets/d/')) {
-      res.writeHead(sheet.status, { 'Content-Type': sheet.type });
-      return res.end(sheet.body);
+    if (req.url === '/__models') {
+      const wanted = JSON.parse(body);
+      models = wanted.models ?? [...ALL_MODELS];
+      pullMode = wanted.pull ?? 'ok';
+      return send(200, { models });
     }
     if (mode === 'down') return req.socket.destroy();
-    if (req.url === '/api/tags') return send(200, { models: [{ name: 'llama3.2:3b' }, { name: 'bge-m3:latest' }] });
+    if (req.url === '/api/tags') return send(200, { models: models.map((name) => ({ name })) });
+    if (req.url === '/api/pull') {
+      // Ollama answers with one line of JSON per step.
+      const { model } = JSON.parse(body);
+      res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
+      const steps = [{ status: 'pulling manifest' }, ...[1, 2, 3, 4].map((n) => ({ status: 'pulling 6a0746a1ec1a', digest: 'sha256:6a07', total: 4000, completed: n * 1000 })), { status: 'verifying sha256 digest' }, { status: 'writing manifest' }, { status: 'success' }];
+      if (pullMode === 'fail') return res.end(JSON.stringify({ error: 'pull model manifest: file does not exist' }) + '\n');
+      let i = 0;
+      const next = () => {
+        if (pullMode === 'hang' && i === 3) return; // stays open until cancelled
+        if (i === steps.length) {
+          if (!models.some((m) => m.split(':')[0] === model.split(':')[0])) models.push(model.includes(':') ? model : `${model}:latest`);
+          return res.end();
+        }
+        res.write(JSON.stringify(steps[i++]) + '\n');
+        setTimeout(next, 150);
+      };
+      return next();
+    }
     if (req.url === '/api/embed') return send(200, { embeddings: JSON.parse(body).input.map(embed) });
     if (req.url === '/api/chat') {
       // Speakers and background are asked for one at a time, separately from verse notes.
@@ -113,7 +132,6 @@ const app = spawn(exe, [], {
     LV_STATIC: join(root, 'frontend', 'dist'),
     LV_OLLAMA_URL: `http://127.0.0.1:${STUB_PORT}`,
     LV_OLLAMA_MODEL: 'llama3.2:3b',
-    LV_SHEETS_URL: `http://127.0.0.1:${STUB_PORT}`,
   },
   stdio: 'inherit',
 });

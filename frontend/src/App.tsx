@@ -4,6 +4,7 @@ import { BiblesPage } from './pages/BiblesPage';
 import { LecturePage } from './pages/LecturePage';
 import { SettingsPage } from './pages/SettingsPage';
 import { SearchPage } from './pages/SearchPage';
+import { ImportPage } from './pages/ImportPage';
 import { Header } from './components/Header';
 import { BottomNav } from './components/BottomNav';
 import { DesktopFrame } from './components/Layout';
@@ -17,6 +18,8 @@ function Page() {
       return <BiblesPage key="verse" library="verse" />;
     case '/lesson-verses':
       return <BiblesPage key="lesson" library="lesson" />;
+    case '/import':
+      return <ImportPage />;
     case '/lecture':
       return <LecturePage />;
     case '/settings':
