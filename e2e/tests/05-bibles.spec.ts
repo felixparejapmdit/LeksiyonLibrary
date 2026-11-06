@@ -5,9 +5,11 @@ import { samples } from '../support/samples';
 const group = (page: Page, key: string) => page.locator(`[data-testid="verse-group"][data-key="${key}"]`);
 const card = (page: Page, key: string, lang: string) => group(page, key).locator(`[data-testid="verse-card"][data-language="${lang}"]`);
 
+// The verses read from lessons, which the Lesson Library keeps apart from imported ones.
 test.beforeEach(async ({ app: page }) => {
-  await page.getByTestId('side-bibles').click();
+  await page.getByTestId('side-lesson-verses').click();
   await expect(page.getByTestId('bibles-page')).toBeVisible();
+  await expect(page.getByTestId('bibles-title')).toHaveText('Verses from lessons');
 });
 
 test('verses are grouped by reference with Tagalog and English side by side', async ({ page }) => {
@@ -134,7 +136,7 @@ test('verifying locks a verse for good: no UI path and no API path can change it
   expect((await tamper.json()).error).toContain('cannot be changed');
 
   await page.reload();
-  await page.getByTestId('side-bibles').click();
+  await page.getByTestId('side-lesson-verses').click();
   await expect(c.getByTestId('verse-text')).toHaveText(text!);
   await expect(c).toHaveAttribute('data-status', 'verified');
   await expect(page.getByTestId('bibles-policy')).toContainText('1 of');

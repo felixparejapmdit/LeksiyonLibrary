@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import { ArrowLeft, ChevronLeft, ChevronRight, ExternalLink, FileText, Languages, Maximize, Pencil, RotateCw, ZoomIn, ZoomOut } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, ClipboardCheck, ExternalLink, FileText, Languages, Maximize, Pencil, RotateCw, ZoomIn, ZoomOut } from 'lucide-react';
 import { lessonFileUrl, type Lesson } from '../api';
 import { cachedPage, lessonDocument, rememberPage, renderToCanvas } from '../pdf';
 import { selectLesson, setState, useStore } from '../store';
@@ -76,7 +76,8 @@ function LessonSummary({ lesson }: { lesson: Lesson }) {
  * step, so the page on screen is never blank. Zoom resizes the current image
  * immediately via CSS, then swaps in a sharp render when it is ready.
  */
-export function PdfViewer({ lesson, onBack }: { lesson: Lesson; onBack?: () => void }) {
+/** `embedded` is the copy beside the check dialog's form, which already shows the lesson's details. */
+export function PdfViewer({ lesson, onBack, embedded }: { lesson: Lesson; onBack?: () => void; embedded?: boolean }) {
   const page = useStore((s) => s.viewerPage);
   const counterpart = useStore((s) =>
     s.lessons.find((l) => l.id !== lesson.id && l.language !== lesson.language && l.lesson_date && l.lesson_date === lesson.lesson_date && l.category === lesson.category),
@@ -211,7 +212,7 @@ export function PdfViewer({ lesson, onBack }: { lesson: Lesson; onBack?: () => v
         )}
         <FileText size={14} className="mx-1 text-muted max-sm:hidden" aria-hidden="true" />
         <span className="mr-auto" />
-        {counterpart && (
+        {counterpart && !embedded && (
           <button className="btn" data-testid="viewer-counterpart" onClick={() => selectLesson(counterpart.id, 1)}>
             <Languages size={14} /> {counterpart.language === 'tl' ? 'Tagalog' : 'English'}
           </button>
@@ -240,7 +241,14 @@ export function PdfViewer({ lesson, onBack }: { lesson: Lesson; onBack?: () => v
           <ExternalLink size={15} />
         </a>
       </div>
-      <LessonSummary lesson={lesson} />
+      {!embedded && lesson.needs_check && (
+        <div className="no-print flex flex-none flex-wrap items-center gap-2 border-b border-line bg-raised px-3 py-1.5 text-[13px]" role="status" data-testid="viewer-needs-check">
+          <ClipboardCheck size={14} className="flex-none text-warn" />
+          <span className="min-w-0 flex-1">Not checked yet. Compare what was read from this PDF before relying on it.</span>
+          <button className="btn !min-h-7 max-lg:!min-h-11" data-testid="viewer-check" onClick={() => setState({ editingLessonId: lesson.id })}>Check now</button>
+        </div>
+      )}
+      {!embedded && <LessonSummary lesson={lesson} />}
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto p-4" data-testid="viewer-scroll" style={{ overscrollBehavior: 'contain', scrollbarGutter: 'stable' }}>
         {error ? (
           <p className="m-auto mt-10 max-w-xs text-center text-muted" data-testid="viewer-error">This PDF could not be opened. Try downloading it instead.</p>

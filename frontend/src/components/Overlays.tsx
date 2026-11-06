@@ -1,21 +1,28 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { BellRing, CheckCircle2, CircleAlert, FileUp, FolderUp, Loader2, UploadCloud, X } from 'lucide-react';
-import { api, saveFile, type Category, type Language } from '../api';
+import { BellRing, CheckCircle2, CircleAlert, ClipboardCheck, FileUp, FolderUp, Loader2, PencilLine, Trash2, UploadCloud, X } from 'lucide-react';
+import { api, saveFile, type Category, type Language, type Verse } from '../api';
 import { enqueueFiles, enqueueFolder } from '../ingest';
-import { errorText, refreshAll, setState, toast, useStore } from '../store';
+import { askConfirm, errorText, getState, refreshAll, selectLesson, setState, toast, useStore } from '../store';
+import { PdfViewer } from './PdfViewer';
 import { backgroundOf, ContextLanguageSwitch, scopeNames, tagalogItems } from './VerseContext';
 
-function Modal({ title, subtitle, onClose, children, testId, wide }: { title: string; subtitle?: string; onClose: () => void; children: React.ReactNode; testId: string; wide?: boolean }) {
+// Dialogs can open over other dialogs. Escape closes only the one on top.
+const openModals: object[] = [];
+
+function Modal({ title, subtitle, onClose, children, testId, wide, full }: { title: string; subtitle?: string; onClose: () => void; children: React.ReactNode; testId: string; wide?: boolean; full?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
+    const token = {};
+    openModals.push(token);
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape' && openModals[openModals.length - 1] === token) onClose();
     };
     document.addEventListener('keydown', onKey);
     const previous = document.activeElement as HTMLElement | null;
     ref.current?.focus();
     return () => {
+      openModals.splice(openModals.indexOf(token), 1);
       document.removeEventListener('keydown', onKey);
       previous?.focus?.();
     };
@@ -36,7 +43,7 @@ function Modal({ title, subtitle, onClose, children, testId, wide }: { title: st
         aria-label={title}
         tabIndex={-1}
         data-testid={testId}
-        className={`flex max-h-[92dvh] w-full flex-col rounded-xl border border-line bg-panel outline-none ${wide ? 'max-w-2xl' : 'max-w-lg'}`}
+        className={`flex max-h-[92dvh] w-full flex-col rounded-xl border border-line bg-panel outline-none ${full ? 'max-w-6xl lg:h-[92dvh]' : wide ? 'max-w-2xl' : 'max-w-lg'}`}
       >
         <div className="flex items-start justify-between gap-3 border-b border-line px-4 py-3">
           <div>
@@ -141,6 +148,7 @@ export function UploadDialog() {
                 </div>
                 <p className="m-0 mt-1 text-xs text-muted" data-testid="upload-message">{u.message}</p>
                 {u.attention && <p className="m-0 mt-0.5 text-xs text-warn" data-testid="upload-attention">{u.attention}</p>}
+                {u.status === 'done' && u.lessonId && <UploadCheck lessonId={u.lessonId} />}
                 {u.status === 'working' && (
                   <div className="mt-1.5 h-1 overflow-hidden rounded bg-raised" role="progressbar" aria-valuenow={Math.round(u.progress * 100)} aria-valuemin={0} aria-valuemax={100} aria-label={`Processing ${u.name}`}>
                     <div className="h-full origin-left bg-accent2" style={{ transform: `scaleX(${u.progress})`, transition: 'transform 200ms linear' }} />
@@ -158,6 +166,19 @@ export function UploadDialog() {
         </button>
       </div>
     </Modal>
+  );
+}
+
+/** Every upload is checked by hand: the parser can misread a title, an objective or a verse. */
+function UploadCheck({ lessonId }: { lessonId: string }) {
+  const needsCheck = useStore((s) => s.lessons.find((l) => l.id === lessonId)?.needs_check);
+  if (needsCheck === undefined) return null;
+  return needsCheck ? (
+    <button className="btn mt-1.5 !min-h-8 max-lg:!min-h-11" data-testid="upload-check" onClick={() => setState({ uploadOpen: false, editingLessonId: lessonId })}>
+      <ClipboardCheck size={13} /> Check what was read
+    </button>
+  ) : (
+    <p className="m-0 mt-0.5 flex items-center gap-1 text-xs text-ok" data-testid="upload-checked"><CheckCircle2 size={12} /> Checked</p>
   );
 }
 
@@ -431,13 +452,76 @@ function ContextForm({ verseKey: key }: { verseKey: string }) {
 }
 
 const closeEdit = () => setState({ editingLessonId: null });
+const replaceVerse = (v: Verse) => setState({ verses: getState().verses.map((x) => (x.id === v.id ? v : x)) });
 
+/** A verse read from this lesson, which can be corrected, or removed if it is not a verse at all. */
+function LessonVerse({ verse, lessonId, page }: { verse: Verse; lessonId: string; page: number }) {
+  const [correcting, setCorrecting] = useState(false);
+  const verified = verse.status === 'verified';
+  return (
+    <li className="rounded-md border border-line p-2" data-testid="check-verse" data-verse-id={verse.id}>
+      <div className="flex flex-wrap items-center gap-x-1.5 text-xs">
+        <span className="font-semibold text-fg" data-testid="check-verse-ref">{verse.ref_printed}</span>
+        <span className="text-muted">{verse.language === 'tl' ? 'Tagalog' : 'English'}{verse.version ? ` · ${verse.version}` : ''} · page {page}</span>
+        <span className={verified ? 'text-ok' : 'text-warn'}>{verified ? 'Verified' : 'Unverified'}</span>
+      </div>
+      <p className="m-0 mt-1 line-clamp-3 text-[13px] leading-relaxed" data-testid="check-verse-text">{verse.text || 'Reference only. No text was printed.'}</p>
+      <div className="mt-1.5 flex flex-wrap gap-1">
+        {!verified && (
+          <button type="button" className="btn !min-h-7 max-lg:!min-h-11" data-testid="check-verse-correct" onClick={() => setCorrecting(true)}>
+            <PencilLine size={12} /> Correct
+          </button>
+        )}
+        <button
+          type="button"
+          className="btn !min-h-7 max-lg:!min-h-11"
+          data-testid="check-verse-remove"
+          onClick={() =>
+            askConfirm({
+              title: `Remove ${verse.ref_printed} from this lesson?`,
+              body: 'Use this when what was read is not a verse of this lesson. It stops being listed here. If no other lesson or lecture uses it and it is not verified, it is deleted.',
+              confirmLabel: 'Remove from lesson',
+              onConfirm: async () => {
+                await api.removeLessonVerse(lessonId, verse.id);
+                await refreshAll();
+                toast(`${verse.ref_printed} removed from this lesson`);
+              },
+            })
+          }
+        >
+          <Trash2 size={12} /> Not a verse of this lesson
+        </button>
+      </div>
+      {correcting && (
+        <VerseCorrectionDialog
+          text={verse.text}
+          raw={verse.ocr_raw}
+          reference={verse.ref_printed}
+          onClose={() => setCorrecting(false)}
+          onSave={async (patch) => {
+            replaceVerse(await api.correctVerse(verse.id, patch));
+            setCorrecting(false);
+            toast('Correction saved');
+          }}
+        />
+      )}
+    </li>
+  );
+}
+
+/**
+ * Edits a lesson's details. A lesson that was just uploaded opens here to be checked:
+ * what the parser read is shown beside the PDF, so the two can be compared and confirmed.
+ */
 export function EditLessonDialog() {
   const id = useStore((s) => s.editingLessonId);
   const lesson = useStore((s) => s.lessons.find((l) => l.id === s.editingLessonId) ?? null);
   const folders = useStore((s) => s.folders);
+  const verses = useStore((s) => s.verses);
   const [form, setForm] = useState({ title: '', category: 'weekend' as Category, language: 'en' as Language, lesson_date: '', location: '', author: '', folder_id: '', issue: '', objectives: '' });
   const [saving, setSaving] = useState(false);
+  // Fixed when the dialog opens, so confirming does not change the dialog under the user.
+  const [checking, setChecking] = useState(false);
   useEffect(() => {
     if (lesson) {
       setForm({
@@ -452,87 +536,135 @@ export function EditLessonDialog() {
         objectives: lesson.objectives.join('\n'),
       });
       setSaving(false);
+      setChecking(lesson.needs_check);
+      // The PDF beside the form opens at this lesson's first page.
+      if (getState().selectedId !== lesson.id) selectLesson(lesson.id);
     }
     // Only when a different lesson opens; background refreshes must not wipe typing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+  const found = useMemo(() => {
+    if (!lesson) return [];
+    const order = (v: Verse) => lesson.verse_keys.indexOf(v.canonical_key);
+    return verses
+      .flatMap((v) => {
+        const source = v.sources.find((x) => x.lesson_id === lesson.id);
+        return source ? [{ verse: v, page: source.page }] : [];
+      })
+      .sort((a, b) => a.page - b.page || order(a.verse) - order(b.verse) || a.verse.language.localeCompare(b.verse.language));
+  }, [verses, lesson]);
   if (!id || !lesson) return null;
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const save = async (checked: boolean) => {
+    setSaving(true);
+    try {
+      await api.patchLesson(id, { ...form, objectives: form.objectives.split('\n'), ...(checked ? { checked: true } : {}) });
+      await refreshAll();
+      closeEdit();
+      toast(checked ? 'Lesson checked and confirmed' : 'Lesson updated');
+    } catch (err) {
+      setSaving(false);
+      toast(errorText(err), 'error');
+    }
+  };
   return (
-    <Modal title="Edit lesson details" subtitle={lesson.file_name} onClose={closeEdit} testId="edit-dialog">
+    <Modal
+      title={checking ? 'Check what was read from this PDF' : 'Edit lesson details'}
+      subtitle={checking ? `${lesson.file_name}. Compare each part with the PDF, correct anything that is wrong, then confirm.` : lesson.file_name}
+      onClose={closeEdit}
+      testId="edit-dialog"
+      full
+    >
       <form
         className="contents"
-        onSubmit={async (e) => {
+        onSubmit={(e) => {
           e.preventDefault();
-          setSaving(true);
-          try {
-            await api.patchLesson(id, { ...form, objectives: form.objectives.split('\n') });
-            await refreshAll();
-            closeEdit();
-            toast('Lesson updated');
-          } catch (err) {
-            setSaving(false);
-            toast(errorText(err), 'error');
-          }
+          void save(false);
         }}
       >
-        <div className="scroll-stable grid min-h-0 grid-cols-1 gap-3 p-4 sm:grid-cols-2">
-          <label className="text-xs text-muted sm:col-span-2">
-            Title
-            <input className="field mt-1" required data-testid="edit-title" value={form.title} onChange={set('title')} />
-          </label>
-          <label className="text-xs text-muted sm:col-span-2">
-            Issue
-            <textarea className="field mt-1 min-h-20" data-testid="edit-issue" value={form.issue} onChange={set('issue')} />
-          </label>
-          <label className="text-xs text-muted sm:col-span-2">
-            Objectives (one per line)
-            <textarea className="field mt-1 min-h-24" data-testid="edit-objectives" value={form.objectives} onChange={set('objectives')} />
-          </label>
-          <label className="text-xs text-muted">
-            Category
-            <select className="field mt-1" data-testid="edit-category" value={form.category} onChange={set('category')}>
-              <option value="midweek">Midweek</option>
-              <option value="weekend">Weekend</option>
-              <option value="pastoral">Pastoral Visit</option>
-            </select>
-          </label>
-          <label className="text-xs text-muted">
-            Language
-            <select className="field mt-1" data-testid="edit-language" value={form.language} onChange={set('language')}>
-              <option value="tl">Tagalog</option>
-              <option value="en">English</option>
-            </select>
-          </label>
-          <label className="text-xs text-muted">
-            Date
-            <input className="field mt-1" type="date" data-testid="edit-date" value={form.lesson_date} onChange={set('lesson_date')} />
-          </label>
-          <label className="text-xs text-muted">
-            Folder
-            <select className="field mt-1" data-testid="edit-folder" value={form.folder_id} onChange={set('folder_id')}>
-              <option value="">No folder</option>
-              {folders.map((f) => (
-                <option key={f.id} value={f.id}>{f.name}</option>
-              ))}
-            </select>
-          </label>
-          <label className="text-xs text-muted">
-            Location
-            <input className="field mt-1" data-testid="edit-location" value={form.location} onChange={set('location')} />
-          </label>
-          <label className="text-xs text-muted">
-            Author
-            <input className="field mt-1" data-testid="edit-author" value={form.author} onChange={set('author')} />
-          </label>
+        <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]" data-testid="edit-body" data-mode={checking ? 'check' : 'edit'}>
+          <div className="hidden min-h-0 border-r border-line lg:block" data-testid="check-pdf">
+            <PdfViewer lesson={lesson} embedded />
+          </div>
+          <div className="scroll-stable min-h-0 p-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <label className="text-xs text-muted sm:col-span-2">
+                Title
+                <input className="field mt-1" required data-testid="edit-title" value={form.title} onChange={set('title')} />
+              </label>
+              <label className="text-xs text-muted sm:col-span-2">
+                Issue
+                <textarea className="field mt-1 min-h-20" data-testid="edit-issue" value={form.issue} onChange={set('issue')} />
+              </label>
+              <label className="text-xs text-muted sm:col-span-2">
+                Objectives (one per line)
+                <textarea className="field mt-1 min-h-24" data-testid="edit-objectives" value={form.objectives} onChange={set('objectives')} />
+              </label>
+              <label className="text-xs text-muted">
+                Category
+                <select className="field mt-1" data-testid="edit-category" value={form.category} onChange={set('category')}>
+                  <option value="midweek">Midweek</option>
+                  <option value="weekend">Weekend</option>
+                  <option value="pastoral">Pastoral Visit</option>
+                </select>
+              </label>
+              <label className="text-xs text-muted">
+                Language
+                <select className="field mt-1" data-testid="edit-language" value={form.language} onChange={set('language')}>
+                  <option value="tl">Tagalog</option>
+                  <option value="en">English</option>
+                </select>
+              </label>
+              <label className="text-xs text-muted">
+                Date
+                <input className="field mt-1" type="date" data-testid="edit-date" value={form.lesson_date} onChange={set('lesson_date')} />
+              </label>
+              <label className="text-xs text-muted">
+                Folder
+                <select className="field mt-1" data-testid="edit-folder" value={form.folder_id} onChange={set('folder_id')}>
+                  <option value="">No folder</option>
+                  {folders.map((f) => (
+                    <option key={f.id} value={f.id}>{f.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-xs text-muted">
+                Location
+                <input className="field mt-1" data-testid="edit-location" value={form.location} onChange={set('location')} />
+              </label>
+              <label className="text-xs text-muted">
+                Author
+                <input className="field mt-1" data-testid="edit-author" value={form.author} onChange={set('author')} />
+              </label>
+            </div>
+            <section className="mt-4" aria-label="Verses found" data-testid="check-verses">
+              <h3 className="m-0 text-[13px] font-semibold" data-testid="check-verses-title">Verses found ({found.length})</h3>
+              <p className="m-0 mt-0.5 mb-2 text-xs text-muted">
+                Correct a verse that was misread, or remove anything that is not a verse of this lesson. Each verse's wording is checked word for word later, in Review Verses.
+              </p>
+              {found.length === 0 ? (
+                <p className="m-0 text-[13px] text-muted" data-testid="check-verses-empty">No verses were found in this PDF.</p>
+              ) : (
+                <ul className="m-0 list-none space-y-2 p-0">
+                  {found.map(({ verse, page }) => <LessonVerse key={verse.id} verse={verse} lessonId={lesson.id} page={page} />)}
+                </ul>
+              )}
+            </section>
+          </div>
         </div>
-        <div className="flex justify-end gap-2 border-t border-line px-4 py-3">
+        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-line px-4 py-3">
+          {checking && <p className="m-0 mr-auto text-xs text-muted">Confirming records that you checked it. You can still edit it later.</p>}
           <button type="button" className="btn" data-testid="edit-cancel" onClick={closeEdit}>
             Cancel
           </button>
-          <button className="btn btn-primary" data-testid="edit-save" disabled={saving}>
-            {saving ? 'Saving' : 'Save changes'}
+          <button className={`btn ${checking ? '' : 'btn-primary'}`} data-testid="edit-save" disabled={saving}>
+            {saving ? 'Saving' : checking ? 'Save, check later' : 'Save changes'}
           </button>
+          {checking && (
+            <button type="button" className="btn btn-primary" data-testid="edit-confirm" disabled={saving || !form.title.trim()} onClick={() => void save(true)}>
+              <ClipboardCheck size={14} /> Confirm it is correct
+            </button>
+          )}
         </div>
       </form>
     </Modal>

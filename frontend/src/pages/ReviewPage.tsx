@@ -2,19 +2,57 @@ import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, ArrowRight, CheckCircle2, Lock, Save, ShieldAlert } from 'lucide-react';
 import { api, type Verse } from '../api';
 import { PdfViewer } from '../components/PdfViewer';
-import { errorText, getState, navigate, selectLesson, setState, toast, useStore } from '../store';
+import { errorText, getState, libraryName, libraryOf, navigate, selectLesson, setState, toast, useStore, type Library } from '../store';
 
 const replaceVerse = (v: Verse) => setState({ verses: getState().verses.map((x) => (x.id === v.id ? v : x)) });
 
-/** Steps through unverified verses beside the page they were read from. */
+// The library being reviewed, kept while the app is open.
+let savedLibrary: Library | null = null;
+
+/** Opens Review Verses on one library's verses. */
+export function openReview(library: Library) {
+  savedLibrary = library;
+  navigate('/review');
+}
+
+function LibraryTabs({ library, counts, onChange }: { library: Library; counts: Record<Library, number>; onChange: (l: Library) => void }) {
+  return (
+    <div className="flex rounded-lg border border-line" role="tablist" aria-label="Library" data-testid="review-libraries">
+      {(['verse', 'lesson'] as const).map((l) => (
+        <button
+          key={l}
+          role="tab"
+          aria-selected={library === l}
+          className={`tap flex min-h-[34px] flex-1 items-center justify-center gap-1.5 border-0 px-2.5 text-xs first:rounded-l-lg last:rounded-r-lg max-lg:min-h-11 ${library === l ? 'bg-raised font-semibold text-fg' : 'bg-transparent text-muted hover:text-fg'}`}
+          data-testid={`review-library-${l}`}
+          onClick={() => onChange(l)}
+        >
+          {libraryName[l]} <span className="tabular-nums" data-testid={`review-count-${l}`}>{counts[l]}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Steps through unverified verses beside the page they were read from, one library at a time. */
 export function ReviewPage() {
   const verses = useStore((s) => s.verses);
   const lessons = useStore((s) => s.lessons);
-  const queue = useMemo(
-    () => verses.filter((v) => v.status === 'unverified').sort((a, b) => a.book_id - b.book_id || a.ref_en.localeCompare(b.ref_en, undefined, { numeric: true }) || a.language.localeCompare(b.language)),
-    [verses],
-  );
+  const queues = useMemo(() => {
+    const sorted = verses
+      .filter((v) => v.status === 'unverified')
+      .sort((a, b) => a.book_id - b.book_id || a.ref_en.localeCompare(b.ref_en, undefined, { numeric: true }) || a.language.localeCompare(b.language));
+    return { verse: sorted.filter((v) => libraryOf(v) === 'verse'), lesson: sorted.filter((v) => libraryOf(v) === 'lesson') };
+  }, [verses]);
+  const counts = { verse: queues.verse.length, lesson: queues.lesson.length };
+  const [library, setLibraryState] = useState<Library>(() => savedLibrary ?? (counts.verse === 0 && counts.lesson > 0 ? 'lesson' : 'verse'));
   const [index, setIndex] = useState(0);
+  const setLibrary = (l: Library) => {
+    savedLibrary = l;
+    setLibraryState(l);
+    setIndex(0);
+  };
+  const queue = queues[library];
   const position = Math.min(index, Math.max(queue.length - 1, 0));
   const verse: Verse | undefined = queue[position];
   const source = verse?.sources[0];
@@ -37,11 +75,23 @@ export function ReviewPage() {
   }, [verseId]);
 
   if (!verse) {
+    const other: Library = library === 'verse' ? 'lesson' : 'verse';
+    const inLibrary = verses.filter((v) => libraryOf(v) === library).length;
     return (
       <div className="flex h-full flex-col items-center justify-center p-6 text-center" data-testid="review-page">
+        {verses.length > 0 && (
+          <div className="mb-6 w-full max-w-sm">
+            <LibraryTabs library={library} counts={counts} onChange={setLibrary} />
+          </div>
+        )}
         <CheckCircle2 size={32} className="text-ok" />
-        <h1 className="m-0 mt-3 text-lg font-semibold" data-testid="review-done">{verses.length === 0 ? 'No verses to review yet' : 'Every verse is verified'}</h1>
-        <button className="btn mt-3" data-testid="review-back" onClick={() => navigate('/bibles')}>Open Bibles Library</button>
+        <h1 className="m-0 mt-3 text-lg font-semibold" data-testid="review-done">
+          {verses.length === 0 ? 'No verses to review yet' : counts[other] === 0 ? 'Every verse is verified' : inLibrary === 0 ? `No verses in the ${libraryName[library]} yet` : `Every verse in the ${libraryName[library]} is verified`}
+        </h1>
+        {counts[other] > 0 && <p className="m-0 mt-1 text-[13px] text-muted" data-testid="review-other">{counts[other]} still to review in the {libraryName[other]}.</p>}
+        <button className="btn mt-3" data-testid="review-back" onClick={() => navigate(library === 'verse' ? '/bibles' : '/lesson-verses')}>
+          Open {library === 'verse' ? 'the Verse Library' : 'the verses from lessons'}
+        </button>
       </div>
     );
   }
@@ -77,9 +127,10 @@ export function ReviewPage() {
         {lesson ? <PdfViewer lesson={lesson} /> : <p className="p-6 text-center text-[13px] text-muted" data-testid="review-no-source">{verse.import_source ? `Imported from ${verse.import_source}. Compare it with your original.` : 'This verse has no source page.'}</p>}
       </div>
       <div className="scroll-stable min-h-0 space-y-3 p-3" data-testid="review-panel">
+        <LibraryTabs library={library} counts={counts} onChange={setLibrary} />
         <div className="flex items-center justify-between gap-2">
           <h1 className="m-0 text-lg font-semibold">Review verses</h1>
-          <span className="text-xs text-muted tabular-nums" data-testid="review-progress">{position + 1} of {queue.length} to review</span>
+          <span className="text-xs text-muted tabular-nums" data-testid="review-progress" title={`In the ${libraryName[library]}`}>{position + 1} of {queue.length} to review</span>
         </div>
         <p className="m-0 text-xs text-muted">
           {verse.language === 'tl' ? 'Tagalog' : 'English'}

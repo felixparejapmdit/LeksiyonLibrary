@@ -1,10 +1,12 @@
 import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
-import { BadgeCheck, Check, ChevronDown, ChevronLeft, ChevronRight, Columns2, Copy, FileSearch, LayoutList, ListChecks, Lock, Loader2, PencilLine, Search, ShieldAlert, Sparkles, Table2, X } from 'lucide-react';
+import { BadgeCheck, Check, ChevronDown, ChevronLeft, ChevronRight, Columns2, Copy, FileSearch, FileSpreadsheet, LayoutList, ListChecks, Lock, Loader2, PencilLine, Search, ShieldAlert, Sparkles, Table2, X } from 'lucide-react';
 import { api, type Verse } from '../api';
 import { VerseCorrectionDialog } from '../components/Overlays';
 import { Highlight } from '../components/LessonList';
 import { scopeNames } from '../components/VerseContext';
-import { askConfirm, errorText, getState, navigate, resetFilters, selectLesson, setState, toast, useStore, verseGroups } from '../store';
+import { VerseImport } from '../components/VerseImport';
+import { openReview } from './ReviewPage';
+import { askConfirm, errorText, getState, libraryOf, navigate, resetFilters, selectLesson, setState, toast, useStore, verseGroups, type Library } from '../store';
 
 function replaceVerse(v: Verse) {
   setState({ verses: getState().verses.map((x) => (x.id === v.id ? v : x)) });
@@ -150,8 +152,46 @@ interface View {
 
 const NO_FILTERS = { query: '', language: 'all', status: 'all', translation: 'all', book: 'all' } as const;
 
-// Kept while the app is open, so coming back to this page finds it as it was left.
-let savedView: View = { ...NO_FILTERS, layout: storedLayout(), left: 'lang:en', right: 'lang:tl', bothSides: false, page: 1, pageSize: 25 };
+// Kept while the app is open, so coming back to either library finds it as it was left.
+const startView = (): View => ({ ...NO_FILTERS, layout: storedLayout(), left: 'lang:en', right: 'lang:tl', bothSides: false, page: 1, pageSize: 25 });
+const savedViews: Record<Library, View> = { verse: startView(), lesson: startView() };
+let importOpen: boolean | null = null;
+
+/** Importing from a sheet is how verses come into the Verse Library, so it is done here. */
+function ImportPanel({ imported, rowsToFix }: { imported: number; rowsToFix: number }) {
+  const [open, setOpen] = useState(importOpen ?? imported === 0);
+  useEffect(() => {
+    const show = () => {
+      importOpen = true;
+      setOpen(true);
+      requestAnimationFrame(() => document.querySelector('[data-testid="rows-to-fix"]')?.scrollIntoView({ block: 'start' }));
+    };
+    window.addEventListener('lv:fix-rows', show);
+    return () => window.removeEventListener('lv:fix-rows', show);
+  }, []);
+  return (
+    <details
+      className="mb-3 rounded-lg border border-line bg-panel"
+      data-testid="import-panel"
+      open={open}
+      onToggle={(e) => {
+        const next = e.currentTarget.open;
+        importOpen = next;
+        setOpen(next);
+      }}
+    >
+      <summary className="tap flex cursor-pointer flex-wrap items-center gap-2 px-3 py-2 text-[13px] font-semibold max-lg:min-h-11" data-testid="import-panel-toggle">
+        <FileSpreadsheet size={15} className="flex-none text-accent2" /> Import verses from Excel or Google Sheets
+        <span className="text-xs font-normal text-muted" data-testid="import-panel-counts">
+          {imported} imported{rowsToFix > 0 ? `, ${rowsToFix} ${rowsToFix === 1 ? 'row' : 'rows'} to fix` : ''}
+        </span>
+      </summary>
+      <div className="border-t border-line">
+        <VerseImport />
+      </div>
+    </details>
+  );
+}
 
 // The caches below live in memory only and go when the app closes. Verses are sensitive, so
 // none of this may be written to the disk or the browser's cache.
@@ -342,16 +382,22 @@ function ParallelSide({ verses, side, query, testId }: { verses: Verse[]; side: 
   );
 }
 
-export function BiblesPage() {
-  const verses = useStore((s) => s.verses);
-  const rowsToFix = useStore((s) => s.rowsToFix.length);
-  const [view, setViewState] = useState<View>(savedView);
+/**
+ * One library's verses. The Verse Library holds verses imported from sheets; the
+ * Lesson Library's verses are the ones read from lesson PDFs.
+ */
+export function BiblesPage({ library }: { library: Library }) {
+  const all = useStore((s) => s.verses);
+  const verses = useMemo(() => all.filter((v) => libraryOf(v) === library), [all, library]);
+  const imported = useMemo(() => verses.filter((v) => v.import_source).length, [verses]);
+  const rowsToFix = useStore((s) => (library === 'verse' ? s.rowsToFix.length : 0));
+  const [view, setViewState] = useState<View>(savedViews[library]);
   const { layout, left, right, bothSides, query, language, status, translation, book, pageSize } = view;
   const parallel = layout === 'parallel';
   const setView = (patch: Partial<View>) => setViewState((v) => ({ ...v, page: 1, ...patch }));
   useEffect(() => {
-    savedView = view;
-  }, [view]);
+    savedViews[library] = view;
+  }, [view, library]);
   // Typing stays instant: the list catches up just after, rather than holding up each key.
   const deferredQuery = useDeferredValue(query);
   const [meaningKeys, setMeaningKeys] = useState<string[] | null>(null);
@@ -437,15 +483,19 @@ export function BiblesPage() {
     <div className="scroll-stable h-full" data-testid="bibles-page">
       <div ref={top} />
       <div className="mx-auto max-w-6xl p-3 lg:p-4">
-        <h1 className="m-0 text-lg font-semibold">Bibles Library</h1>
+        <h1 className="m-0 text-lg font-semibold" data-testid="bibles-title">{library === 'verse' ? 'Verse Library' : 'Verses from lessons'}</h1>
         <p className="m-0 mt-0.5 mb-3 flex items-start gap-1.5 text-[13px] text-muted" data-testid="bibles-policy">
           <BadgeCheck size={15} className="mt-0.5 flex-none text-ok" />
-          Verses are collected from your lessons exactly as scanned, and from sheets you import in Settings. Verified text is locked permanently, and the AI can never change it. {stats.verified} of {stats.total} verified.
+          {library === 'verse'
+            ? 'Verses imported from your Excel files and Google Sheets. Verses read from lesson PDFs are kept apart, in the Lesson Library.'
+            : 'Verses read from your lesson PDFs, exactly as printed or scanned. Imported verses are kept apart, in the Verse Library.'}{' '}
+          Verified text is locked permanently, and the AI can never change it. {stats.verified} of {stats.total} verified.
         </p>
+        {library === 'verse' && <ImportPanel imported={imported} rowsToFix={rowsToFix} />}
         {rowsToFix > 0 && (
           <p className="m-0 mb-3 flex flex-wrap items-center gap-2 rounded-md border border-line bg-panel px-3 py-2 text-[13px] text-warn" data-testid="bibles-rows-to-fix">
             {rowsToFix} imported {rowsToFix === 1 ? 'row was' : 'rows were'} left out and {rowsToFix === 1 ? 'needs' : 'need'} fixing.
-            <button className="btn !min-h-8 max-lg:!min-h-11" data-testid="bibles-rows-to-fix-open" onClick={() => navigate('/settings')}>Fix in Settings</button>
+            <button className="btn !min-h-8 max-lg:!min-h-11" data-testid="bibles-rows-to-fix-open" onClick={() => window.dispatchEvent(new Event('lv:fix-rows'))}>Fix them</button>
           </p>
         )}
         <div className="z-10 -mx-3 mb-3 border-b border-line bg-bg px-3 pb-2 lg:sticky lg:top-0 lg:-mx-4 lg:px-4 lg:pt-1" data-testid="bibles-toolbar">
@@ -457,7 +507,7 @@ export function BiblesPage() {
             <button className="btn" data-testid="bibles-meaning" disabled={!query.trim() || meaningBusy} onClick={findByMeaning}>
               {meaningBusy ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />} Find by meaning
             </button>
-            <button className="btn" data-testid="bibles-review" onClick={() => navigate('/review')}>
+            <button className="btn" data-testid="bibles-review" onClick={() => openReview(library)}>
               <ListChecks size={14} /> Review verses
             </button>
             <div className="flex rounded-lg border border-line" role="group" aria-label="View" data-testid="bibles-layout">
@@ -536,7 +586,7 @@ export function BiblesPage() {
         )}
         {total === 0 ? (
           <p className="py-14 text-center text-[13px] text-muted" data-testid="bibles-empty">
-            {verses.length === 0 ? 'No verses yet. Upload a lesson, or import a sheet in Settings, and its verses will appear here.' : meaningKeys ? 'No verses are close in meaning.' : parallel && groups.length > 0 ? 'No verses match these two sides. Choose another side, or turn off "Only verses on both sides".' : 'No verses match these filters.'}
+            {verses.length === 0 ? (library === 'verse' ? 'No verses yet. Import an Excel file or a Google Sheet above, and its verses will appear here.' : 'No verses yet. Upload a lesson PDF, and the verses read from it will appear here.') : meaningKeys ? 'No verses are close in meaning.' : parallel && groups.length > 0 ? 'No verses match these two sides. Choose another side, or turn off "Only verses on both sides".' : 'No verses match these filters.'}
           </p>
         ) : (
           <>

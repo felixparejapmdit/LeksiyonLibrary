@@ -74,22 +74,24 @@ test('a lesson with no issue or objectives says so and can have them added', asy
   });
 });
 
-test("the Lecture Maker can start from a lesson's issue and objectives", async ({ app: page }) => {
+test("the Lesson Assistant takes a lesson's objectives typed in, and says which library each verse is from", async ({ app: page }) => {
   await setAiMode('good');
   const lessons: any[] = await (await page.request.get('/api/lessons')).json();
   const lesson = lessons.find((l) => l.title.startsWith(samples.en.short));
   await page.getByTestId('side-lecture').click();
-  await page.getByTestId('lecture-from-lesson').selectOption(lesson.id);
-  await expect(page.getByTestId('lecture-issue')).toHaveValue(lesson.issue);
-  await expect(page.getByTestId('lecture-objective')).toHaveValue(lesson.objectives.join('\n'));
-
-  // Loaded text stays editable, and only changes the lecture, not the lesson.
+  await expect(page.getByTestId('lecture-from-lesson'), 'the lesson picker was removed').toHaveCount(0);
+  await page.getByTestId('lecture-issue').fill(lesson.issue);
   await page.getByTestId('lecture-objective').fill(lesson.objectives.slice(0, 2).join('\n'));
   await page.getByTestId('lecture-coverage').selectOption('3');
   await page.getByTestId('lecture-suggest').click();
   await expect(page.getByTestId('objective-title')).toHaveText(lesson.objectives.slice(0, 2));
   await expect(page.getByTestId('objective-group').nth(0).getByTestId('suggestion')).toHaveCount(3);
   await expect(page.getByTestId('objective-group').nth(1).getByTestId('suggestion')).toHaveCount(3);
+  // Only lessons are in this vault, so every suggested verse says it is from the Lesson Library.
+  const verses = page.getByTestId('suggested-verse');
+  expect(await verses.count()).toBeGreaterThan(0);
+  await expect(verses.getByTestId('origin-verse-library')).toHaveCount(0);
+  await expect(verses.first().getByTestId('origin-lesson-library').first()).toContainText(/^Lesson Library · .+, p\.\d+$/);
   const after: any[] = await (await page.request.get('/api/lessons')).json();
   expect(after.find((l) => l.id === lesson.id).objectives).toEqual(lesson.objectives);
 });

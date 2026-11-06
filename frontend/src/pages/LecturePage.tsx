@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, Copy, FileDown, FilePlus2, Loader2, Lock, MonitorPlay, PencilLine, Plus, Printer, Save, Sparkles, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, BookMarked, Copy, FileDown, FilePlus2, FileText, Loader2, Lock, MonitorPlay, PencilLine, Plus, Printer, Save, Sparkles, Trash2, X } from 'lucide-react';
 import { PresentationMode } from '../components/Presentation';
 import { backgroundAsText, backgroundOf, ContextPanel } from '../components/VerseContext';
 import { api, saveFile, type Lecture, type Suggestion, type Verse } from '../api';
-import { askConfirm, errorText, getState, refreshAll, setState, toast, useStore } from '../store';
+import { askConfirm, errorText, getState, libraryOf, refreshAll, setState, toast, useStore } from '../store';
 
 type NotesStatus = 'idle' | 'loading' | 'ready' | 'offline';
 type Group = { title: string | null; objective: string; logId: string; suggestions: Suggestion[]; status: NotesStatus; notes: Record<string, string> };
@@ -11,10 +11,34 @@ type Coverage = 'best' | '3' | '4' | '5';
 
 const objectiveLines = (text: string) => text.split('\n').map((l) => l.trim()).filter(Boolean);
 
-function ReadOnlyVerse({ verse }: { verse: Verse }) {
+/**
+ * Where a verse came from, so verses from the two libraries are never mixed up: the
+ * Verse Library (imported from a sheet) or the Lesson Library (read from a lesson PDF).
+ */
+export function VerseOrigin({ verse }: { verse: Verse }) {
   const lessons = useStore((s) => s.lessons);
-  const source = verse.sources[0];
-  const lesson = source && lessons.find((l) => l.id === source.lesson_id);
+  const cited = verse.sources.flatMap((s) => {
+    const lesson = lessons.find((l) => l.id === s.lesson_id);
+    return lesson ? [{ lesson, page: s.page }] : [];
+  });
+  const badge = 'inline-flex max-w-full items-center gap-1 rounded border px-1.5 py-px text-[11px] font-medium';
+  return (
+    <span className="flex min-w-0 flex-wrap gap-1" data-testid="verse-origin">
+      {libraryOf(verse) === 'verse' && (
+        <span className={`${badge} border-accent2/60 text-accent2`} data-testid="origin-verse-library" title={verse.import_source ? `Imported from ${verse.import_source}` : 'Kept in the Verse Library'}>
+          <BookMarked size={11} className="flex-none" /><span className="truncate">Verse Library{verse.import_source ? ` · ${verse.import_source}` : ''}</span>
+        </span>
+      )}
+      {cited.map(({ lesson, page }) => (
+        <span key={lesson.id} className={`${badge} border-pv/60 text-pv`} data-testid="origin-lesson-library" title={`Read from ${lesson.title}, page ${page}`}>
+          <FileText size={11} className="flex-none" /><span className="truncate">Lesson Library · {lesson.title}, p.{page}</span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function ReadOnlyVerse({ verse }: { verse: Verse }) {
   return (
     <div className="rounded-md border border-line p-2" data-testid="suggested-verse" data-verse-id={verse.id}>
       <div className="mb-1 flex flex-wrap items-center gap-1.5 text-xs text-muted">
@@ -23,8 +47,8 @@ function ReadOnlyVerse({ verse }: { verse: Verse }) {
         {verse.version && <span>{verse.version}</span>}
         <span data-testid="suggested-status">{verse.status === 'verified' ? 'Verified' : verse.import_source ? 'Unverified import' : 'Unverified scan'}</span>
       </div>
+      <div className="mb-1.5"><VerseOrigin verse={verse} /></div>
       <p className="m-0 text-[13px] leading-relaxed" data-testid="suggested-text">{verse.text || 'Reference only.'}</p>
-      {lesson && <p className="m-0 mt-1 text-xs text-muted" data-testid="verse-source">Cited in {lesson.title}, page {source.page}</p>}
     </div>
   );
 }
@@ -59,8 +83,6 @@ export function LecturePage() {
   const tagalog = useStore((s) => s.tagalog);
   const contextLanguage = useStore((s) => s.contextLanguage);
   const [allTranslations, setAllTranslations] = useState<Record<string, boolean>>({});
-  const lessons = useStore((s) => s.lessons);
-  const [sourceLesson, setSourceLesson] = useState('');
   const [searching, setSearching] = useState(false);
   const [saving, setSaving] = useState(false);
   const requestSeq = useRef(0);
@@ -134,7 +156,6 @@ export function LecturePage() {
     setPicked([]);
     setObjectiveOf({});
     setGroups(null);
-    setSourceLesson('');
   };
 
   const load = (l: Lecture) => {
@@ -144,16 +165,6 @@ export function LecturePage() {
     setObjective(l.objective);
     setPicked(l.verse_ids);
     setObjectiveOf(Object.fromEntries(l.verse_ids.map((id, i) => [id, l.verse_objectives[i] ?? ''])));
-    setGroups(null);
-    setSourceLesson('');
-  };
-
-  const startFromLesson = (id: string) => {
-    setSourceLesson(id);
-    const lesson = lessons.find((l) => l.id === id);
-    if (!lesson) return;
-    setIssue(lesson.issue);
-    setObjective(lesson.objectives.join('\n'));
     setGroups(null);
   };
 
@@ -209,19 +220,12 @@ export function LecturePage() {
       <div className="mx-auto grid max-w-7xl grid-cols-1 gap-4 p-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] lg:p-4">
         <div className="min-w-0 space-y-3">
           <div className="no-print">
-            <h1 className="m-0 text-lg font-semibold">Lecture Maker</h1>
-            <p className="m-0 mt-0.5 text-[13px] text-muted">Describe the issue and objective. Suggestions come only from verses already in your library, shown exactly as stored.</p>
+            <h1 className="m-0 text-lg font-semibold">Lesson Assistant <span className="text-[13px] font-normal text-muted">· Lecture Maker</span></h1>
+            <p className="m-0 mt-0.5 text-[13px] text-muted" data-testid="lecture-intro">
+              Describe the issue and objective. Suggestions come from the verses in both your Verse Library and your Lesson Library, shown exactly as stored, and each one is labelled with where it came from.
+            </p>
           </div>
           <form className="no-print space-y-2 rounded-lg border border-line bg-panel p-3" onSubmit={suggest}>
-            <label className="block text-xs text-muted">
-              Start from a lesson
-              <select className="field mt-1" data-testid="lecture-from-lesson" value={sourceLesson} onChange={(e) => startFromLesson(e.target.value)}>
-                <option value="">Choose a lesson to load its issue and objectives</option>
-                {lessons.filter((l) => l.issue || l.objectives.length > 0).map((l) => (
-                  <option key={l.id} value={l.id}>{l.language === 'tl' ? 'TL' : 'EN'}: {l.title}</option>
-                ))}
-              </select>
-            </label>
             <label className="block text-xs text-muted">
               Issue or topic
               <textarea className="field mt-1 min-h-16" data-testid="lecture-issue" placeholder="What situation should this lecture address?" value={issue} onChange={(e) => setIssue(e.target.value)} />
@@ -349,6 +353,7 @@ export function LecturePage() {
                           <button className="icon-btn" aria-label={`Remove ${v.ref_printed}`} data-testid="workspace-remove" onClick={() => setPicked((p) => p.filter((x) => x !== id))}><X size={14} /></button>
                         </span>
                       </div>
+                      <div className="no-print mt-1"><VerseOrigin verse={v} /></div>
                       <p className="m-0 mt-1 text-[13px] leading-relaxed" data-testid="workspace-text">{v.text}</p>
                       <ContextPanel verseKey={v.canonical_key} reference={v.ref_en} referenceTl={v.ref_tl} testId="workspace-context">
                         <div className="mt-1">{contextButton(v.canonical_key, 'workspace-context-edit')}</div>
@@ -437,7 +442,7 @@ export function LecturePage() {
                     onClick={() =>
                       askConfirm({
                         title: 'Delete this lecture?',
-                        body: `"${l.title}" will be removed. Its verses stay in the Bibles Library.`,
+                        body: `"${l.title}" will be removed. Its verses stay in your libraries.`,
                         confirmLabel: 'Delete lecture',
                         onConfirm: async () => {
                           await api.deleteLecture(l.id);

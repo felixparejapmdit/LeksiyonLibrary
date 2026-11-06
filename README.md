@@ -45,9 +45,19 @@ Files you export, such as a downloaded PDF or a copied lecture, are not encrypte
 
 The app talks only to this computer, with one exception you start yourself: importing from Google Sheets downloads that sheet. It sends nothing from your vault.
 
-## Lecture Maker
+## How it is organised
 
-Write one objective per line and choose 3, 4 or 5 verses per objective. Verses come only from your library, shown exactly as stored. If fewer match, the app says so instead of adding unrelated verses.
+The app has three parts. They are kept separate, and they work together:
+
+- **Lesson Library:** your worship service lessons. Drop PDFs in, and the title, issue, objectives and verses are read from each one. Every upload is then checked by hand: **Check what was read** opens the PDF beside what was read, where you correct anything wrong, remove anything that is not a verse of the lesson, and confirm. Lessons not checked yet are marked **Check**, and listed under **Not checked yet**. **Verses from lessons** lists the verses read from your PDFs.
+- **Verse Library:** verses imported from Excel files and Google Sheets, imported on that page.
+- **Lesson Assistant** (the Lecture Maker): builds lectures from the verses in both libraries. Every verse is labelled with where it came from: **Verse Library** and the sheet row, or **Lesson Library** and the lesson and page.
+
+A verse that no lesson cites any more, such as one you verified before deleting its lesson, is kept in the Verse Library.
+
+## Lesson Assistant
+
+Write one objective per line and choose 3, 4 or 5 verses per objective. Verses come only from your two libraries, shown exactly as stored. If fewer match, the app says so instead of adding unrelated verses.
 
 With the local AI running, each verse also has details, folded away until you open them: who is speaking, a **chapter context**, a **book context** and a **historical and political context**. These are the model's reading, not scripture, and can be wrong, so they are labelled until you review or correct them. Each context is written once and shared by all its verses, so a correction applies everywhere and later searches are quicker. Your wording is kept, later AI runs leave it alone, and it never changes the verse.
 
@@ -57,22 +67,22 @@ Saved lectures keep each verse under its objective. From the workspace you can c
 
 ## Importing verses
 
-Settings has an **Import Bible verses** section. The sheet needs these columns in its first row, in any order: Translation (or PET), Book, Chapter, Verse and Content.
+The Verse Library has an **Import verses from Excel or Google Sheets** panel at the top. The sheet needs these columns in its first row, in any order: Translation (or PET), Book, Chapter, Verse and Content.
 
 - **From an Excel file:** the most private way. The file is read in memory and not kept. The original on your computer is not encrypted, so keep it somewhere safe or delete it afterwards.
 - **From Google Sheets:** paste the link. After that the spreadsheet is remembered, so the `gid` of another tab is enough. The sheet must be shared as Anyone with the link, which means anyone who gets the link can read it. Turn that off again after importing if the verses are sensitive.
 
 You see a preview before anything is saved. Language is read from each row's words, because a translation code does not say what language a row is in. Misspelled books and Excel's drag-fill of a code (AMP2015, AMP2016, ...) are corrected and listed. When the text starts with a number other than the Verse column's, stuck to the first word as in `9Ang`, the column is taken as right and the number is removed. A number followed by a space may belong to the sentence, so that row is imported and marked for you to check.
 
-A book missing its number ("Peter") could be either book, so that row is left out and kept under **Rows to fix** in Settings, where you choose the book and save it. You can also fix it in the sheet and import again: rows already in the vault are not added twice.
+A book missing its number ("Peter") could be either book, so that row is left out and kept under **Rows to fix** in that panel, where you choose the book and save it. You can also fix it in the sheet and import again: rows already in the vault are not added twice.
 
 Imported verses are encrypted like the rest of the vault, and stay unverified until you check them. The original cell is kept beside the cleaned text. **Remove imported verses** undoes an import, keeping anything you verified or use in a saved lecture.
 
 ## Other tools
 
-- **Bibles Library:** its count is every verse record, and Review Verses counts those still unverified, so the two differ only by what you have verified. Three views: **Cards**; **Table**, one verse to a line in the same columns as an imported sheet, opening to the full card; and **Parallel**, two languages or translations side by side for each reference. Filter by book, translation, language and status, one page at a time. Extra translations of a reference fold away. Search and filters work from memory, and the app keeps nothing readable on disk or in the browser's cache.
-- **Review Verses:** steps through unverified verses beside the page they came from. Verifying locks a verse permanently.
-- **Find by meaning:** finds verses related to a question even when they share no words, in Tagalog or English. Available in the Lecture Maker, Bibles Library and Search. It suggests from your library only, and falls back to matching words if the model is off.
+- **Verse Library and Verses from lessons:** each count is of verse records. Review Verses counts every verse still unverified in both libraries, so it can be higher than either one. Three views: **Cards**; **Table**, one verse to a line in the same columns as an imported sheet, opening to the full card; and **Parallel**, two languages or translations side by side for each reference. Filter by book, translation, language and status, one page at a time. Extra translations of a reference fold away. Search and filters work from memory, and the app keeps nothing readable on disk or in the browser's cache.
+- **Review Verses:** steps through unverified verses, the Verse Library and the Lesson Library each on its own tab. A lesson verse is shown beside the page it came from. Verifying locks a verse permanently.
+- **Find by meaning:** finds verses related to a question even when they share no words, in Tagalog or English. Available in the Lesson Assistant, both verse lists and Search. It suggests from your library only, and falls back to matching words if the model is off.
 - **Select a folder:** when uploading, adds every PDF in a folder, skips other files, and flags lessons to check.
 - **Backup reminder:** appears if you have lessons and no backup in the last 14 days.
 

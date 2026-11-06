@@ -122,7 +122,7 @@ async fn only_this_app(req: axum::extract::Request, next: axum::middleware::Next
 
 // ---------- Lessons ----------
 
-const LESSON_COLS: &str = "l.id, l.title, l.category, l.language, l.lesson_date, l.date_label, l.year, l.location, l.author, l.code, l.file_name, l.byte_size, l.page_count, l.source_kind, l.issue, l.objectives, l.created_at, l.folder_id";
+const LESSON_COLS: &str = "l.id, l.title, l.category, l.language, l.lesson_date, l.date_label, l.year, l.location, l.author, l.code, l.file_name, l.byte_size, l.page_count, l.source_kind, l.issue, l.objectives, l.created_at, l.folder_id, l.needs_check";
 
 fn lesson_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
     let objectives: String = r.get(15)?;
@@ -133,7 +133,7 @@ fn lesson_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
         "code": r.get::<_, String>(9)?, "file_name": r.get::<_, String>(10)?, "byte_size": r.get::<_, i64>(11)?,
         "page_count": r.get::<_, i64>(12)?, "source_kind": r.get::<_, String>(13)?, "issue": r.get::<_, String>(14)?,
         "objectives": serde_json::from_str::<Value>(&objectives).unwrap_or(json!([])), "created_at": r.get::<_, String>(16)?,
-        "folder_id": r.get::<_, Option<String>>(17)?,
+        "folder_id": r.get::<_, Option<String>>(17)?, "needs_check": r.get::<_, i64>(18)? != 0,
     }))
 }
 
@@ -218,8 +218,8 @@ async fn upload_lesson(State(s): State<S>, u: User, mut mp: Multipart) -> ApiRes
         let tx = c.transaction()?;
         let ts = now();
         tx.execute(
-            "INSERT INTO lessons (id,user_id,title,category,language,lesson_date,date_label,year,location,author,code,file_name,sha256,byte_size,page_count,source_kind,content,issue,objectives,created_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)",
+            "INSERT INTO lessons (id,user_id,title,category,language,lesson_date,date_label,year,location,author,code,file_name,sha256,byte_size,page_count,source_kind,content,issue,objectives,created_at,needs_check)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,1)",
             params![id2, uid, parsed.title, parsed.category, parsed.language, parsed.lesson_date, parsed.date_label, parsed.year, parsed.location, parsed.author, parsed.code, safe_name, sha, byte_size, page_count, source_kind, parsed.content, parsed.issue, json!(parsed.objectives).to_string(), ts],
         )?;
         for (ordinal, v) in parsed.verses.iter().enumerate() {
@@ -323,6 +323,8 @@ struct LessonPatch {
     folder_id: Option<String>,
     issue: Option<String>,
     objectives: Option<Vec<String>>,
+    /// Set once the user has compared what was read with the PDF.
+    checked: Option<bool>,
 }
 
 async fn patch_lesson(State(s): State<S>, u: User, Path(id): Path<String>, Json(b): Json<LessonPatch>) -> ApiResult<Json<Value>> {
@@ -378,11 +380,25 @@ async fn patch_lesson(State(s): State<S>, u: User, Path(id): Path<String>, Json(
             let f = if v.is_empty() { None } else { Some(v) };
             tx.execute("UPDATE lessons SET folder_id=?1 WHERE id=?2", params![f, id])?;
         }
+        if let Some(v) = b.checked {
+            tx.execute("UPDATE lessons SET needs_check=?1 WHERE id=?2", params![!v as i64, id])?;
+        }
         tx.commit()?;
         Ok(c.query_row(&format!("SELECT {LESSON_COLS} FROM lessons l WHERE l.id = ?1"), [&id], lesson_row)?)
     })
     .await?;
     Ok(Json(row))
+}
+
+/// Keeps verified scripture, imported verses and verses a lecture uses; removes unverified
+/// extractions that no lesson cites any more.
+fn remove_uncited_scans(c: &Connection, user_id: &str) -> rusqlite::Result<usize> {
+    c.execute(
+        "DELETE FROM verses WHERE user_id=?1 AND status='unverified' AND import_source=''
+         AND id NOT IN (SELECT verse_id FROM lesson_verses WHERE user_id=?1)
+         AND id NOT IN (SELECT verse_id FROM lecture_verses WHERE user_id=?1)",
+        [user_id],
+    )
 }
 
 async fn delete_lesson(State(s): State<S>, u: User, Path(id): Path<String>) -> ApiResult<Json<Value>> {
@@ -392,18 +408,25 @@ async fn delete_lesson(State(s): State<S>, u: User, Path(id): Path<String>) -> A
         if n == 0 {
             return Err(ApiError::not_found());
         }
-        // Keep verified scripture; remove unverified extractions no lesson cites any more.
-        c.execute(
-            "DELETE FROM verses WHERE user_id=?1 AND status='unverified'
-             AND id NOT IN (SELECT verse_id FROM lesson_verses WHERE user_id=?1)
-             AND id NOT IN (SELECT verse_id FROM lecture_verses WHERE user_id=?1)",
-            [&u.id],
-        )?;
+        remove_uncited_scans(c, &u.id)?;
         Ok(())
     })
     .await?;
     s.vault.remove_pdf(&id);
     Ok(Json(json!({ "ok": true })))
+}
+
+/// Something the parser took for a verse but is not one, found while checking a lesson.
+async fn remove_lesson_verse(State(s): State<S>, u: User, Path((id, verse_id)): Path<(String, String)>) -> ApiResult<Json<Value>> {
+    with_db(&s, move |c| {
+        let n = c.execute("DELETE FROM lesson_verses WHERE user_id=?1 AND lesson_id=?2 AND verse_id=?3", params![u.id, id, verse_id])?;
+        if n == 0 {
+            return Err(ApiError::not_found());
+        }
+        remove_uncited_scans(c, &u.id)?;
+        Ok(Json(json!({ "ok": true })))
+    })
+    .await
 }
 
 #[derive(Deserialize)]
@@ -1640,6 +1663,7 @@ pub fn router(state: S) -> Router {
         .route("/lessons", get(list_lessons).post(upload_lesson).layer(DefaultBodyLimit::max(MAX_PDF + 32 * 1024 * 1024)))
         .route("/lessons/{id}", axum::routing::patch(patch_lesson).delete(delete_lesson))
         .route("/lessons/{id}/file", get(lesson_file))
+        .route("/lessons/{id}/verses/{verse_id}", axum::routing::delete(remove_lesson_verse))
         .route("/search", get(search))
         .route("/search/meaning", get(search_meaning))
         .route("/status", get(status))
@@ -1701,6 +1725,23 @@ mod tests {
         assert!(!allowed(Some("evil.example"), Some("http://evil.example"), Some("same-origin")));
         assert!(!allowed(Some("127.0.0.1.evil.example:47319"), None, None));
         assert!(!allowed(None, None, None));
+    }
+
+    #[test]
+    fn deleting_a_lesson_keeps_imported_verses() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::init(&c).unwrap();
+        c.execute_batch(
+            "INSERT INTO users VALUES ('u','a@b.c','x','now');
+             INSERT INTO verses (id,user_id,canonical_key,book_id,ref_printed,ref_en,ref_tl,version,language,text,text_sha256,ocr_raw,status,created_at,import_source)
+             VALUES ('sheet','u','43.3:16',43,'r','r','r','ESV','en','t','h','raw','unverified','now','Sheet.xlsx, row 2'),
+                    ('scan','u','43.3:17',43,'r','r','r','ESV','en','t','h','raw','unverified','now',''),
+                    ('kept','u','43.3:18',43,'r','r','r','ESV','en','t','h','raw','verified','now','');",
+        )
+        .unwrap();
+        assert_eq!(super::remove_uncited_scans(&c, "u").unwrap(), 1);
+        let left: Vec<String> = c.prepare("SELECT id FROM verses ORDER BY id").unwrap().query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+        assert_eq!(left, ["kept", "sheet"], "only the scan no lesson cites goes");
     }
 }
 

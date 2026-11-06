@@ -21,6 +21,8 @@ export interface Lesson {
   created_at: string;
   folder_id: string | null;
   verse_keys: string[];
+  /** Added by upload and not yet compared with its PDF by the user. */
+  needs_check: boolean;
 }
 
 export interface Verse {
@@ -183,8 +185,9 @@ export const api = {
     form.set('file', file, file.name);
     return request<{ lesson: Lesson; verse_count: number }>('/lessons', { method: 'POST', body: form });
   },
-  patchLesson: (id: string, patch: Record<string, string | string[]>) => request<Lesson>(`/lessons/${id}`, json('PATCH', patch)),
+  patchLesson: (id: string, patch: Record<string, string | string[] | boolean>) => request<Lesson>(`/lessons/${id}`, json('PATCH', patch)),
   deleteLesson: (id: string) => request(`/lessons/${id}`, { method: 'DELETE' }),
+  removeLessonVerse: (id: string, verseId: string) => request(`/lessons/${id}/verses/${verseId}`, { method: 'DELETE' }),
   search: (q: string) => request<{ lesson_ids: string[] }>(`/search?q=${encodeURIComponent(q)}`),
 
   folders: () => request<Folder[]>('/folders'),

@@ -9,6 +9,8 @@ export interface Filters {
   folderId: string | null;
   verseKey: string | null;
   query: string;
+  /** Only lessons not yet checked against their PDF. */
+  toCheck: boolean;
 }
 
 export interface Toast {
@@ -24,6 +26,8 @@ export interface UploadItem {
   message: string;
   attention?: string;
   progress: number;
+  /** The lesson it became, so what was read can be checked. */
+  lessonId?: string;
 }
 
 export interface Confirmation {
@@ -67,7 +71,7 @@ export interface State {
   theme: 'dark' | 'light';
 }
 
-const emptyFilters: Filters = { category: 'all', year: null, folderId: null, verseKey: null, query: '' };
+const emptyFilters: Filters = { category: 'all', year: null, folderId: null, verseKey: null, query: '', toCheck: false };
 
 function stored(key: string, fallback: string): string {
   try {
@@ -276,6 +280,7 @@ export function matchesFilters(l: Lesson, f: Filters, contentMatches: string[] |
   if (f.year !== null && l.year !== f.year) return false;
   if (f.folderId !== null && l.folder_id !== f.folderId) return false;
   if (f.verseKey !== null && !l.verse_keys.includes(f.verseKey)) return false;
+  if (f.toCheck && !l.needs_check) return false;
   const q = f.query.trim().toLowerCase();
   if (q) {
     const hay = `${l.title} ${l.code} ${l.location} ${l.author} ${l.file_name}`.toLowerCase();
@@ -307,6 +312,17 @@ export function verseGroups(verses: Verse[]) {
   }
   return [...groups.entries()].map(([key, items]) => ({ key, items, book: items[0].book_id }));
 }
+
+export type Library = 'verse' | 'lesson';
+
+/**
+ * Which library a verse belongs to. The Verse Library holds verses imported from a sheet,
+ * and also keeps any verse no lesson cites any more. The Lesson Library holds verses read
+ * from lesson PDFs.
+ */
+export const libraryOf = (v: Verse): Library => (v.import_source || v.sources.length === 0 ? 'verse' : 'lesson');
+
+export const libraryName: Record<Library, string> = { verse: 'Verse Library', lesson: 'Lesson Library' };
 
 export function formatLessonDate(l: Lesson) {
   if (l.date_label) return l.date_label;

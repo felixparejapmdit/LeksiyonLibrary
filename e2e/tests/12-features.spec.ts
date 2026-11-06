@@ -438,8 +438,8 @@ test.describe('search by meaning', () => {
       await expect(page.getByTestId('suggestion-meaning')).toHaveText('Related in meaning');
       await expect(page.getByTestId('suggested-text').first()).toHaveText(VERSES[0][1]);
 
-      // Bibles Library
-      await page.goto('/bibles');
+      // The verses read from lessons
+      await page.goto('/lesson-verses');
       await expect(page.getByTestId('bibles-meaning')).toBeDisabled();
       await page.getByTestId('bibles-search').fill('calling');
       await expect(page.getByTestId('bibles-empty')).toBeVisible();
@@ -467,7 +467,7 @@ test.describe('search by meaning', () => {
       await expect(page.getByTestId('match-mode')).toHaveText('Matched by words only');
       await expect(page.getByTestId('suggestion').first()).toBeVisible();
       await expect(page.getByTestId('suggestion-meaning')).toHaveCount(0);
-      await page.goto('/bibles');
+      await page.goto('/lesson-verses');
       await page.getByTestId('bibles-search').fill('calling');
       await page.getByTestId('bibles-meaning').click();
       await expect(page.getByTestId('toast').filter({ hasText: 'needs the local AI model' })).toBeVisible();

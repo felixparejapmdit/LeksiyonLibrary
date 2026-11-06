@@ -14,7 +14,9 @@ function Page() {
   const route = useRoute();
   switch (route) {
     case '/bibles':
-      return <BiblesPage />;
+      return <BiblesPage key="verse" library="verse" />;
+    case '/lesson-verses':
+      return <BiblesPage key="lesson" library="lesson" />;
     case '/lecture':
       return <LecturePage />;
     case '/settings':

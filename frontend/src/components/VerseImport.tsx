@@ -106,7 +106,7 @@ function RowFix({ row }: { row: RowToFix }) {
   );
 }
 
-/** Bulk verses from an Excel file or Google Sheet, always previewed before anything is saved. */
+/** Bulk verses from an Excel file or Google Sheet, always previewed before anything is saved. Shown inside the Verse Library. */
 export function VerseImport() {
   const verses = useStore((s) => s.verses);
   const rowsToFix = useStore((s) => s.rowsToFix);
@@ -147,8 +147,7 @@ export function VerseImport() {
 
   const r = preview?.report;
   return (
-    <section className="rounded-lg border border-line bg-panel p-3" data-testid="verse-import">
-      <h2 className="m-0 mb-1 text-[14px] font-semibold">Import Bible verses</h2>
+    <section className="p-3" data-testid="verse-import">
       <p className="m-0 mb-2 text-[13px] text-muted">
         Add translations from a sheet with these columns: Translation (or PET), Book, Chapter, Verse and Content. You see what will happen before anything is saved. Imported verses are encrypted with the rest of your vault and stay unverified until you check them.
       </p>

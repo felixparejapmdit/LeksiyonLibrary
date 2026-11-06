@@ -9,7 +9,7 @@ test('the app opens straight to the dashboard with no sign-in', async ({ page })
 });
 
 test('every page opens directly, including after a reload', async ({ page }) => {
-  for (const [path, id] of [['/', 'vault-page'], ['/bibles', 'bibles-page'], ['/lecture', 'lecture-page'], ['/settings', 'settings-page']]) {
+  for (const [path, id] of [['/', 'vault-page'], ['/bibles', 'bibles-page'], ['/lesson-verses', 'bibles-page'], ['/lecture', 'lecture-page'], ['/settings', 'settings-page']]) {
     await page.goto(path);
     await expect(page.getByTestId(id)).toBeVisible();
     await page.reload();

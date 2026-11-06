@@ -168,8 +168,8 @@ async function ingest(id: number, file: File) {
     await refreshAll();
     if (firstLesson) selectLesson(lesson.id);
     const found = verse_count === 1 ? '1 verse' : `${verse_count} verses`;
-    patch(id, { status: 'done', progress: 1, message: `Added "${lesson.title}" with ${found}`, attention: needsAttention(lesson, verse_count) });
-    toast(`Added "${lesson.title}" (${found})`);
+    patch(id, { status: 'done', progress: 1, message: `Added "${lesson.title}" with ${found}`, attention: needsAttention(lesson, verse_count), lessonId: lesson.id });
+    toast(`Added "${lesson.title}" (${found}). Check what was read before relying on it.`);
   } catch (e) {
     const message = e instanceof ApiError ? e.message : 'This PDF could not be processed.';
     patch(id, { status: 'error', message, progress: 1 });

@@ -60,7 +60,7 @@ test('pastoral entry filters and expands', async ({ app: page }) => {
   await page.getByTestId('side-pastoral').click();
   await expect(page.getByTestId('list-title')).toHaveText('Pastoral Visits');
   await page.getByTestId('side-pastoral').click();
-  await expect(page.getByTestId('list-title')).toHaveText('All Lessons');
+  await expect(page.getByTestId('list-title')).toHaveText('Lesson Library');
   await page.getByTestId('pastoral-expand').click();
   await expect(page.getByTestId('tree-lesson')).toHaveCount(1);
   await page.getByTestId('pastoral-expand').click();

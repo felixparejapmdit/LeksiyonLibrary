@@ -14,6 +14,7 @@ const VIEWPORTS = [
 const ROUTES = [
   ['/', 'vault-page'],
   ['/bibles', 'bibles-page'],
+  ['/lesson-verses', 'bibles-page'],
   ['/lecture', 'lecture-page'],
   ['/settings', 'settings-page'],
   ['/search', 'search-page'],

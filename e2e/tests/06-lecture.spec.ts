@@ -282,7 +282,7 @@ test('with the AI offline the verses and their lesson source still show', async 
     await expect(page.getByTestId('notes-offline')).toBeVisible();
     await expect(page.getByTestId('notes-loading')).toHaveCount(0);
     await expect(page.getByTestId('verse-context')).toHaveCount(0);
-    await expect(page.getByTestId('verse-source').first()).toContainText(/^Cited in .+, page \d+$/);
+    await expect(page.getByTestId('origin-lesson-library').first()).toHaveText(/^Lesson Library · Offline Zephyrword Lesson, p\.\d+$/);
     await setAiMode('good');
   });
 });

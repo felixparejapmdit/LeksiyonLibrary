@@ -1,5 +1,5 @@
 import { memo, useMemo, useState } from 'react';
-import { Archive, BookMarked, ChevronDown, ChevronRight, Folder, FolderPlus, ListChecks, MapPin, Sparkles, Trash2 } from 'lucide-react';
+import { Archive, BookMarked, BookText, ChevronDown, ChevronRight, ClipboardCheck, Folder, FolderPlus, ListChecks, MapPin, Sparkles, Trash2 } from 'lucide-react';
 import { api } from '../api';
 import { useProgressive } from './Layout';
 import {
@@ -13,6 +13,7 @@ import {
   setState,
   sortLessons,
   toast,
+  libraryOf,
   updateFilters,
   useRoute,
   useStore,
@@ -82,10 +83,20 @@ export function Sidebar() {
   }, [verses]);
 
   const shownGroups = useProgressive(groups, 60);
-  // Both counts are of verses, so the library is always unverified plus verified.
-  const unverified = useMemo(() => verses.filter((v) => v.status === 'unverified').length, [verses]);
+  // Every count here is of verses, so each library is always its unverified plus its verified.
+  const counts = useMemo(() => {
+    const c = { verse: 0, lesson: 0, verseToReview: 0, lessonToReview: 0 };
+    for (const v of verses) {
+      const library = libraryOf(v);
+      c[library]++;
+      if (v.status === 'unverified') c[library === 'verse' ? 'verseToReview' : 'lessonToReview']++;
+    }
+    return c;
+  }, [verses]);
+  const unverified = counts.verseToReview + counts.lessonToReview;
+  const toCheck = useMemo(() => lessons.filter((l) => l.needs_check).length, [lessons]);
 
-  const allActive = route === '/' && f.category === 'all' && f.year === null && !f.verseKey && !f.folderId && !f.query;
+  const allActive = route === '/' && f.category === 'all' && f.year === null && !f.verseKey && !f.folderId && !f.query && !f.toCheck;
 
   const toggle = (k: string) => setExpanded((e) => ({ ...e, [k]: !e[k] }));
   const goVault = () => {
@@ -108,20 +119,30 @@ export function Sidebar() {
   return (
     <nav className="flex h-full min-w-0 flex-col overflow-hidden bg-panel" aria-label="Library" data-testid="sidebar">
       <div className="flex-none space-y-0.5 p-2">
-        <button className={rowClass(allActive)} data-testid="side-all" onClick={() => { resetFilters(); goVault(); }}>
-          <Archive size={15} className="flex-none" /> All Archives
+        <button className={rowClass(allActive)} data-testid="side-all" title="Worship service lessons uploaded as PDFs" onClick={() => { resetFilters(); goVault(); }}>
+          <Archive size={15} className="flex-none" /> Lesson Library
           <Count n={lessons.length} testId="side-all-count" />
         </button>
-        <button className={rowClass(route === '/bibles')} data-testid="side-bibles" onClick={() => navigate('/bibles')}>
-          <BookMarked size={15} className="flex-none" /> Bibles Library
-          <Count n={verses.length} testId="side-bibles-count" title={`${verses.length} verses: ${verses.length - unverified} verified, ${unverified} to review`} />
+        {toCheck > 0 && (
+          <button className={`${rowClass(route === '/' && f.toCheck)} !pl-7`} data-testid="side-to-check" onClick={() => { resetFilters(); updateFilters({ toCheck: true }); goVault(); }}>
+            <ClipboardCheck size={14} className="flex-none text-warn" /> Not checked yet
+            <Count n={toCheck} testId="side-to-check-count" />
+          </button>
+        )}
+        <button className={`${rowClass(route === '/lesson-verses')} !pl-7`} data-testid="side-lesson-verses" onClick={() => navigate('/lesson-verses')}>
+          <BookText size={14} className="flex-none" /> Verses from lessons
+          <Count n={counts.lesson} testId="side-lesson-verses-count" title={`${counts.lesson} verses read from lesson PDFs: ${counts.lesson - counts.lessonToReview} verified, ${counts.lessonToReview} to review`} />
         </button>
-        <button className={rowClass(route === '/lecture')} data-testid="side-lecture" onClick={() => navigate('/lecture')}>
-          <Sparkles size={15} className="flex-none" /> Lecture Maker
+        <button className={rowClass(route === '/bibles')} data-testid="side-bibles" title="Verses imported from Excel or Google Sheets" onClick={() => navigate('/bibles')}>
+          <BookMarked size={15} className="flex-none" /> Verse Library
+          <Count n={counts.verse} testId="side-bibles-count" title={`${counts.verse} verses: ${counts.verse - counts.verseToReview} verified, ${counts.verseToReview} to review`} />
+        </button>
+        <button className={rowClass(route === '/lecture')} data-testid="side-lecture" title="Lecture Maker: builds a lecture from the verses in both libraries" onClick={() => navigate('/lecture')}>
+          <Sparkles size={15} className="flex-none" /> Lesson Assistant
         </button>
         <button className={rowClass(route === '/review')} data-testid="side-review" onClick={() => navigate('/review')}>
           <ListChecks size={15} className="flex-none" /> Review Verses
-          <Count n={unverified} testId="side-review-count" title={`${unverified} of ${verses.length} verses still to review`} />
+          <Count n={unverified} testId="side-review-count" title={`${unverified} of ${verses.length} verses still to review: ${counts.verseToReview} in the Verse Library, ${counts.lessonToReview} in the Lesson Library`} />
         </button>
       </div>
       <div className="scroll-stable min-h-0 flex-1 px-2 pb-3">

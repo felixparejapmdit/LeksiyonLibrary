@@ -2,9 +2,9 @@ import { BookMarked, FolderOpen, Search, Settings, Sparkles } from 'lucide-react
 import { navigate, useRoute } from '../store';
 
 const items = [
-  { path: '/', label: 'Vault', icon: FolderOpen, id: 'vault' },
-  { path: '/bibles', label: 'Bibles', icon: BookMarked, id: 'bibles' },
-  { path: '/lecture', label: 'Lecture', icon: Sparkles, id: 'lecture' },
+  { path: '/', label: 'Lessons', icon: FolderOpen, id: 'vault' },
+  { path: '/bibles', label: 'Verses', icon: BookMarked, id: 'bibles' },
+  { path: '/lecture', label: 'Assistant', icon: Sparkles, id: 'lecture' },
   { path: '/search', label: 'Search', icon: Search, id: 'search' },
   { path: '/settings', label: 'Settings', icon: Settings, id: 'settings' },
 ];

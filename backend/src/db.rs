@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS lessons (
   issue TEXT NOT NULL DEFAULT '',
   objectives TEXT NOT NULL DEFAULT '[]',
   created_at TEXT NOT NULL,
+  needs_check INTEGER NOT NULL DEFAULT 0,
   UNIQUE (user_id, sha256)
 );
 CREATE INDEX IF NOT EXISTS lessons_user ON lessons(user_id);
@@ -233,6 +234,8 @@ pub fn init(conn: &Connection) -> rusqlite::Result<()> {
         ("lecture_verses", "objective", "TEXT NOT NULL DEFAULT ''"),
         ("verse_context", "reviewed_at", "TEXT"),
         ("verses", "import_source", "TEXT NOT NULL DEFAULT ''"),
+        // Lessons already in a vault were added before this check existed, so they start as checked.
+        ("lessons", "needs_check", "INTEGER NOT NULL DEFAULT 0"),
     ] {
         let present: bool = conn.query_row(&format!("SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1)"), [column], |r| r.get(0))?;
         if !present {
@@ -290,6 +293,23 @@ mod tests {
         assert_eq!(objective, "");
         c.query_row("SELECT reviewed_at FROM verse_context", [], |_| Ok(())).unwrap_err();
         c.execute("INSERT INTO verse_context (user_id,canonical_key,speaker,context,model,updated_at,reviewed_at) VALUES ('u','k','','','','now','now')", []).unwrap();
+    }
+
+    #[test]
+    fn lessons_in_an_older_vault_start_as_checked() {
+        let c = Connection::open_in_memory().unwrap();
+        let old = SCHEMA.replace("\r\n", "\n").replace("  needs_check INTEGER NOT NULL DEFAULT 0,\n", "");
+        assert_ne!(old, SCHEMA.replace("\r\n", "\n"), "the column was taken out");
+        c.execute_batch(&old).unwrap();
+        c.execute_batch(
+            "INSERT INTO users VALUES ('u','a@b.c','x','now');
+             INSERT INTO lessons (id,user_id,title,category,language,file_name,sha256,byte_size,page_count,source_kind,content,created_at)
+             VALUES ('l','u','T','weekend','en','f','s',1,1,'text','body','now');",
+        )
+        .unwrap();
+        init(&c).unwrap();
+        let needs: i64 = c.query_row("SELECT needs_check FROM lessons WHERE id='l'", [], |r| r.get(0)).unwrap();
+        assert_eq!(needs, 0);
     }
 
     #[test]

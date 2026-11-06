@@ -334,3 +334,15 @@ Added at the project owner's choice: a verse review queue, editable AI context, 
 **The Verse column now wins over a number stuck to the text.** This reverses the earlier rule of keeping the number and flagging the row, at the owner's instruction. A number with a space after it still gets flagged, because it may be part of the sentence ("3 days later"). Verses imported before this change are corrected once when the vault opens, unless the user has already changed the text. The original cell is kept unchanged.
 
 **Rows left out are kept for fixing in the app.** They were only listed in the preview, so they were lost once it closed. They now stay in the encrypted vault and travel in backups, and a correction goes through the same checks as the sheet.
+
+### 17. Three libraries (6 November 2026)
+
+**The app is now three parts, at the owner's request.** The Lesson Library holds the lessons uploaded as PDFs, and lists their verses under Verses from lessons. The Verse Library holds verses imported from sheets, and importing moved there from Settings. The Lesson Assistant (the Lecture Maker) draws on both, and labels each verse with its library, sheet row, or lesson and page. A verse no lesson cites any more stays in the Verse Library. The "Start from a lesson" picker was removed.
+
+**Every upload is checked by hand.** A new lesson is marked as not checked until the user confirms it. The check shows the PDF beside the title, issue, objectives and the verses read, where a misread verse can be corrected and something that is not a verse removed. Lessons already in a vault, and in older backups, count as checked.
+
+**Review Verses has a tab for each library.** The sidebar's Review count is the sum of both, so it can be higher than either library's count.
+
+**A bug was fixed: deleting a lesson deleted every unverified imported verse.** The cleanup kept only verses a lesson or lecture still used, and imported verses are used by neither. It now leaves imported verses alone. No lesson had been deleted since the import, so no data was lost.
+
+**Test results:** Rust 90 of 90, Playwright 153 of 153 in one full run. An earlier full run failed the 400-lesson speed test (366 ms against 200). Run alone, it failed twice and then passed four times with no code change between, and the previous code passed twice. No cause in the change was found, but one is not ruled out.

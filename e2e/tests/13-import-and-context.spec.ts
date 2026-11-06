@@ -5,6 +5,7 @@ import AdmZip from 'adm-zip';
 import type { Page } from '@playwright/test';
 import { test, expect, setAiMode, STUB, withEmptyVault, TEST_PASSPHRASE } from '../support/fixtures';
 import { makePdf } from '../support/pdf';
+import { xlsx } from '../support/xlsx';
 
 // Everything here is made up, as all test data must be: this repository is public.
 const MARKER = 'ZEPHYRWORD';
@@ -25,23 +26,6 @@ const ROWS: string[][] = [
 
 const SHEET = '1abcDEFghiJKLmnoPQRstuVWXyz_0123456789-abcd';
 const LINK = `https://docs.google.com/spreadsheets/d/${SHEET}/edit?gid=0#gid=0`;
-
-function xlsx(rows: string[][]) {
-  const zip = new AdmZip();
-  const add = (name: string, body: string) => zip.addFile(name, Buffer.from(body));
-  add('[Content_Types].xml', '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/></Types>');
-  add('_rels/.rels', '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>');
-  add('xl/workbook.xml', '<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Verses" sheetId="1" r:id="rId1"/></sheets></workbook>');
-  add('xl/_rels/workbook.xml.rels', '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>');
-  const data = rows
-    .map((cells, r) => `<row r="${r + 1}">${cells.map((cell, c) => {
-      const at = `${String.fromCharCode(65 + c)}${r + 1}`;
-      return /^\d+$/.test(cell) ? `<c r="${at}"><v>${cell}</v></c>` : `<c r="${at}" t="inlineStr"><is><t>${cell}</t></is></c>`;
-    }).join('')}</row>`)
-    .join('');
-  add('xl/worksheets/sheet1.xml', `<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${data}</sheetData></worksheet>`);
-  return zip.toBuffer();
-}
 
 const csv = (rows: string[][]) => rows.map((r) => r.map((c) => `"${c.replace(/"/g, '""')}"`).join(',')).join('\n');
 const setSheet = (sheet: { body?: string; status?: number; type?: string }) => fetch(`${STUB}/__sheet`, { method: 'POST', body: JSON.stringify(sheet) });
@@ -67,7 +51,11 @@ const everyFile = (dir: string): string[] => readdirSync(dir, { withFileTypes: t
 test.describe('importing verses', () => {
   test('an Excel file is previewed, then imported with its slips corrected and reported', async ({ page }) => {
     await withEmptyVault(page, async () => {
+      // Importing is done in the Verse Library, open while it is still empty.
       await page.goto('/settings');
+      await page.getByTestId('settings-open-import').click();
+      await expect(page.getByTestId('bibles-title')).toHaveText('Verse Library');
+      await expect(page.getByTestId('import-panel')).toHaveAttribute('open', '');
       await chooseFile(page, 'made-up.xlsx', xlsx(ROWS));
 
       await expect(page.getByTestId('import-summary')).toHaveText('6 new verses ready to import from made-up.xlsx');
@@ -92,7 +80,8 @@ test.describe('importing verses', () => {
       await chooseFile(page, 'made-up.xlsx', xlsx(ROWS));
       await page.getByTestId('import-confirm').click();
       await expect(page.getByTestId('import-count')).toHaveText('6 imported verses in your vault.');
-      await expect(page.getByTestId('settings-stats')).toContainText('6 verse records');
+      await expect(page.getByTestId('import-panel-counts')).toHaveText('6 imported, 1 row to fix');
+      await expect(page.getByTestId('verse-group')).toHaveCount(4);
 
       const saved = await verses(page);
       const byRow = (n: number) => saved.find((v) => v.import_source === `made-up.xlsx, row ${n}`);
@@ -111,7 +100,7 @@ test.describe('importing verses', () => {
     });
   });
 
-  test('the Bibles Library filters by translation and says where a verse came from', async ({ page }) => {
+  test('the Verse Library filters by translation and says where a verse came from', async ({ page }) => {
     await withEmptyVault(page, async () => {
       await page.request.post('/api/verses/import', { multipart: { commit: '1', file: { name: 'made-up.xlsx', mimeType: 'application/octet-stream', buffer: xlsx(ROWS) } } });
       await page.goto('/bibles');
@@ -152,13 +141,13 @@ test.describe('importing verses', () => {
       await page.reload();
       await expect(page.getByTestId('side-bibles-count')).toHaveText('6');
       await expect(page.getByTestId('side-review-count'), 'they differ by what has been verified').toHaveText('5');
-      await expect(page.getByTestId('side-review-count')).toHaveAttribute('title', '5 of 6 verses still to review');
+      await expect(page.getByTestId('side-review-count')).toHaveAttribute('title', '5 of 6 verses still to review: 5 in the Verse Library, 0 in the Lesson Library');
     });
   });
 
   test('a row left out can be fixed in the app, and stays sealed until then', async ({ page }) => {
     await withEmptyVault(page, async () => {
-      await page.goto('/settings');
+      await page.goto('/bibles');
       await chooseFile(page, 'made-up.xlsx', xlsx(ROWS));
       await expect(page.getByTestId('rows-to-fix'), 'a preview keeps nothing').toHaveCount(0);
       await page.getByTestId('import-confirm').click();
@@ -179,11 +168,13 @@ test.describe('importing verses', () => {
       expect(await (await page.request.get('/api/verses/import/rows')).json()).toEqual([]);
       await page.request.post('/api/restore', { multipart: { passphrase: TEST_PASSPHRASE, file: { name: 'b.lvbackup', mimeType: 'application/octet-stream', buffer: backup } } });
 
-      // The Bibles Library points to it.
+      // The Verse Library points to it, and opens the panel it is fixed in.
       await page.goto('/bibles');
       await expect(page.getByTestId('bibles-rows-to-fix')).toContainText('1 imported row was left out');
+      await expect(page.getByTestId('import-panel'), 'closed once verses are imported').not.toHaveAttribute('open', '');
       await page.getByTestId('bibles-rows-to-fix-open').click();
       await expect(page.getByTestId('rows-to-fix')).toBeVisible();
+      await expect(page.getByTestId('rows-to-fix')).toBeInViewport();
 
       // A correction goes through the same checks as the sheet.
       await row.getByTestId('fix-row-book').selectOption('II Peter');
@@ -211,7 +202,8 @@ test.describe('importing verses', () => {
     await withEmptyVault(page, async () => {
       const send = (rows: string[][]) => page.request.post('/api/verses/import', { multipart: { commit: '1', file: { name: 'made-up.xlsx', mimeType: 'application/octet-stream', buffer: xlsx(rows) } } });
       await send(ROWS);
-      await page.goto('/settings');
+      await page.goto('/bibles');
+      await page.getByTestId('import-panel-toggle').click();
       await page.getByTestId('fix-row-dismiss').click();
       await page.getByTestId('confirm-accept').click();
       await expect(page.getByTestId('rows-to-fix')).toHaveCount(0);
@@ -219,6 +211,7 @@ test.describe('importing verses', () => {
       // The sheet still has the slip, so importing it brings the row back.
       await send(ROWS);
       await page.reload();
+      await page.getByTestId('bibles-rows-to-fix-open').click();
       await expect(page.getByTestId('rows-to-fix-title')).toHaveText('Rows to fix (1)');
 
       // Fixed in the sheet, it becomes a verse and leaves the list.
@@ -262,7 +255,7 @@ test.describe('importing verses', () => {
 
   test('a file that is not right is refused with a clear reason', async ({ page }) => {
     await withEmptyVault(page, async () => {
-      await page.goto('/settings');
+      await page.goto('/bibles');
       await chooseFile(page, 'wrong.xlsx', xlsx([['Name', 'Age'], ['A', '1']]));
       await expect(page.getByTestId('toast').filter({ hasText: 'needs a sheet with these columns' })).toBeVisible();
       await chooseFile(page, 'text.xlsx', Buffer.from('not a spreadsheet'));
@@ -297,7 +290,8 @@ test.describe('importing verses', () => {
       await page.request.post(`/api/verses/${verified.id}/verify`);
       await page.request.post('/api/lectures', { data: { title: 'Keeps it', issue: '', objective: '', verse_ids: [used.id] } });
 
-      await page.goto('/settings');
+      await page.goto('/bibles');
+      await page.getByTestId('import-panel-toggle').click();
       await page.getByTestId('import-remove').click();
       await page.getByTestId('confirm-accept').click();
       await expect(page.getByTestId('import-count')).toHaveText('2 imported verses in your vault.');
@@ -506,7 +500,7 @@ test.describe('importing from Google Sheets', () => {
   test('a link loads the sheet, and after that the gid alone is enough', async ({ page }) => {
     await withEmptyVault(page, async () => {
       await setSheet({ body: csv(ROWS) });
-      await page.goto('/settings');
+      await page.goto('/bibles');
       await expect(page.getByTestId('import-sheet-warning')).toContainText('anyone who gets the link can read it');
       await expect(page.getByTestId('import-sheet-saved')).toHaveCount(0);
 
@@ -539,7 +533,7 @@ test.describe('importing from Google Sheets', () => {
 
   test('a private or missing sheet explains what to do, and saves nothing', async ({ page }) => {
     await withEmptyVault(page, async () => {
-      await page.goto('/settings');
+      await page.goto('/bibles');
       const load = async (value: string) => {
         await page.getByTestId('import-sheet').fill(value);
         await page.getByTestId('import-sheet-load').click();

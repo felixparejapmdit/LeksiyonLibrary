@@ -34,7 +34,7 @@ export function VaultPage() {
     if (visible.length && !visible.some((l) => l.id === getState().selectedId)) selectLesson(visible[0].id);
   }, [visible]);
 
-  const title = category === 'all' ? 'All Lessons' : categoryLabel[category];
+  const title = category === 'all' ? 'Lesson Library' : categoryLabel[category];
 
   const emptyState =
     total === 0 ? (

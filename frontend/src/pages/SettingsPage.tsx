@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Download, Moon, RotateCcw, Sun, Upload } from 'lucide-react';
+import { BookMarked, Download, Moon, RotateCcw, Sun, Upload } from 'lucide-react';
 import { api } from '../api';
 import { askReset, RestoreInput } from '../components/Header';
-import { VerseImport } from '../components/VerseImport';
-import { setState, setTheme, useStore } from '../store';
+import { navigate, setState, setTheme, useStore } from '../store';
 
 export function SettingsPage() {
   const theme = useStore((s) => s.theme);
@@ -54,7 +53,11 @@ export function SettingsPage() {
             <button className="btn" data-testid="settings-reset" onClick={askReset}><RotateCcw size={14} /> Reset vault</button>
           </div>
         </section>
-        <VerseImport />
+        <section className="rounded-lg border border-line bg-panel p-3" data-testid="settings-import">
+          <h2 className="m-0 mb-1 text-[14px] font-semibold">Importing verses</h2>
+          <p className="m-0 mb-2 text-[13px] text-muted">Verses from Excel files and Google Sheets are now imported in the Verse Library, where they are kept.</p>
+          <button className="btn" data-testid="settings-open-import" onClick={() => navigate('/bibles')}><BookMarked size={14} /> Open the Verse Library</button>
+        </section>
         <section className="rounded-lg border border-line bg-panel p-3">
           <h2 className="m-0 mb-1 text-[14px] font-semibold">AI assistant</h2>
           <p className="m-0 min-h-5 text-[13px] text-muted" data-testid="settings-ai">

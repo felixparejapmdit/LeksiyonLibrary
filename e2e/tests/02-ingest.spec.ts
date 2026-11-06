@@ -79,7 +79,7 @@ test('real scanned samples go through OCR while the UI stays responsive', async 
     await page.getByTestId('tab-weekend').click();
     await expect(page.getByTestId('list-title')).toHaveText('Weekend');
     await page.getByTestId('tab-all').click();
-    await expect(page.getByTestId('list-title')).toHaveText('All Lessons');
+    await expect(page.getByTestId('list-title')).toHaveText('Lesson Library');
     await page.getByTestId('theme-toggle').click();
     await page.getByTestId('theme-toggle').click();
   }
