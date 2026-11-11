@@ -315,7 +315,7 @@ pub fn plan(rows: &[SheetRow]) -> Plan {
 
     for row in rows {
         // The user's codes are kept as typed, apart from the slips fixed here.
-        let version = SPACED_YEAR.replace(row.translation.trim(), "$1$2").to_string();
+        let version = crate::parser::correct_version_code(&SPACED_YEAR.replace(row.translation.trim(), "$1$2"));
         let drag_filled = TRAILING_YEAR.captures(&version).and_then(|c| {
             let before = c[2].parse::<u32>().ok()?.checked_sub(1)?;
             let (typed_before, corrected) = previous.as_ref()?;
@@ -659,6 +659,16 @@ mod tests {
         let p = one("GNB", "John", "1", "1", TAGALOG);
         assert_eq!(p.verses[0].version, "GNB");
         assert!(p.translation_fixes.is_empty());
+    }
+
+    #[test]
+    fn the_known_t4t_ocr_alias_is_reported_and_deduplicated() {
+        let p = plan(&[row(2, "TAT", "II Corinthians", "4", "18", TAGALOG), row(3, "T4T", "II Corinthians", "4", "18", TAGALOG)]);
+        assert_eq!(p.verses.len(), 1);
+        assert_eq!(p.verses[0].version, "T4T");
+        assert_eq!(p.verses[0].text, TAGALOG);
+        assert_eq!(p.duplicates, 1);
+        assert_eq!(p.translation_fixes, vec![Fix { from: "TAT".into(), to: "T4T".into(), count: 1 }]);
     }
 
     #[test]

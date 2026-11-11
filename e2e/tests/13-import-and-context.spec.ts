@@ -135,7 +135,7 @@ test.describe('importing verses', () => {
       await expect(page.getByTestId('side-lesson-verses-count')).toHaveText('0');
       await expect(page.getByTestId('side-bibles-count'), 'they count towards the library').toHaveText('6');
       await page.getByTestId('side-bibles').click();
-      await expect(page.getByTestId('bibles-origin-counts')).toContainText('0 read from uploaded PDFs');
+      await expect(page.getByTestId('bibles-origin-counts')).toContainText('0 read from uploaded documents');
       await expect(page.getByTestId('bibles-origin-counts')).toContainText('6 imported from Excel');
       await expect(page.locator('[data-testid="verse-origin"][data-origin="pdf"]')).toHaveCount(0);
       await expect(page.getByTestId('verse-origin').first()).toHaveText('Imported from Excel');
@@ -330,25 +330,48 @@ test.describe('a large Bibles Library', () => {
     await withEmptyVault(page, async () => {
       await load(page);
       const groups = page.getByTestId('verse-group');
+      const topPages = page.getByTestId('bibles-pagination-top');
+      const bottomPages = page.getByTestId('bibles-pagination');
+      const currentPage = (position: typeof topPages) => position.locator('[aria-current="page"]');
       await expect(groups).toHaveCount(25);
+      await expect(topPages).toBeInViewport();
+      await expect(page.getByTestId('bibles-top-page-prev')).toBeDisabled();
       await expect(page.getByTestId('bibles-page-prev')).toBeDisabled();
+      await expect(currentPage(topPages)).toHaveText('1');
+      await expect(currentPage(bottomPages)).toHaveText('1');
       const firstKey = await groups.first().getAttribute('data-key');
 
-      await page.getByTestId('bibles-page-next').click();
+      await page.getByTestId('bibles-top-page-next').click();
       await expect(page.getByTestId('bibles-range')).toHaveText('26–50 of 121 references, 124 verses');
+      await expect(currentPage(topPages)).toHaveText('2');
+      await expect(currentPage(bottomPages)).toHaveText('2');
       expect(await groups.first().getAttribute('data-key')).not.toBe(firstKey);
       await page.getByTestId('bibles-page-prev').click();
       await expect(groups.first()).toHaveAttribute('data-key', firstKey!);
+      await expect(currentPage(topPages)).toHaveText('1');
 
-      await page.getByRole('button', { name: 'Page 5', exact: true }).click();
+      await topPages.getByRole('button', { name: 'Page 5', exact: true }).click();
       await expect(page.getByTestId('bibles-range')).toHaveText('101–121 of 121 references, 124 verses');
+      await expect(page.getByTestId('bibles-top-page-next')).toBeDisabled();
       await expect(page.getByTestId('bibles-page-next')).toBeDisabled();
-      await expect(page.getByRole('button', { name: 'Page 5', exact: true })).toHaveAttribute('aria-current', 'page');
+      await expect(currentPage(topPages)).toHaveText('5');
+      await expect(currentPage(bottomPages)).toHaveText('5');
 
       await page.getByTestId('bibles-page-size').selectOption('100');
       await expect(page.getByTestId('bibles-range')).toHaveText('1–100 of 121 references, 124 verses');
       await expect(groups).toHaveCount(100);
+      await expect(currentPage(topPages)).toHaveText('1');
+      await expect(currentPage(bottomPages)).toHaveText('1');
       await page.getByTestId('bibles-page-size').selectOption('25');
+
+      await page.getByTestId('bibles-top-page-next').click();
+      await page.getByTestId('bibles-book').selectOption({ label: 'John' });
+      await expect(page.getByTestId('bibles-range')).toHaveText('1–1 of 1 reference, 4 verses');
+      await expect(topPages).toHaveCount(0);
+      await expect(bottomPages).toHaveCount(0);
+      await page.getByTestId('bibles-clear').click();
+      await expect(currentPage(topPages)).toHaveText('1');
+      await expect(currentPage(bottomPages)).toHaveText('1');
     });
   });
 

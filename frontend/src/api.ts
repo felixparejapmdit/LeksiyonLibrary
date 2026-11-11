@@ -10,9 +10,12 @@ export interface Lesson {
   date_label: string;
   year: number | null;
   location: string;
+  local_congregation: string;
+  district: string;
   author: string;
   code: string;
   file_name: string;
+  document_format?: 'pdf' | 'docx';
   byte_size: number;
   page_count: number;
   source_kind: 'text' | 'ocr';
@@ -21,8 +24,19 @@ export interface Lesson {
   created_at: string;
   folder_id: string | null;
   verse_keys: string[];
-  /** Added by upload and not yet compared with its PDF by the user. */
+  /** Added by upload and not yet compared with its original document by the user. */
   needs_check: boolean;
+}
+
+/** Older running backends can serve lessons before the new metadata fields exist. */
+function normalizeLesson(lesson: Lesson): Lesson {
+  return {
+    ...lesson,
+    local_congregation: lesson.local_congregation ?? '',
+    district: lesson.district ?? '',
+    issue: lesson.issue ?? '',
+    objectives: lesson.objectives ?? [],
+  };
 }
 
 export interface Verse {
@@ -40,9 +54,19 @@ export interface Verse {
   ref_note: string;
   verified_at: string | null;
   /** Where it is printed in each lesson: the part of the lesson (see partName) and the question it answers. */
-  sources: { lesson_id: string; page: number; section: number; question: string; pastoral: boolean }[];
+  sources: { lesson_id: string; page: number; section: number; question: string; pastoral: boolean; lesson_date: string | null }[];
   /** Where an imported verse came from, such as "Translations.xlsx, row 17". Empty otherwise. */
   import_source: string;
+}
+
+export interface VerseComparison {
+  id: string;
+  verse_id: string;
+  page: number;
+  candidates: Verse[];
+  decision: '' | 'existing' | 'both';
+  resolved_at: string | null;
+  pdf_reading: { text: string; ocr_raw: string; reference: string; version: string; language: string };
 }
 
 export interface Lecture {
@@ -56,7 +80,7 @@ export interface Lecture {
   verse_objectives: string[];
 }
 
-/** Where a PDF is uploaded: the Lesson Library or Pastoral Visits. */
+/** Where a lesson document is uploaded: the Lesson Library or Pastoral Visits. */
 export type UploadTarget = 'lesson' | 'pastoral';
 
 export interface Suggestion {
@@ -210,7 +234,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  lessons: () => request<Lesson[]>('/lessons'),
+  lessons: () => request<Lesson[]>('/lessons').then((lessons) => lessons.map(normalizeLesson)),
   /** A pastoral visit is uploaded on its own page, and is always filed as one. */
   uploadLesson: (file: File, pages: string[], sourceKind: 'text' | 'ocr', target: UploadTarget = 'lesson') => {
     const form = new FormData();
@@ -218,11 +242,16 @@ export const api = {
     if (target === 'pastoral') form.set('category', 'pastoral');
     form.set('pages', JSON.stringify(pages));
     form.set('file', file, file.name);
-    return request<{ lesson: Lesson; verse_count: number; unread: { page: number; text: string }[] }>('/lessons', { method: 'POST', body: form });
+    return request<{ lesson: Lesson; verse_count: number; unread: { page: number; text: string }[] }>('/lessons', { method: 'POST', body: form })
+      .then((result) => ({ ...result, lesson: normalizeLesson(result.lesson) }));
   },
-  patchLesson: (id: string, patch: Record<string, string | string[] | boolean>) => request<Lesson>(`/lessons/${id}`, json('PATCH', patch)),
+  patchLesson: (id: string, patch: Record<string, string | string[] | boolean>) => request<Lesson>(`/lessons/${id}`, json('PATCH', patch)).then(normalizeLesson),
+  moveLesson: (id: string, category: Category) => request<Lesson>(`/lessons/${id}/move`, json('POST', { category })).then(normalizeLesson),
   deleteLesson: (id: string) => request(`/lessons/${id}`, { method: 'DELETE' }),
   removeLessonVerse: (id: string, verseId: string) => request(`/lessons/${id}/verses/${verseId}`, { method: 'DELETE' }),
+  verseComparisons: (id: string) => request<VerseComparison[]>(`/lessons/${id}/verse-comparisons`),
+  resolveVerseComparison: (id: string, comparisonId: string, decision: 'existing' | 'both', verseId?: string) =>
+    request<VerseComparison[]>(`/lessons/${id}/verse-comparisons/${comparisonId}`, json('POST', { decision, verse_id: verseId })),
   search: (q: string) => request<{ lesson_ids: string[] }>(`/search?q=${encodeURIComponent(q)}`),
 
 

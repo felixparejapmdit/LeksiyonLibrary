@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, ArrowRight, CheckCircle2, FileSpreadsheet, FileText, ListChecks, Lock, Save, ShieldAlert } from 'lucide-react';
 import { api, type Verse } from '../api';
 import { PdfViewer } from '../components/PdfViewer';
+import { VerseText } from '../components/VerseText';
 import { derived, errorText, getState, libraryName, libraryOf, navigate, selectLesson, setState, toast, useStore, type Library } from '../store';
 
 const replaceVerse = (v: Verse) => setState({ verses: getState().verses.map((x) => (x.id === v.id ? v : x)) });
@@ -17,13 +18,13 @@ export function openReview(library: Library) {
 
 function LibraryTabs({ library, counts, onChange }: { library: Library; counts: Record<Library, number>; onChange: (l: Library) => void }) {
   return (
-    <div className="flex rounded-lg border border-line" role="tablist" aria-label="Library" data-testid="review-libraries">
+    <div className="flex min-w-0 rounded-lg border border-line bg-panel" role="tablist" aria-label="Library" data-testid="review-libraries">
       {(['verse', 'lesson'] as const).map((l) => (
         <button
           key={l}
           role="tab"
           aria-selected={library === l}
-          className={`tap flex min-h-[34px] flex-1 items-center justify-center gap-1.5 border-0 px-2.5 text-xs first:rounded-l-lg last:rounded-r-lg max-lg:min-h-11 ${library === l ? 'bg-raised font-semibold text-fg' : 'bg-transparent text-muted hover:text-fg'}`}
+          className={`tap flex min-h-[34px] min-w-0 flex-1 flex-wrap items-center justify-center gap-x-1.5 gap-y-0.5 border-0 px-2.5 py-1.5 text-center text-xs first:rounded-l-lg last:rounded-r-lg max-lg:min-h-11 ${library === l ? 'bg-raised font-semibold text-fg' : 'bg-transparent text-muted hover:text-fg'}`}
           data-testid={`review-library-${l}`}
           onClick={() => onChange(l)}
         >
@@ -122,32 +123,32 @@ export function ReviewPage() {
   };
 
   return (
-    <div className="grid h-full grid-cols-1 grid-rows-[minmax(0,1fr)_minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_minmax(320px,440px)] lg:grid-rows-1" data-testid="review-page">
+    <div className="grid h-full min-w-0 grid-cols-1 grid-rows-[minmax(0,1fr)_minmax(0,1fr)] lg:grid-cols-[minmax(0,1.15fr)_minmax(360px,1fr)] lg:grid-rows-1 xl:grid-cols-[minmax(0,1.3fr)_minmax(380px,560px)]" data-testid="review-page">
       <div className="min-h-0 min-w-0 border-b border-line lg:border-r lg:border-b-0">
         {lesson ? (
           <PdfViewer lesson={lesson} mark={source && verse.text.trim() ? { text: verse.text, page: source.page } : null} />
         ) : (
-          <div className="flex h-full items-center justify-center overflow-auto p-6">
-            <div className="card w-full max-w-lg p-5 text-center">
+          <div className="flex h-full overflow-auto p-4 lg:p-6">
+            <div className="card m-auto w-full min-w-0 max-w-lg p-4 text-center sm:p-5">
               <span className={`page-tile mx-auto ${verse.import_source ? 'tone-review' : 'tone-archive'}`} aria-hidden="true">
                 {verse.import_source ? <FileSpreadsheet size={19} /> : <FileText size={19} />}
               </span>
-              <p className="m-0 mt-3 text-[14px] font-semibold" data-testid="review-no-source">
+              <p className="m-0 mt-3 text-[14px] font-semibold break-words" data-testid="review-no-source">
                 {verse.import_source ? `Imported from ${verse.import_source}.` : 'This verse has no source page.'}
               </p>
               <p className="m-0 mt-1 text-[13px] text-muted">{verse.import_source ? 'Compare it with your original. The cell as it was in the sheet:' : 'Compare it with where you found it.'}</p>
               {verse.import_source && verse.ocr_raw && (
-                <p className="m-0 mt-3 rounded-lg border border-line bg-bg/60 px-3 py-2.5 text-left text-[13px] leading-relaxed whitespace-pre-wrap" data-testid="review-original">{verse.ocr_raw}</p>
+                <p className="m-0 mt-3 rounded-lg border border-line bg-bg px-3 py-2.5 text-left text-[13px] leading-relaxed break-words whitespace-pre-wrap" data-testid="review-original"><VerseText text={verse.ocr_raw} /></p>
               )}
             </div>
           </div>
         )}
       </div>
-      <div className="scroll-stable min-h-0 space-y-4 bg-panel/40 p-4" data-testid="review-panel">
+      <div className="scroll-stable min-h-0 min-w-0 space-y-4 p-4 sm:p-5 lg:p-6" data-testid="review-panel">
         <LibraryTabs library={library} counts={counts} onChange={setLibrary} />
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <span className="page-tile tone-review !h-9 !w-9" aria-hidden="true"><ListChecks size={17} /></span>
-          <h1 className="m-0 min-w-0 flex-1 text-lg font-semibold">Review verses</h1>
+          <h1 className="m-0 min-w-0 flex-1 basis-28 text-lg font-semibold">Review verses</h1>
           <span className="rounded-full bg-raised px-2 py-0.5 text-xs text-muted tabular-nums" data-testid="review-progress" title={`In the ${libraryName[library]}`}>{position + 1} of {queue.length} to review</span>
         </div>
         <div className="flex flex-wrap items-center gap-1.5 text-xs" data-testid="review-meta">
@@ -161,17 +162,18 @@ export function ReviewPage() {
           Reference
           <input className="field mt-1" data-testid="review-reference" value={reference} onChange={(e) => setReference(e.target.value)} />
         </label>
+        <p className="m-0 rounded-lg border border-line bg-panel p-3 text-[14px] leading-relaxed break-words whitespace-pre-wrap" data-testid="review-formatted-text"><VerseText text={text} /></p>
         <label className="block text-xs text-muted">
-          {verse.import_source ? 'Verse text' : 'Verse text, as printed'}
+          {verse.import_source ? 'Edit verse text' : 'Edit verse text, as printed'}
           <textarea className="field mt-1 min-h-44 !text-[14px] leading-relaxed" data-testid="review-text" value={text} onChange={(e) => setText(e.target.value)} />
         </label>
         <details className="text-xs text-muted">
           <summary className="cursor-pointer" data-testid="review-raw-toggle">{verse.import_source ? 'Show the original cell from the sheet' : 'Show what the scan originally read'}</summary>
-          <p className="m-0 mt-1 whitespace-pre-wrap" data-testid="review-raw">{verse.ocr_raw}</p>
+          <p className="m-0 mt-2 rounded-lg border border-line bg-panel p-3 leading-relaxed break-words whitespace-pre-wrap" data-testid="review-raw"><VerseText text={verse.ocr_raw} /></p>
         </details>
-        <div className="space-y-3 rounded-xl border border-line bg-bg/40 p-3">
+        <div className="space-y-3 rounded-xl border border-line bg-panel p-3 sm:p-4">
         <label className="flex items-start gap-2 text-[13px]">
-          <input type="checkbox" className="mt-1" data-testid="review-compared" checked={compared} onChange={(e) => setCompared(e.target.checked)} />
+          <input type="checkbox" className="mt-1 flex-none" data-testid="review-compared" checked={compared} onChange={(e) => setCompared(e.target.checked)} />
           <span>I compared this with {verse.import_source ? 'the original' : 'the printed page'}, and it matches exactly.</span>
         </label>
         <div className="flex flex-wrap gap-1.5">

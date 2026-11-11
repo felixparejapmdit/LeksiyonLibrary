@@ -84,7 +84,7 @@ test('All Archives, the Lesson Library and Pastoral Visits each list their own l
   await expect(page.getByTestId('list-title')).toHaveText('Pastoral Visits');
   await expect(page.getByTestId('item-count')).toHaveText(`${visits} ${visits === 1 ? 'item' : 'items'}`);
   await expect(page.getByTestId('category-tabs')).toHaveCount(0);
-  await expect(page.getByTestId('pv-drop')).toContainText('Drop pastoral visit PDFs here');
+  await expect(page.getByTestId('pv-drop')).toContainText('Drop pastoral visit PDF or DOCX files here');
   await expect(page.getByTestId('lesson-upload'), 'lesson PDFs are uploaded in the Lesson Library').toHaveCount(0);
 
   // All Archives brings them together again.
@@ -97,7 +97,7 @@ test('All Archives, the Lesson Library and Pastoral Visits each list their own l
   // The Lesson Library has the upload for lesson PDFs.
   await page.getByTestId('side-lessons').click();
   await page.getByTestId('lesson-upload').click();
-  await expect(page.getByTestId('upload-dialog')).toHaveAccessibleName('Ingest & Archive Lesson PDF');
+  await expect(page.getByTestId('upload-dialog')).toHaveAccessibleName('Ingest & Archive Lesson');
   await page.getByTestId('upload-done').click();
 });
 

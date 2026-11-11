@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { BellRing, CheckCircle2, CircleAlert, ClipboardCheck, FileUp, FolderUp, Loader2, PencilLine, Trash2, UploadCloud, X } from 'lucide-react';
-import { api, saveFile, type Category, type Language, type Verse } from '../api';
+import { api, saveFile, type Category, type Language, type Verse, type VerseComparison } from '../api';
 import { enqueueFiles, enqueueFolder } from '../ingest';
+import { documentLabel, LESSON_FILE_ACCEPT } from '../documents';
 import { askConfirm, errorText, getState, partName, refreshAll, selectLesson, setState, toast, useStore } from '../store';
 import { PdfViewer } from './PdfViewer';
 import { backgroundOf, ContextLanguageSwitch, scopeNames, tagalogItems } from './VerseContext';
+import { VerseText } from './VerseText';
 
 // Dialogs can open over other dialogs. Escape closes only the one on top.
 const openModals: object[] = [];
@@ -30,7 +32,7 @@ function Modal({ title, subtitle, onClose, children, testId, wide, full }: { tit
   // Portalled so that containment on an ancestor can never clip the dialog.
   return createPortal(
     <div
-      className="fade-in fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-3"
+      className="fade-in fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-3 sm:p-4"
       data-testid={`${testId}-backdrop`}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
@@ -43,12 +45,12 @@ function Modal({ title, subtitle, onClose, children, testId, wide, full }: { tit
         aria-label={title}
         tabIndex={-1}
         data-testid={testId}
-        className={`flex max-h-[92dvh] w-full flex-col rounded-xl border border-line bg-panel outline-none ${full ? 'max-w-6xl lg:h-[92dvh]' : wide ? 'max-w-2xl' : 'max-w-lg'}`}
+        className={`flex max-h-[92dvh] min-h-0 w-full min-w-0 flex-col rounded-xl border border-line bg-panel outline-none ${full ? 'max-w-6xl lg:h-[92dvh]' : wide ? 'max-w-2xl' : 'max-w-lg'}`}
       >
-        <div className="flex items-start justify-between gap-3 border-b border-line px-4 py-3">
-          <div>
-            <h2 className="m-0 text-[15px] font-semibold">{title}</h2>
-            {subtitle && <p className="m-0 mt-0.5 text-xs text-muted">{subtitle}</p>}
+        <div className="flex flex-none items-start justify-between gap-3 border-b border-line px-4 py-3 sm:px-5">
+          <div className="min-w-0 flex-1">
+            <h2 className="m-0 text-[15px] leading-snug font-semibold break-words">{title}</h2>
+            {subtitle && <p className="m-0 mt-1 text-xs leading-relaxed text-muted break-words">{subtitle}</p>}
           </div>
           <button className="icon-btn" aria-label="Close" data-testid={`${testId}-close`} onClick={onClose}>
             <X size={16} />
@@ -77,12 +79,12 @@ export function UploadDialog() {
   const failed = uploads.filter((u) => u.status === 'error').length;
   return (
     <Modal
-      title={pastoral ? 'Upload Pastoral Visit PDF' : 'Ingest & Archive Lesson PDF'}
-      subtitle={pastoral ? 'Reads scanned and digital pastoral visit PDFs. Their verses go to the Verse Library.' : 'Reads scanned and digital PDFs, then indexes the lesson and its verses.'}
+      title={pastoral ? 'Upload Pastoral Visit' : 'Ingest & Archive Lesson'}
+      subtitle={pastoral ? 'Reads PDF and DOCX pastoral visits. Their verses go to the Verse Library.' : 'Reads PDF and DOCX files, then indexes the lesson and its verses.'}
       onClose={closeUpload}
       testId="upload-dialog"
     >
-      <div className="scroll-stable min-h-0 p-4">
+      <div className="scroll-stable min-h-0 p-4 sm:p-5">
         <div
           data-testid="drop-zone"
           className={`tap flex flex-col items-center rounded-lg border-2 border-dashed p-6 text-center ${dragging ? 'border-accent2 bg-raised' : 'border-line'}`}
@@ -98,7 +100,7 @@ export function UploadDialog() {
           }}
         >
           <UploadCloud size={30} className="text-accent2" />
-          <p className="m-0 mt-2 font-semibold" data-testid="upload-target">{pastoral ? 'Drop pastoral visit PDFs here or browse your device' : 'Drop lesson PDFs here or browse your device'}</p>
+          <p className="m-0 mt-2 font-semibold" data-testid="upload-target">{pastoral ? 'Drop pastoral visit PDF or DOCX files here or browse your device' : 'Drop lesson PDF or DOCX files here or browse your device'}</p>
           <p className="m-0 mt-1 mb-3 text-xs text-muted">
             {pastoral
               ? 'Every file added here is filed under Pastoral Visits. A verse printed in English and in Tagalog is kept as two verses, one in each language. Up to 64 MB each.'
@@ -108,10 +110,10 @@ export function UploadDialog() {
             ref={inputRef}
             type="file"
             multiple
-            accept=".pdf,application/pdf"
+            accept={LESSON_FILE_ACCEPT}
             className="hidden"
             data-testid="upload-input"
-            aria-label="PDF files to upload"
+            aria-label="PDF or DOCX files to upload"
             onChange={(e) => {
               if (e.target.files) enqueueFiles(e.target.files);
               e.target.value = '';
@@ -126,7 +128,7 @@ export function UploadDialog() {
             multiple
             className="hidden"
             data-testid="folder-input"
-            aria-label="Folder of PDF files to upload"
+            aria-label="Folder of PDF or DOCX files to upload"
             onChange={(e) => {
               if (e.target.files) enqueueFolder(e.target.files);
               e.target.value = '';
@@ -134,7 +136,7 @@ export function UploadDialog() {
           />
           <div className="flex flex-wrap justify-center gap-1.5">
             <button className="btn btn-primary" data-testid="upload-browse" onClick={() => inputRef.current?.click()}>
-              <FileUp size={14} /> Select PDF files
+              <FileUp size={14} /> Select files
             </button>
             <button className="btn" data-testid="upload-folder" onClick={() => folderRef.current?.click()}>
               <FolderUp size={14} /> Select a folder
@@ -169,8 +171,8 @@ export function UploadDialog() {
           </ul>
         )}
       </div>
-      <div className="flex items-center justify-between gap-2 border-t border-line px-4 py-3">
-        <p className="m-0 text-xs text-muted">You can keep working while files process.</p>
+      <div className="flex flex-none flex-wrap items-center justify-between gap-3 border-t border-line px-4 py-3 sm:px-5">
+        <p className="m-0 min-w-0 flex-1 basis-40 text-xs text-muted">You can keep working while files process.</p>
         <button className="btn" data-testid="upload-done" onClick={closeUpload}>
           Close
         </button>
@@ -208,7 +210,7 @@ export function ConfirmDialog() {
   const blocked = busy || (c.requireText ? typed !== c.requireText : false) || (c.askPassphrase ? !passphrase : false);
   return (
     <Modal title={c.title} onClose={closeConfirm} testId="confirm-dialog">
-      <div className="p-4">
+      <div className="scroll-stable min-h-0 p-4 sm:p-5">
         <p className="m-0" data-testid="confirm-body">{c.body}</p>
         {c.requireText && (
           <label className="mt-3 block text-xs text-muted">
@@ -223,7 +225,7 @@ export function ConfirmDialog() {
           </label>
         )}
       </div>
-      <div className="flex justify-end gap-2 border-t border-line px-4 py-3">
+      <div className="flex flex-none flex-wrap justify-end gap-2 border-t border-line px-4 py-3 sm:px-5">
         <button className="btn" data-testid="confirm-cancel" onClick={closeConfirm}>
           Cancel
         </button>
@@ -286,7 +288,7 @@ export function BackupDialog() {
           }
         }}
       >
-        <div className="space-y-3 p-4">
+        <div className="scroll-stable min-h-0 space-y-3 p-4 sm:p-5">
           <p className="m-0 text-[13px]" data-testid="backup-warning">
             Choose a passphrase to lock this backup. <strong>If you forget it, the backup cannot be opened by anyone.</strong> Keep it somewhere safe, away from the backup file. This backup is what lets you recover your lessons if this PC fails.
           </p>
@@ -302,7 +304,7 @@ export function BackupDialog() {
             {passphrase && tooShort ? `${MIN_PASSPHRASE - passphrase.length} more characters needed.` : again && mismatch ? 'The two passphrases do not match.' : ''}
           </p>
         </div>
-        <div className="flex justify-end gap-2 border-t border-line px-4 py-3">
+        <div className="flex flex-none flex-wrap justify-end gap-2 border-t border-line px-4 py-3 sm:px-5">
           <button type="button" className="btn" data-testid="backup-cancel" onClick={closeBackup}>Cancel</button>
           <button className="btn btn-primary" data-testid="backup-save" disabled={busy || tooShort || mismatch}>{busy ? 'Encrypting' : 'Download backup'}</button>
         </div>
@@ -420,7 +422,7 @@ function ContextForm({ verseKey: key }: { verseKey: string }) {
           }
         }}
       >
-        <div className="scroll-stable min-h-0 space-y-3 p-4">
+        <div className="scroll-stable min-h-0 space-y-3 p-4 sm:p-5">
           {!current.empty && !current.reviewed && <p className="m-0 text-xs text-warn" data-testid="context-ai-note">This was written by the AI and can be wrong. Check it, correct it if needed, then save.</p>}
           <ContextLanguageSwitch
             language={language}
@@ -452,7 +454,7 @@ function ContextForm({ verseKey: key }: { verseKey: string }) {
           </label>
           <p className="m-0 text-xs text-muted">This never changes the verse itself. Clear a field to remove it. A cleared context can be written again by the AI. Tagalog you save here is kept even if the English changes later.</p>
         </div>
-        <div className="flex justify-end gap-2 border-t border-line px-4 py-3">
+        <div className="flex flex-none flex-wrap justify-end gap-2 border-t border-line px-4 py-3 sm:px-5">
           <button type="button" className="btn" data-testid="context-cancel" onClick={closeContext}>Cancel</button>
           <button className="btn btn-primary" data-testid="context-save" disabled={busy}>{busy ? 'Saving' : 'Save as reviewed'}</button>
         </div>
@@ -465,9 +467,17 @@ const closeEdit = () => setState({ editingLessonId: null });
 const replaceVerse = (v: Verse) => setState({ verses: getState().verses.map((x) => (x.id === v.id ? v : x)) });
 
 /** A verse read from this lesson, which can be corrected, or removed if it is not a verse at all. */
-function LessonVerse({ verse, lessonId, page, part, question }: { verse: Verse; lessonId: string; page: number; part: string | null; question: string }) {
+function LessonVerse({ verse, lessonId, page, part, question, comparison, comparisonBusy, onResolve }: { verse: Verse; lessonId: string; page: number; part: string | null; question: string; comparison?: VerseComparison; comparisonBusy: boolean; onResolve: (comparison: VerseComparison, decision: 'existing' | 'both', verseId?: string) => Promise<void> }) {
   const [correcting, setCorrecting] = useState(false);
+  const [resolving, setResolving] = useState(false);
   const verified = verse.status === 'verified';
+  const resolve = async (decision: 'existing' | 'both', verseId?: string) => {
+    if (!comparison) return;
+    setResolving(true);
+    try { await onResolve(comparison, decision, verseId); }
+    catch (err) { toast(errorText(err), 'error'); }
+    finally { setResolving(false); }
+  };
   return (
     <li className="rounded-md border border-line p-2" data-testid="check-verse" data-verse-id={verse.id}>
       <div className="flex flex-wrap items-center gap-x-1.5 text-xs">
@@ -480,7 +490,31 @@ function LessonVerse({ verse, lessonId, page, part, question }: { verse: Verse; 
           {part}{question ? <span className="text-muted"> · {question}</span> : null}
         </p>
       )}
-      <p className="m-0 mt-1 line-clamp-3 text-[13px] leading-relaxed" data-testid="check-verse-text">{verse.text || 'Reference only. No text was printed.'}</p>
+      <p className="m-0 mt-1 line-clamp-3 text-[13px] leading-relaxed whitespace-pre-wrap" data-testid="check-verse-text"><VerseText text={verse.text || 'Reference only. No text was printed.'} /></p>
+      {comparison && !comparison.decision && (
+        <div className="mt-2 rounded-md border border-warn p-2" data-testid="verse-comparison">
+          <p className="m-0 text-xs font-semibold text-warn">This reference already exists in the Verse Library. Compare the wording before choosing.</p>
+          <div className="mt-3 grid min-w-0 gap-4 sm:grid-cols-2">
+            <div className="min-w-0">
+              <p className="m-0 text-xs font-semibold">Read from this document · {verse.version || 'No translation code'}</p>
+              <p className="m-0 mt-1 text-[13px] whitespace-pre-wrap" data-testid="comparison-pdf-text"><VerseText text={verse.text || 'Reference only. No text was printed.'} /></p>
+            </div>
+            <div className="min-w-0 space-y-3">
+              {comparison.candidates.map((candidate) => (
+                <div key={candidate.id} data-testid="comparison-candidate">
+                  <p className="m-0 text-xs font-semibold">Existing verse · {candidate.ref_printed} · {candidate.version || 'No translation code'} · {candidate.status}</p>
+                  <p className="m-0 text-xs text-muted">{candidate.import_source || 'From the Verse Library'}</p>
+                  <p className="m-0 mt-1 text-[13px] whitespace-pre-wrap" data-testid="comparison-existing-text"><VerseText text={candidate.text} /></p>
+                  <button type="button" className="btn mt-1" data-testid="comparison-use-existing" disabled={resolving || comparisonBusy} onClick={() => void resolve('existing', candidate.id)}>Use existing verse</button>
+                </div>
+              ))}
+              {!comparison.candidates.length && <p className="m-0 text-xs text-muted">The previous match has been removed. Keep this document reading to continue.</p>}
+            </div>
+          </div>
+          <button type="button" className="btn mt-2" data-testid="comparison-keep-both" disabled={resolving || comparisonBusy} onClick={() => void resolve('both')}>Keep both</button>
+          <p className="m-0 mt-1 text-xs text-muted">Using the existing verse attaches this visit and its date without changing the stored wording. Keeping both retains separate verse records.</p>
+        </div>
+      )}
       <div className="mt-1.5 flex flex-wrap gap-1">
         {!verified && (
           <button type="button" className="btn !min-h-7 max-lg:!min-h-11" data-testid="check-verse-correct" onClick={() => setCorrecting(true)}>
@@ -532,8 +566,22 @@ export function EditLessonDialog() {
   const id = useStore((s) => s.editingLessonId);
   const lesson = useStore((s) => s.lessons.find((l) => l.id === s.editingLessonId) ?? null);
   const verses = useStore((s) => s.verses);
-  const [form, setForm] = useState({ title: '', category: 'weekend' as Category, language: 'en' as Language, lesson_date: '', location: '', author: '', issue: '', objectives: '' });
+  const [form, setForm] = useState({ title: '', category: 'weekend' as Category, language: 'en' as Language, lesson_date: '', location: '', local_congregation: '', district: '', author: '', issue: '', objectives: '' });
   const [saving, setSaving] = useState(false);
+  const [comparisons, setComparisons] = useState<VerseComparison[]>([]);
+  const [comparisonsLoading, setComparisonsLoading] = useState(true);
+  const [comparisonsError, setComparisonsError] = useState('');
+  const [comparisonBusy, setComparisonBusy] = useState(false);
+  const decisionInFlight = useRef(false);
+  useEffect(() => {
+    if (!id) return;
+    let active = true;
+    setComparisonsLoading(true);
+    setComparisonsError('');
+    api.verseComparisons(id).then((rows) => { if (active) { setComparisons(rows); setComparisonsLoading(false); } })
+      .catch((err) => { if (active) { setComparisonsError(errorText(err)); setComparisonsLoading(false); } });
+    return () => { active = false; };
+  }, [id, verses]);
   // Fixed when the dialog opens, so confirming does not change the dialog under the user.
   const [checking, setChecking] = useState(false);
   useEffect(() => {
@@ -544,6 +592,8 @@ export function EditLessonDialog() {
         language: lesson.language,
         lesson_date: lesson.lesson_date ?? '',
         location: lesson.location,
+        local_congregation: lesson.local_congregation,
+        district: lesson.district,
         author: lesson.author,
         issue: lesson.issue,
         objectives: lesson.objectives.join('\n'),
@@ -568,6 +618,20 @@ export function EditLessonDialog() {
   }, [verses, lesson]);
   if (!id || !lesson) return null;
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const pending = comparisons.filter((c) => !c.decision);
+  const onResolve = async (comparison: VerseComparison, decision: 'existing' | 'both', verseId?: string) => {
+    if (decisionInFlight.current) return;
+    decisionInFlight.current = true;
+    setComparisonBusy(true);
+    try {
+      await api.resolveVerseComparison(id, comparison.id, decision, verseId);
+      await refreshAll();
+      toast(decision === 'both' ? 'Both verse records kept' : 'Existing verse linked to this visit and its date');
+    } finally {
+      decisionInFlight.current = false;
+      setComparisonBusy(false);
+    }
+  };
   const save = async (checked: boolean) => {
     setSaving(true);
     try {
@@ -582,8 +646,8 @@ export function EditLessonDialog() {
   };
   return (
     <Modal
-      title={checking ? 'Check what was read from this PDF' : 'Edit lesson details'}
-      subtitle={checking ? `${lesson.file_name}. Compare each part with the PDF, correct anything that is wrong, then confirm.` : lesson.file_name}
+      title={checking ? `Check what was read from this ${documentLabel(lesson)}` : 'Edit lesson details'}
+      subtitle={checking ? `${lesson.file_name}. Compare each part with the ${documentLabel(lesson)}, correct anything that is wrong, then confirm.` : lesson.file_name}
       onClose={closeEdit}
       testId="edit-dialog"
       full
@@ -599,7 +663,7 @@ export function EditLessonDialog() {
           <div className="hidden min-h-0 border-r border-line lg:block" data-testid="check-pdf">
             <PdfViewer lesson={lesson} embedded />
           </div>
-          <div className="scroll-stable min-h-0 p-4">
+          <div className="scroll-stable min-h-0 min-w-0 p-4 sm:p-5">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <label className="text-xs text-muted sm:col-span-2">
                 Title
@@ -632,10 +696,19 @@ export function EditLessonDialog() {
                 Date
                 <input className="field mt-1" type="date" data-testid="edit-date" value={form.lesson_date} onChange={set('lesson_date')} />
               </label>
-              <label className="text-xs text-muted">
+              {form.category === 'pastoral' ? <>
+                <label className="text-xs text-muted">
+                  Local Congregation
+                  <input className="field mt-1" data-testid="edit-local-congregation" value={form.local_congregation} onChange={set('local_congregation')} />
+                </label>
+                <label className="text-xs text-muted">
+                  District
+                  <input className="field mt-1" data-testid="edit-district" value={form.district} onChange={set('district')} />
+                </label>
+              </> : <label className="text-xs text-muted">
                 Location
                 <input className="field mt-1" data-testid="edit-location" value={form.location} onChange={set('location')} />
-              </label>
+              </label>}
               <label className="text-xs text-muted">
                 Author
                 <input className="field mt-1" data-testid="edit-author" value={form.author} onChange={set('author')} />
@@ -643,20 +716,22 @@ export function EditLessonDialog() {
             </div>
             <section className="mt-4" aria-label="Verses found" data-testid="check-verses">
               <h3 className="m-0 text-[13px] font-semibold" data-testid="check-verses-title">Verses found ({found.length})</h3>
+              {pending.length > 0 && <p className="m-0 mt-1 text-xs text-warn" data-testid="comparison-pending">{pending.length} matching {pending.length === 1 ? 'verse needs' : 'verses need'} a comparison decision before confirming.</p>}
+              {comparisonsError && <p role="alert" className="m-0 mt-1 text-xs text-danger">{comparisonsError} Close and reopen this check to try again.</p>}
               <p className="m-0 mt-0.5 mb-2 text-xs text-muted">
                 Check that each verse sits under the right objective and part, correct a verse that was misread, or remove anything that is not a verse of this lesson. Each verse's wording is checked word for word later, in Review Verses.
               </p>
               {found.length === 0 ? (
-                <p className="m-0 text-[13px] text-muted" data-testid="check-verses-empty">No verses were found in this PDF.</p>
+                <p className="m-0 text-[13px] text-muted" data-testid="check-verses-empty">No verses were found in this {documentLabel(lesson)}.</p>
               ) : (
                 <ul className="m-0 list-none space-y-2 p-0">
-                  {found.map(({ verse, page, part, question }) => <LessonVerse key={verse.id} verse={verse} lessonId={lesson.id} page={page} part={part} question={question} />)}
+                  {found.map(({ verse, page, part, question }) => <LessonVerse key={verse.id} verse={verse} lessonId={lesson.id} page={page} part={part} question={question} comparison={pending.find((c) => c.verse_id === verse.id)} comparisonBusy={comparisonBusy || comparisonsLoading} onResolve={onResolve} />)}
                 </ul>
               )}
             </section>
           </div>
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-line px-4 py-3">
+        <div className="flex flex-none flex-wrap items-center justify-end gap-2 border-t border-line px-4 py-3 sm:px-5">
           {checking && <p className="m-0 mr-auto text-xs text-muted">Confirming records that you checked it. You can still edit it later.</p>}
           <button type="button" className="btn" data-testid="edit-cancel" onClick={closeEdit}>
             Cancel
@@ -665,7 +740,7 @@ export function EditLessonDialog() {
             {saving ? 'Saving' : checking ? 'Save, check later' : 'Save changes'}
           </button>
           {checking && (
-            <button type="button" className="btn btn-primary" data-testid="edit-confirm" disabled={saving || !form.title.trim()} onClick={() => void save(true)}>
+            <button type="button" className="btn btn-primary" data-testid="edit-confirm" disabled={saving || comparisonBusy || !form.title.trim() || comparisonsLoading || !!comparisonsError || pending.length > 0} onClick={() => void save(true)}>
               <ClipboardCheck size={14} /> Confirm it is correct
             </button>
           )}
@@ -681,21 +756,22 @@ export function VerseCorrectionDialog({ text, raw, reference, onSave, onClose }:
   const [saving, setSaving] = useState(false);
   return (
     <Modal title={`Correct scan errors: ${reference}`} subtitle="Compare with the printed page. Fix recognition errors only, never the wording." onClose={onClose} testId="correct-dialog" wide>
-      <div className="scroll-stable min-h-0 space-y-3 p-4">
+      <div className="scroll-stable min-h-0 space-y-3 p-4 sm:p-5">
         <label className="block text-xs text-muted">
           Reference
           <input className="field mt-1" data-testid="correct-reference" value={refValue} onChange={(e) => setRefValue(e.target.value)} />
         </label>
+        <p className="m-0 rounded-lg border border-line p-3 text-[14px] leading-relaxed whitespace-pre-wrap" data-testid="correct-formatted-text"><VerseText text={value} /></p>
         <label className="block text-xs text-muted">
-          Verse text
+          Edit verse text
           <textarea className="field mt-1 min-h-40" data-testid="correct-text" value={value} onChange={(e) => setValue(e.target.value)} />
         </label>
         <div>
           <p className="m-0 mb-1 text-xs text-muted">Original extraction (kept permanently)</p>
-          <p className="m-0 max-h-32 overflow-auto rounded-lg border border-line p-2 text-[13px] whitespace-pre-wrap" data-testid="correct-raw">{raw}</p>
+          <p className="m-0 max-h-32 overflow-auto rounded-lg border border-line p-2 text-[13px] whitespace-pre-wrap" data-testid="correct-raw"><VerseText text={raw} /></p>
         </div>
       </div>
-      <div className="flex justify-end gap-2 border-t border-line px-4 py-3">
+      <div className="flex flex-none flex-wrap justify-end gap-2 border-t border-line px-4 py-3 sm:px-5">
         <button className="btn" data-testid="correct-cancel" onClick={onClose}>Cancel</button>
         <button
           className="btn btn-primary"

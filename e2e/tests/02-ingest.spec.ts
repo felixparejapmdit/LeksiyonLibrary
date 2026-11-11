@@ -37,7 +37,7 @@ test('a non-PDF and a corrupt PDF are refused with a clear message', async ({ ap
   await page.getByTestId('upload-input').setInputFiles([textFile, notAPdf]);
   await waitForFinished(page, 2);
   const messages = page.getByTestId('upload-message');
-  await expect(messages.nth(0)).toHaveText('Only PDF files can be added.');
+  await expect(messages.nth(0)).toHaveText('Only PDF or DOCX files can be added.');
   await expect(messages.nth(1)).toHaveText('This file could not be opened as a PDF.');
   await expect(page.getByTestId('toast').first()).toBeVisible();
 });

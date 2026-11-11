@@ -1,5 +1,6 @@
 import { startTransition, useEffect, useState, useSyncExternalStore } from 'react';
 import { api, ApiError, type Category, type Language, type Lecture, type Lesson, type RowToFix, type ScriptureContext, type TagalogContext, type UploadTarget, type Verse, type VerseContext } from './api';
+import { matchesSearch } from './search';
 
 export type SortMode = 'newest' | 'oldest' | 'title';
 
@@ -17,6 +18,7 @@ export interface Filters {
   year: number | null;
   verseKey: string | null;
   query: string;
+  language: Language | 'all';
   /** Only lessons not yet checked against their PDF. */
   toCheck: boolean;
 }
@@ -70,6 +72,7 @@ export interface State {
   contentMatches: string[] | null;
   sidebarOpen: boolean;
   viewerOpen: boolean;
+  mobileViewerOpen: boolean;
   drawerOpen: boolean;
   uploadOpen: boolean;
   /** Where files added in the upload dialog go. */
@@ -77,6 +80,10 @@ export interface State {
   backupOpen: boolean;
   uploads: UploadItem[];
   editingLessonId: string | null;
+  movingLessonId: string | null;
+  advancedSearchOpen: boolean;
+  globalSearchQuery: string;
+  verseTargetId: string | null;
   confirm: Confirmation | null;
   toasts: Toast[];
   theme: 'dark' | 'light';
@@ -85,7 +92,10 @@ export interface State {
   welcomeOnOpen: boolean;
 }
 
-const emptyFilters: Filters = { scope: 'all', category: 'all', year: null, verseKey: null, query: '', toCheck: false };
+const emptyFilters: Filters = {
+  scope: 'all', category: 'all', year: null, verseKey: null, query: '', toCheck: false,
+  language: 'all',
+};
 
 function stored(key: string, fallback: string): string {
   try {
@@ -115,12 +125,17 @@ let state: State = {
   contentMatches: null,
   sidebarOpen: stored('lv.sidebar', '1') !== '0',
   viewerOpen: stored('lv.viewer', '1') !== '0',
+  mobileViewerOpen: false,
   drawerOpen: false,
   uploadOpen: false,
   uploadTarget: 'lesson',
   backupOpen: false,
   uploads: [],
   editingLessonId: null,
+  movingLessonId: null,
+  advancedSearchOpen: false,
+  globalSearchQuery: '',
+  verseTargetId: null,
   confirm: null,
   toasts: [],
   theme: stored('lv.theme', 'dark') === 'light' ? 'light' : 'dark',
@@ -156,7 +171,7 @@ window.addEventListener('popstate', () => routeListeners.forEach((l) => l()));
 
 export function navigate(path: string) {
   if (location.pathname !== path) history.pushState(null, '', path);
-  setState({ drawerOpen: false });
+  setState({ drawerOpen: false, mobileViewerOpen: false });
   routeListeners.forEach((l) => l());
 }
 
@@ -293,6 +308,8 @@ export function updateFilters(patch: Partial<Filters>) {
 }
 
 export function resetFilters() {
+  clearTimeout(searchTimer);
+  searchSeq++;
   setState({ filters: { ...emptyFilters }, contentMatches: null });
 }
 
@@ -301,7 +318,7 @@ export function openScope(scope: Scope) {
   resetFilters();
   updateFilters({ scope });
   if (location.pathname !== '/') navigate('/');
-  setState({ drawerOpen: false });
+  setState({ drawerOpen: false, mobileViewerOpen: false });
 }
 
 export function openUpload(target: UploadTarget) {
@@ -312,12 +329,23 @@ export function selectLesson(id: string, page = 1) {
   setState({ selectedId: id, viewerPage: page });
 }
 
+/** A direct request to read a lesson opens its PDF, even when the reader was hidden. */
+export function openLesson(id: string, page = 1) {
+  setState({
+    selectedId: id,
+    viewerPage: page,
+    viewerOpen: true,
+    mobileViewerOpen: !matchMedia('(min-width: 1024px)').matches,
+    drawerOpen: false,
+  });
+}
+
 let searchTimer: ReturnType<typeof setTimeout> | undefined;
 let searchSeq = 0;
 
 /** Title matches appear instantly; lesson body matches are merged in right after. */
 export function setQuery(query: string) {
-  updateFilters({ query });
+  setState({ filters: { ...state.filters, query }, globalSearchQuery: query, contentMatches: null });
   clearTimeout(searchTimer);
   const seq = ++searchSeq;
   if (!query.trim()) {
@@ -334,6 +362,12 @@ export function setQuery(query: string) {
   }, 120);
 }
 
+export function lessonSearchText(l: Lesson, scope: Scope = 'all') {
+  if (scope === 'lessons') return `${l.title} ${l.issue} ${l.objectives.join(' ')}`;
+  if (scope === 'pastoral') return `${l.title} ${l.local_congregation} ${l.district} ${l.location}`;
+  return `${l.title} ${l.code} ${l.location} ${l.local_congregation} ${l.district} ${l.author} ${l.file_name} ${l.lesson_date ?? ''} ${l.date_label} ${formatLessonDate(l)} ${l.issue} ${l.objectives.join(' ')}`;
+}
+
 export function matchesFilters(l: Lesson, f: Filters, contentMatches: string[] | null, ignoreCategory = false) {
   if (f.scope === 'lessons' && l.category === 'pastoral') return false;
   if (f.scope === 'pastoral' && l.category !== 'pastoral') return false;
@@ -342,12 +376,8 @@ export function matchesFilters(l: Lesson, f: Filters, contentMatches: string[] |
   if (f.year !== null && (f.year === 0 ? !!l.year : l.year !== f.year)) return false;
   if (f.verseKey !== null && !l.verse_keys.includes(f.verseKey)) return false;
   if (f.toCheck && !l.needs_check) return false;
-  const q = f.query.trim().toLowerCase();
-  if (q) {
-    const hay = `${l.title} ${l.code} ${l.location} ${l.author} ${l.file_name}`.toLowerCase();
-    const terms = q.split(/\s+/);
-    if (!terms.every((t) => hay.includes(t)) && !contentMatches?.includes(l.id)) return false;
-  }
+  if (f.language !== 'all' && l.language !== f.language) return false;
+  if (f.query.trim() && !matchesSearch(lessonSearchText(l, f.scope), f.query) && !(f.scope === 'all' && contentMatches?.includes(l.id))) return false;
   return true;
 }
 

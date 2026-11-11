@@ -1,0 +1,745 @@
+[
+  [
+    "Genesis",
+    "gen"
+  ],
+  [
+    "Exodus",
+    "Exodo",
+    "exod",
+    "exo"
+  ],
+  [
+    "Leviticus",
+    "Levitico",
+    "lev"
+  ],
+  [
+    "Numbers",
+    "Mga Bilang",
+    "num",
+    "bilang",
+    "bil",
+    "blg",
+    "mgabilang"
+  ],
+  [
+    "Deuteronomy",
+    "Deuteronomio",
+    "deut",
+    "deu"
+  ],
+  [
+    "Joshua",
+    "Josue",
+    "josh",
+    "jos"
+  ],
+  [
+    "Judges",
+    "Mga Hukom",
+    "judg",
+    "jdg",
+    "hukom",
+    "huk",
+    "mgahukom"
+  ],
+  [
+    "Ruth",
+    "rut"
+  ],
+  [
+    "I Samuel",
+    "1samuel",
+    "1sam",
+    "1sa",
+    "1 Samuel"
+  ],
+  [
+    "II Samuel",
+    "2samuel",
+    "2sam",
+    "2sa",
+    "2 Samuel"
+  ],
+  [
+    "I Kings",
+    "I Hari",
+    "1kings",
+    "1kgs",
+    "1ki",
+    "1hari",
+    "1har",
+    "1 Kings",
+    "1 Hari"
+  ],
+  [
+    "II Kings",
+    "II Hari",
+    "2kings",
+    "2kgs",
+    "2ki",
+    "2hari",
+    "2har",
+    "2 Kings",
+    "2 Hari"
+  ],
+  [
+    "I Chronicles",
+    "I Cronica",
+    "1chronicles",
+    "1chron",
+    "1chr",
+    "1cronica",
+    "1cron",
+    "1cro",
+    "1 Chronicles",
+    "1 Cronica"
+  ],
+  [
+    "II Chronicles",
+    "II Cronica",
+    "2chronicles",
+    "2chron",
+    "2chr",
+    "2cronica",
+    "2cron",
+    "2cro",
+    "2 Chronicles",
+    "2 Cronica"
+  ],
+  [
+    "Ezra",
+    "ezr"
+  ],
+  [
+    "Nehemiah",
+    "Nehemias",
+    "neh"
+  ],
+  [
+    "Esther",
+    "est",
+    "esth",
+    "ester"
+  ],
+  [
+    "Job"
+  ],
+  [
+    "Psalms",
+    "Awit",
+    "psalm",
+    "psa",
+    "pss",
+    "mgaawit"
+  ],
+  [
+    "Proverbs",
+    "Kawikaan",
+    "prov",
+    "prv",
+    "pro",
+    "kaw",
+    "mgakawikaan"
+  ],
+  [
+    "Ecclesiastes",
+    "Eclesiastes",
+    "eccl",
+    "ecc",
+    "ecles"
+  ],
+  [
+    "Song of Solomon",
+    "Awit ng mga Awit",
+    "song",
+    "sos",
+    "awitngmgaawit",
+    "awit ng mga awit"
+  ],
+  [
+    "Isaiah",
+    "Isaias",
+    "isa"
+  ],
+  [
+    "Jeremiah",
+    "Jeremias",
+    "jer"
+  ],
+  [
+    "Lamentations",
+    "Panaghoy",
+    "lam",
+    "pan",
+    "panag"
+  ],
+  [
+    "Ezekiel",
+    "ezek",
+    "eze",
+    "ezk",
+    "ezequiel"
+  ],
+  [
+    "Daniel",
+    "dan"
+  ],
+  [
+    "Hosea",
+    "Oseas",
+    "hos",
+    "ose"
+  ],
+  [
+    "Joel"
+  ],
+  [
+    "Amos"
+  ],
+  [
+    "Obadiah",
+    "Obadias",
+    "obad",
+    "oba"
+  ],
+  [
+    "Jonah",
+    "Jonas",
+    "jon"
+  ],
+  [
+    "Micah",
+    "Mikas",
+    "mic",
+    "mik",
+    "miqueas"
+  ],
+  [
+    "Nahum",
+    "nah"
+  ],
+  [
+    "Habakkuk",
+    "Habacuc",
+    "hab"
+  ],
+  [
+    "Zephaniah",
+    "Sofonias",
+    "zeph",
+    "zep",
+    "sof"
+  ],
+  [
+    "Haggai",
+    "Hagai",
+    "hag"
+  ],
+  [
+    "Zechariah",
+    "Zacarias",
+    "zech",
+    "zec",
+    "zac"
+  ],
+  [
+    "Malachi",
+    "Malakias",
+    "mal"
+  ],
+  [
+    "Matthew",
+    "Mateo",
+    "matt",
+    "mat"
+  ],
+  [
+    "Mark",
+    "Marcos",
+    "mar",
+    "mrk",
+    "marc"
+  ],
+  [
+    "Luke",
+    "Lucas",
+    "luk",
+    "luc"
+  ],
+  [
+    "John",
+    "Juan",
+    "jhn"
+  ],
+  [
+    "Acts",
+    "Mga Gawa",
+    "act",
+    "gawa",
+    "mgagawa"
+  ],
+  [
+    "Romans",
+    "Roma",
+    "rom"
+  ],
+  [
+    "I Corinthians",
+    "I Corinto",
+    "1corinthians",
+    "1cor",
+    "1co",
+    "1corinto",
+    "1 Corinthians",
+    "1 Corinto"
+  ],
+  [
+    "II Corinthians",
+    "II Corinto",
+    "2corinthians",
+    "2cor",
+    "2co",
+    "2corinto",
+    "2 Corinthians",
+    "2 Corinto"
+  ],
+  [
+    "Galatians",
+    "Galacia",
+    "gal"
+  ],
+  [
+    "Ephesians",
+    "Efeso",
+    "eph",
+    "efe"
+  ],
+  [
+    "Philippians",
+    "Filipos",
+    "phil",
+    "php",
+    "fil"
+  ],
+  [
+    "Colossians",
+    "Colosas",
+    "col"
+  ],
+  [
+    "I Thessalonians",
+    "I Tesalonica",
+    "1thessalonians",
+    "1thess",
+    "1thes",
+    "1th",
+    "1tesalonica",
+    "1tes",
+    "1 Thessalonians",
+    "1 Tesalonica"
+  ],
+  [
+    "II Thessalonians",
+    "II Tesalonica",
+    "2thessalonians",
+    "2thess",
+    "2thes",
+    "2th",
+    "2tesalonica",
+    "2tes",
+    "2 Thessalonians",
+    "2 Tesalonica"
+  ],
+  [
+    "I Timothy",
+    "I Timoteo",
+    "1timothy",
+    "1tim",
+    "1ti",
+    "1timoteo",
+    "1 Timothy",
+    "1 Timoteo"
+  ],
+  [
+    "II Timothy",
+    "II Timoteo",
+    "2timothy",
+    "2tim",
+    "2ti",
+    "2timoteo",
+    "2 Timothy",
+    "2 Timoteo"
+  ],
+  [
+    "Titus",
+    "Tito",
+    "tit"
+  ],
+  [
+    "Philemon",
+    "Filemon",
+    "phlm",
+    "phm",
+    "philem",
+    "flm",
+    "filem"
+  ],
+  [
+    "Hebrews",
+    "Hebreo",
+    "heb"
+  ],
+  [
+    "James",
+    "Santiago",
+    "jas",
+    "jam",
+    "sant",
+    "stgo"
+  ],
+  [
+    "I Peter",
+    "I Pedro",
+    "1peter",
+    "1pet",
+    "1pe",
+    "1pedro",
+    "1ped",
+    "1 Peter",
+    "1 Pedro"
+  ],
+  [
+    "II Peter",
+    "II Pedro",
+    "2peter",
+    "2pet",
+    "2pe",
+    "2pedro",
+    "2ped",
+    "2 Peter",
+    "2 Pedro"
+  ],
+  [
+    "I John",
+    "I Juan",
+    "1john",
+    "1jn",
+    "1juan",
+    "1jhn",
+    "1 John",
+    "1 Juan"
+  ],
+  [
+    "II John",
+    "II Juan",
+    "2john",
+    "2jn",
+    "2juan",
+    "2jhn",
+    "2 John",
+    "2 Juan"
+  ],
+  [
+    "III John",
+    "III Juan",
+    "3john",
+    "3jn",
+    "3juan",
+    "3jhn",
+    "3 John",
+    "3 Juan"
+  ],
+  [
+    "Jude",
+    "Judas",
+    "jud"
+  ],
+  [
+    "Revelation",
+    "Apocalipsis",
+    "rev",
+    "revelations",
+    "apoc",
+    "apocalipsis",
+    "apo"
+  ],
+  [
+    "kings",
+    "hari"
+  ],
+  [
+    "chronicles",
+    "cronica"
+  ],
+  [
+    "corinthians",
+    "corinto"
+  ],
+  [
+    "thessalonians",
+    "tesalonica"
+  ],
+  [
+    "timothy",
+    "timoteo"
+  ],
+  [
+    "peter",
+    "pedro"
+  ],
+  [
+    "faith",
+    "pananampalataya"
+  ],
+  [
+    "faithful",
+    "faithfulness",
+    "tapat",
+    "matapat",
+    "katapatan"
+  ],
+  [
+    "love",
+    "pag ibig",
+    "pagibig",
+    "ibigin",
+    "mahal"
+  ],
+  [
+    "hope",
+    "pag asa",
+    "pagasa"
+  ],
+  [
+    "service",
+    "serve",
+    "serving",
+    "paglilingkod",
+    "maglingkod",
+    "paglingkuran"
+  ],
+  [
+    "election",
+    "chosen",
+    "pagkahirang",
+    "hinirang",
+    "pagpili"
+  ],
+  [
+    "calling",
+    "pagtawag"
+  ],
+  [
+    "obedience",
+    "obey",
+    "pagsunod",
+    "sumunod"
+  ],
+  [
+    "prayer",
+    "pray",
+    "panalangin",
+    "manalangin"
+  ],
+  [
+    "humility",
+    "mapagpakumbaba",
+    "pagpapakumbaba"
+  ],
+  [
+    "gratitude",
+    "thanksgiving",
+    "pasasalamat",
+    "pagpapasalamat"
+  ],
+  [
+    "forgiveness",
+    "forgive",
+    "pagpapatawad",
+    "patawad"
+  ],
+  [
+    "wisdom",
+    "karunungan"
+  ],
+  [
+    "strength",
+    "kalakasan",
+    "lakas"
+  ],
+  [
+    "courage",
+    "katapangan"
+  ],
+  [
+    "patience",
+    "pagtitiis",
+    "pagtiyaga"
+  ],
+  [
+    "worship",
+    "pagsamba"
+  ],
+  [
+    "holiness",
+    "kabanalan"
+  ],
+  [
+    "peace",
+    "kapayapaan"
+  ],
+  [
+    "unity",
+    "pagkakaisa"
+  ],
+  [
+    "church",
+    "iglesia"
+  ],
+  [
+    "congregation",
+    "local congregation",
+    "lokal"
+  ],
+  [
+    "district",
+    "distrito"
+  ],
+  [
+    "location",
+    "lugar"
+  ],
+  [
+    "lesson",
+    "lessons",
+    "aralin",
+    "leksiyon",
+    "leksyon"
+  ],
+  [
+    "title",
+    "pamagat"
+  ],
+  [
+    "issue",
+    "isyu",
+    "suliranin"
+  ],
+  [
+    "objective",
+    "objectives",
+    "layunin",
+    "mga layunin"
+  ],
+  [
+    "watchmen",
+    "watchman",
+    "bantay",
+    "mga bantay"
+  ],
+  [
+    "gift",
+    "kaloob"
+  ],
+  [
+    "blessing",
+    "blessings",
+    "pagpapala"
+  ],
+  [
+    "salvation",
+    "kaligtasan"
+  ],
+  [
+    "god",
+    "diyos"
+  ],
+  [
+    "lord",
+    "panginoon"
+  ],
+  [
+    "jesus",
+    "hesus"
+  ],
+  [
+    "christ",
+    "cristo",
+    "kristo"
+  ],
+  [
+    "holy spirit",
+    "espiritu santo",
+    "banal na espiritu"
+  ],
+  [
+    "father",
+    "ama"
+  ],
+  [
+    "mother",
+    "ina"
+  ],
+  [
+    "family",
+    "pamilya"
+  ],
+  [
+    "children",
+    "child",
+    "mga anak",
+    "anak"
+  ],
+  [
+    "people",
+    "mga tao",
+    "tao"
+  ],
+  [
+    "heart",
+    "puso"
+  ],
+  [
+    "truth",
+    "katotohanan"
+  ],
+  [
+    "righteousness",
+    "katuwiran"
+  ],
+  [
+    "goodness",
+    "kabutihan"
+  ],
+  [
+    "good",
+    "mabuti"
+  ],
+  [
+    "work",
+    "gawain",
+    "trabaho"
+  ],
+  [
+    "of",
+    "ng"
+  ],
+  [
+    "and",
+    "at"
+  ],
+  [
+    "the",
+    "ang"
+  ],
+  [
+    "for",
+    "para"
+  ],
+  [
+    "not",
+    "hindi"
+  ]
+]

@@ -121,7 +121,8 @@ stub.listen(STUB_PORT, '127.0.0.1');
 
 const data = join(here, '..', '.tmp-data');
 rmSync(data, { recursive: true, force: true });
-const exe = join(root, 'backend', 'target', 'release', process.platform === 'win32' ? 'lesson-vault.exe' : 'lesson-vault');
+// Windows can keep the live app's executable locked. Tests may use a separate build.
+const exe = process.env.LV_TEST_EXE ?? join(root, 'backend', 'target', 'release', process.platform === 'win32' ? 'lesson-vault.exe' : 'lesson-vault');
 if (!existsSync(exe)) throw new Error('Build the backend first: cargo build --release');
 
 const app = spawn(exe, [], {

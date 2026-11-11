@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { boot, getState, useStore, useRoute } from './store';
+import { boot, getState, setState, useStore, useRoute } from './store';
 import { VaultPage } from './pages/VaultPage';
 import { BiblesPage, warmLibraries } from './pages/BiblesPage';
 import { LecturePage } from './pages/LecturePage';
@@ -12,6 +12,10 @@ import { DesktopFrame } from './components/Layout';
 import { BackupDialog, BackupReminder, ConfirmDialog, ContextDialog, EditLessonDialog, ToastRegion, UploadDialog } from './components/Overlays';
 import { ReviewPage } from './pages/ReviewPage';
 import { Welcome } from './components/Welcome';
+import { MoveLessonDialog } from './components/MoveLessonDialog';
+import { AdvancedSearchDialog } from './components/AdvancedSearch';
+
+const closeMoveDialog = () => setState({ movingLessonId: null });
 
 function Page() {
   const route = useRoute();
@@ -60,6 +64,7 @@ export default function App() {
 }
 
 function Shell() {
+  const movingLesson = useStore((s) => s.lessons.find((l) => l.id === s.movingLessonId));
   // While nothing else is happening, the verse lists are sorted ahead of the first visit.
   const verses = useStore((s) => s.verses);
   useEffect(() => {
@@ -72,7 +77,7 @@ function Shell() {
     <div className="flex h-dvh flex-col overflow-hidden" data-testid="app-shell">
       <Header />
       <BackupReminder />
-      <main className="min-h-0 flex-1 overflow-hidden" data-testid="app-main">
+      <main className="workspace-surface min-h-0 min-w-0 flex-1 overflow-hidden" data-testid="app-main">
         <DesktopFrame>
           <Page />
         </DesktopFrame>
@@ -83,6 +88,8 @@ function Shell() {
       <ConfirmDialog />
       <BackupDialog />
       <ContextDialog />
+      {movingLesson && <MoveLessonDialog lesson={movingLesson} onClose={closeMoveDialog} />}
+      <AdvancedSearchDialog />
       <ToastRegion />
     </div>
   );

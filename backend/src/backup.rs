@@ -15,7 +15,7 @@ use sha2::{Digest, Sha256};
 use std::io::{Cursor, Read, Write};
 use zip::write::SimpleFileOptions;
 
-const TABLES: &[&str] = &["folders", "lessons", "verses", "lesson_verses", "lectures", "lecture_verses", "verse_context", "scripture_context", "context_tagalog", "import_rows_to_fix"];
+const TABLES: &[&str] = &["folders", "lessons", "verses", "lesson_verses", "lesson_verse_comparisons", "lectures", "lecture_verses", "verse_context", "scripture_context", "context_tagalog", "import_rows_to_fix"];
 const MAX_MANIFEST_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_PDF_BYTES: u64 = 128 * 1024 * 1024;
 
@@ -162,10 +162,10 @@ pub fn restore(conn: &mut Connection, vault: &Vault, user_id: &str, archive: &[u
         if !is_uuid(id) {
             return Err("Backup contains an invalid lesson id.".into());
         }
-        let entry = zip.by_name(&format!("files/{id}.pdf")).map_err(|_| format!("Backup is missing the PDF for lesson {id}."))?;
+        let entry = zip.by_name(&format!("files/{id}.pdf")).map_err(|_| format!("Backup is missing the document for lesson {id}."))?;
         let bytes = read_limited(entry, MAX_PDF_BYTES)?;
         if sha_hex(&bytes) != l["sha256"].as_str().unwrap_or_default() {
-            return Err(format!("PDF checksum mismatch for lesson {id}; backup rejected."));
+            return Err(format!("Document checksum mismatch for lesson {id}; backup rejected."));
         }
         files.push((id.to_string(), bytes));
     }
@@ -224,6 +224,9 @@ pub fn restore(conn: &mut Connection, vault: &Vault, user_id: &str, archive: &[u
                 }
             })?;
         }
+    }
+    if lessons.iter().any(|l| l.get("local_congregation").is_none() || l.get("district").is_none()) {
+        crate::db::backfill_pastoral_metadata(&tx).map_err(|e| e.to_string())?;
     }
     for (id, bytes) in &files {
         vault.write_pdf(id, bytes)?;

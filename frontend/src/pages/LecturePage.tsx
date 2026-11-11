@@ -3,6 +3,7 @@ import { ArrowDown, ArrowUp, BookMarked, ChevronDown, Copy, Eye, MapPin, FileDow
 import { LecturePreview, PrintCopy } from '../components/LectureDocument';
 import { PAGE, PageHeader } from '../components/PageHeader';
 import { backgroundOf, ContextPanel } from '../components/VerseContext';
+import { VerseText } from '../components/VerseText';
 import { letter, OUTLINE_WORDS, outlineParts, outlineText, type Outline } from '../lectureOutline';
 import { api, saveFile, type Lecture, type LessonMatch, type Suggestion, type Verse } from '../api';
 import { askConfirm, errorText, getState, libraryOf, partName, refreshAll, setState, toast, useStore } from '../store';
@@ -80,8 +81,8 @@ function FoundInLessons({ found }: { found: LessonMatch[] }) {
             <span className="flex min-w-0 flex-wrap items-center gap-x-1.5">
               {m.pastoral ? <MapPin size={12} className="flex-none text-pv" /> : <FileText size={12} className="flex-none text-pv" />}
               <span className="text-muted" data-testid="from-lesson-kind">{m.pastoral ? 'Pastoral visit' : 'Lesson'}</span>
-              <span className="font-semibold text-fg" data-testid="from-lesson-title">{m.title}</span>
-              <span className="text-muted" data-testid="from-lesson-file">{m.file_name}</span>
+              <span className="min-w-0 break-words font-semibold text-fg" data-testid="from-lesson-title">{m.title}</span>
+              <span className="min-w-0 break-all text-muted" data-testid="from-lesson-file">{m.file_name}</span>
               {part && <span className="text-pv" data-testid="from-lesson-part">{part}</span>}
             </span>
             {m.objective && <span className="mt-0.5 block text-muted" data-testid="from-lesson-objective">The lesson's objective: {m.objective}</span>}
@@ -95,7 +96,7 @@ function FoundInLessons({ found }: { found: LessonMatch[] }) {
 
 function ReadOnlyVerse({ verse }: { verse: Verse }) {
   return (
-    <div className="rounded-md border border-line p-2" data-testid="suggested-verse" data-verse-id={verse.id}>
+    <div className="min-w-0 rounded-md border border-line p-3" data-testid="suggested-verse" data-verse-id={verse.id}>
       <div className="mb-1 flex flex-wrap items-center gap-1.5 text-xs text-muted">
         <Lock size={11} />
         <span className="font-semibold text-fg">{verse.language === 'tl' ? 'Tagalog' : 'English'}</span>
@@ -103,7 +104,7 @@ function ReadOnlyVerse({ verse }: { verse: Verse }) {
         <span data-testid="suggested-status">{verse.status === 'verified' ? 'Verified' : verse.import_source ? 'Unverified import' : 'Unverified scan'}</span>
       </div>
       <div className="mb-1.5"><VerseOrigin verse={verse} /></div>
-      <p className="m-0 text-[13px] leading-relaxed" data-testid="suggested-text">{verse.text || 'Reference only.'}</p>
+      <p className="m-0 text-[13px] leading-relaxed whitespace-pre-wrap" data-testid="suggested-text"><VerseText text={verse.text || 'Reference only.'} /></p>
     </div>
   );
 }
@@ -324,7 +325,7 @@ export function LecturePage() {
   const shownTab = groups && activeTab < groups.length ? activeTab : 0;
 
   return (
-    <div className="scroll-stable h-full" data-testid="lecture-page">
+    <div className="scroll-stable h-full min-w-0" data-testid="lecture-page">
       {previewing && <LecturePreview outline={outline} byId={byId} withContext={withContext} onContext={setWithContext} onClose={() => setPreviewing(false)} onWord={exportWord} exporting={exporting} />}
       {titled && <PrintCopy outline={outline} byId={byId} withContext={withContext} />}
       <div className={PAGE}>
@@ -338,9 +339,9 @@ export function LecturePage() {
             description="Describe the issue and objective. Suggestions come from the verses in both your Verse Library and your Lesson Library, shown exactly as stored, and each one is labelled with where it came from."
           />
         </div>
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
         <div className="min-w-0 space-y-4">
-          <form className="no-print card space-y-3 p-4" onSubmit={suggest}>
+          <form className="no-print card space-y-3 p-4 sm:p-5" onSubmit={suggest}>
             <label className="block text-xs text-muted">
               Issue or topic
               <textarea className="field mt-1 min-h-16" data-testid="lecture-issue" placeholder="What situation should this lecture address?" value={issue} onChange={(e) => setIssue(e.target.value)} />
@@ -348,10 +349,10 @@ export function LecturePage() {
             <fieldset className="m-0 space-y-2 border-0 p-0" data-testid="lecture-objectives">
               <legend className="mb-1.5 p-0 text-xs text-muted">Objectives: up to {MAX_OBJECTIVES}, each given 3 to 5 verses</legend>
               {objectives.map((o, i) => (
-                <div key={i} className="flex items-center gap-1.5">
+                <div key={i} className="flex min-w-0 items-center gap-1.5">
                   <span className="w-5 flex-none text-right text-xs text-muted tabular-nums">{i + 1}.</span>
                   <input
-                    className="field"
+                    className="field min-w-0 flex-1"
                     data-testid="lecture-objective"
                     aria-label={`Objective ${i + 1}`}
                     placeholder={i === 0 ? 'What should listeners understand or do?' : 'Another objective'}
@@ -386,7 +387,7 @@ export function LecturePage() {
                 <Plus size={13} /> Add objective <span className="ml-1 text-xs text-muted tabular-nums">{objectives.length} of {MAX_OBJECTIVES}</span>
               </button>
             </fieldset>
-            <div className="-mx-4 flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-line px-4 pt-3" data-testid="lecture-actions">
+            <div className="-mx-4 flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-line px-4 pt-3 sm:-mx-5 sm:px-5" data-testid="lecture-actions">
               <button className="btn btn-primary" data-testid="lecture-suggest" disabled={searching || (!issue.trim() && !objective.trim())}>
                 <Sparkles size={14} /> Suggest verses
               </button>
@@ -399,9 +400,9 @@ export function LecturePage() {
 
           {groups !== null && (
             <section className="no-print space-y-2" aria-label="Suggestions" data-testid="suggestions">
-              <div className="flex items-center gap-2 text-xs text-muted">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-muted">
                 <h2 className="m-0 text-[13px] font-semibold text-fg">Suggestions ({groups.reduce((n, g) => n + g.suggestions.length, 0)})</h2>
-                {groups.some((g) => g.status === 'loading') && <span className="flex items-center gap-1" data-testid="notes-loading"><Loader2 size={12} className="animate-spin" /> Writing AI notes and context. This can take a few minutes the first time; keep working.</span>}
+                {groups.some((g) => g.status === 'loading') && <span className="flex min-w-0 items-start gap-1.5" data-testid="notes-loading"><Loader2 size={12} className="mt-0.5 flex-none animate-spin" /><span>Writing AI notes and context. This can take a few minutes the first time; keep working.</span></span>}
                 {groups.some((g) => g.status === 'offline') && <span data-testid="notes-offline">AI notes and context unavailable</span>}
               </div>
               <p className="m-0 text-xs text-muted" data-testid="match-mode">{usedMeaning ? 'Matched by meaning and words' : 'Matched by words only'}</p>
@@ -471,7 +472,7 @@ export function LecturePage() {
                 const showAll = allTranslations[s.canonical_key] || items.length <= 2;
                 const visible = showAll ? items : firstOfEachLanguage(items);
                 return (
-                  <article key={s.canonical_key} className="card p-4" data-testid="suggestion" data-key={s.canonical_key}>
+                  <article key={s.canonical_key} className="card min-w-0 p-4 sm:p-5" data-testid="suggestion" data-key={s.canonical_key}>
                     <div className="mb-2 flex flex-wrap items-baseline gap-x-2">
                       <h3 className="m-0 text-[14px] font-semibold" data-testid="suggestion-ref">{s.ref_en}</h3>
                       {s.ref_tl !== s.ref_en && <span className="text-xs text-muted">{s.ref_tl}</span>}
@@ -484,7 +485,7 @@ export function LecturePage() {
                     </ContextPanel>
                     <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
                       {visible.map((v) => (
-                        <div key={v.id} className="flex flex-col gap-1">
+                        <div key={v.id} className="flex min-w-0 flex-col gap-2">
                           <ReadOnlyVerse verse={v} />
                           <button
                             className="btn !min-h-8 self-start max-lg:!min-h-11"
@@ -522,9 +523,9 @@ export function LecturePage() {
           )}
         </div>
 
-        <div className="min-w-0 space-y-4 lg:sticky lg:top-0 lg:self-start">
+        <div className="min-w-0 space-y-4 xl:sticky xl:top-0 xl:self-start">
           <section className="card" aria-label="Lecture outline" data-testid="workspace">
-            <div className="flex items-start justify-between gap-2 border-b border-line px-4 py-3">
+            <div className="flex items-start justify-between gap-3 border-b border-line px-4 py-4 sm:px-5">
               <div className="min-w-0">
                 <h2 className="m-0 flex items-center gap-1.5 text-[15px] font-semibold"><ListTree size={16} className="text-accent2" /> Lecture outline</h2>
                 <p className="m-0 mt-0.5 text-xs text-muted">Built like your lesson PDFs: the title, the issue and objectives, then a part for each objective.</p>
@@ -534,7 +535,7 @@ export function LecturePage() {
               </button>
             </div>
 
-            <div className="space-y-4 px-4 py-4">
+            <div className="space-y-4 px-4 py-4 sm:px-5 sm:py-5">
               <label className="block text-xs font-medium text-muted">
                 Title <span className="text-danger" aria-hidden="true">*</span>
                 <input className="field mt-1 !text-[14px] font-semibold" data-testid="lecture-title" required aria-required="true" placeholder="The lecture's title" value={title} onChange={(e) => setTitle(e.target.value)} />
@@ -597,7 +598,7 @@ export function LecturePage() {
                                       <button className="icon-btn !h-7 !w-7 max-lg:!h-11 max-lg:!w-11" aria-label={`Remove ${v.ref_printed}`} data-testid="workspace-remove" onClick={() => setPicked((all) => all.filter((x) => x !== id))}><X size={14} /></button>
                                     </span>
                                   </div>
-                                  <p className="m-0 mt-1 text-[13px] leading-relaxed" data-testid="workspace-text">{v.text}</p>
+                                  <p className="m-0 mt-1 text-[13px] leading-relaxed whitespace-pre-wrap" data-testid="workspace-text"><VerseText text={v.text} /></p>
                                   <div className="no-print mt-1.5"><VerseOrigin verse={v} /></div>
                                   <ContextPanel verseKey={v.canonical_key} reference={v.ref_en} referenceTl={v.ref_tl} testId="workspace-context">
                                     {contextButton(v.canonical_key, 'workspace-context-edit')}
@@ -614,7 +615,7 @@ export function LecturePage() {
               )}
             </div>
 
-            <div className="no-print flex flex-wrap items-center gap-1.5 border-t border-line px-4 py-3" data-testid="workspace-actions">
+            <div className="no-print flex flex-wrap items-center gap-2 border-t border-line px-4 py-4 sm:px-5" data-testid="workspace-actions">
               <button
                 className="btn btn-primary"
                 data-testid="lecture-save"
@@ -660,7 +661,7 @@ export function LecturePage() {
               </button>
             </div>
           </section>
-          <section className="no-print card p-4" aria-label="Saved lectures" data-testid="saved-lectures">
+          <section className="no-print card min-w-0 p-4 sm:p-5" aria-label="Saved lectures" data-testid="saved-lectures">
             <h2 className="card-head mb-2">Saved lectures ({lectures.length})</h2>
             {lectures.length === 0 && <p className="m-0 text-[13px] text-muted" data-testid="saved-empty">Nothing saved yet.</p>}
             <ul className="m-0 list-none space-y-1 p-0">

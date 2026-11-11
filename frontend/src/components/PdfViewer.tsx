@@ -1,76 +1,18 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import { ArrowLeft, ChevronLeft, ChevronRight, ClipboardCheck, Crosshair, ExternalLink, FileText, Highlighter, Languages, Loader2, Maximize, Pencil, RotateCw, SearchX, ZoomIn, ZoomOut } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, ClipboardCheck, Crosshair, ExternalLink, FileText, Highlighter, Languages, Loader2, Maximize, RotateCw, SearchX, ZoomIn, ZoomOut } from 'lucide-react';
 import { lessonFileUrl, type Lesson } from '../api';
 import { findVerse, turned, type Found } from '../highlight';
 import { cachedPage, lessonDocument, rememberPage, renderToCanvas } from '../pdf';
 import { selectLesson, setState, useStore } from '../store';
+import { isDocxFileName } from '../documents';
+import { LessonSummary } from './LessonSummary';
+
+const DocxViewer = lazy(() => import('./DocxViewer'));
 
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 3;
 const STEP = 0.1;
-
-function storedOpen() {
-  try {
-    return localStorage.getItem('lv.summary') === '1';
-  } catch {
-    return false;
-  }
-}
-
-/** The lesson's issue and objectives, as read from the PDF and corrected by the user. */
-function LessonSummary({ lesson }: { lesson: Lesson }) {
-  const [open, setOpen] = useState(storedOpen);
-  const tagalog = lesson.language === 'tl';
-  const empty = !lesson.issue && lesson.objectives.length === 0;
-  return (
-    <details
-      className="no-print flex-none border-b border-line bg-panel text-[13px]"
-      data-testid="lesson-summary"
-      open={open}
-      onToggle={(e) => {
-        const next = e.currentTarget.open;
-        setOpen(next);
-        try {
-          localStorage.setItem('lv.summary', next ? '1' : '0');
-        } catch {
-          /* private mode: it still toggles for this session */
-        }
-      }}
-    >
-      <summary className="tap cursor-pointer px-3 py-1.5 text-xs font-semibold text-muted max-lg:py-3" data-testid="lesson-summary-toggle">
-        {tagalog ? 'Isyu at Mga Layunin' : 'Issue and Objectives'}
-      </summary>
-      <div className="max-h-[40vh] overflow-auto px-3 pb-2" data-testid="lesson-summary-body">
-        {empty ? (
-          <p className="m-0 text-muted" data-testid="lesson-summary-empty">None found in this PDF. You can add them.</p>
-        ) : (
-          <>
-            {lesson.issue && (
-              <>
-                <h3 className="m-0 text-xs font-semibold">{tagalog ? 'Isyu' : 'Issue'}</h3>
-                <p className="m-0 mb-2 leading-relaxed" data-testid="lesson-issue">{lesson.issue}</p>
-              </>
-            )}
-            {lesson.objectives.length > 0 && (
-              <>
-                <h3 className="m-0 text-xs font-semibold">{tagalog ? 'Mga Layunin' : 'Objectives'}</h3>
-                <ol className="m-0 mb-2 pl-5 leading-relaxed" data-testid="lesson-objectives">
-                  {lesson.objectives.map((o, i) => <li key={i} data-testid="lesson-objective">{o}</li>)}
-                </ol>
-              </>
-            )}
-          </>
-        )}
-        <div className="flex flex-wrap gap-1.5">
-          <button className="btn !min-h-8 max-lg:!min-h-11" data-testid="lesson-summary-edit" onClick={() => setState({ editingLessonId: lesson.id })}>
-            <Pencil size={13} /> {empty ? 'Add' : 'Edit'}
-          </button>
-        </div>
-      </div>
-    </details>
-  );
-}
 
 /**
  * Pages render into an offscreen canvas and replace the visible one in a single
@@ -87,7 +29,16 @@ export interface VerseMark {
  * `embedded` is the copy beside the check dialog's form, which already shows the lesson's details.
  * `mark` highlights a verse on its page and scrolls to it.
  */
-export function PdfViewer({ lesson, onBack, embedded, mark }: { lesson: Lesson; onBack?: () => void; embedded?: boolean; mark?: VerseMark | null }) {
+type ViewerProps = { lesson: Lesson; onBack?: () => void; embedded?: boolean; mark?: VerseMark | null };
+
+/** Existing reading, checking, and verse-review views use the original file's reader. */
+export function PdfViewer(props: ViewerProps) {
+  return isDocxFileName(props.lesson.file_name)
+    ? <Suspense fallback={<div className="flex h-full items-center justify-center gap-2 text-sm text-muted" role="status"><Loader2 size={16} className="animate-spin" /> Opening Word document…</div>}><DocxViewer key={props.lesson.id} {...props} /></Suspense>
+    : <PdfDocumentViewer {...props} />;
+}
+
+function PdfDocumentViewer({ lesson, onBack, embedded, mark }: ViewerProps) {
   const page = useStore((s) => s.viewerPage);
   const counterpart = useStore((s) =>
     s.lessons.find((l) => l.id !== lesson.id && l.language !== lesson.language && l.lesson_date && l.lesson_date === lesson.lesson_date && l.category === lesson.category),
@@ -149,7 +100,8 @@ export function PdfViewer({ lesson, onBack, embedded, mark }: { lesson: Lesson; 
     // cannot change this width. Otherwise fit-to-width could oscillate: scrollbar
     // appears, page shrinks, scrollbar goes, page grows, on every frame.
     const measure = () => {
-      const available = el.clientWidth - 32;
+      const padding = getComputedStyle(el);
+      const available = el.clientWidth - parseFloat(padding.paddingLeft) - parseFloat(padding.paddingRight);
       if (available > 0) setFitZoom(Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, available / pageSize.w)));
     };
     measure();
@@ -267,7 +219,7 @@ export function PdfViewer({ lesson, onBack, embedded, mark }: { lesson: Lesson; 
 
   return (
     <section className="flex h-full min-w-0 flex-col bg-bg" aria-label="PDF viewer" data-testid="pdf-viewer" data-lesson={lesson.id}>
-      <div className="no-print flex min-h-12 flex-none flex-wrap items-center gap-1 border-b border-line bg-panel px-2 py-1">
+      <div className="no-print flex min-h-12 flex-none flex-wrap items-center gap-x-2 gap-y-1 border-b border-line bg-panel px-3 py-2">
         {onBack && (
           <button className="icon-btn" aria-label="Back to lessons" data-testid="viewer-back" onClick={onBack}>
             <ArrowLeft size={18} />
@@ -280,29 +232,35 @@ export function PdfViewer({ lesson, onBack, embedded, mark }: { lesson: Lesson; 
             <Languages size={14} /> {counterpart.language === 'tl' ? 'Tagalog' : 'English'}
           </button>
         )}
-        <button className="icon-btn" aria-label="Previous page" data-testid="viewer-prev" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}>
-          <ChevronLeft size={16} />
-        </button>
-        <span className="min-w-11 text-center text-xs tabular-nums" data-testid="viewer-page">{currentPage} / {pageCount}</span>
-        <button className="icon-btn" aria-label="Next page" data-testid="viewer-next" disabled={currentPage >= pageCount} onClick={() => setPage(currentPage + 1)}>
-          <ChevronRight size={16} />
-        </button>
-        <button className="icon-btn" aria-label="Zoom out" data-testid="viewer-zoom-out" disabled={effectiveZoom <= MIN_ZOOM} onClick={() => changeZoom(-STEP)}>
-          <ZoomOut size={16} />
-        </button>
-        <span className="min-w-11 text-center text-xs tabular-nums" data-testid="viewer-zoom">{Math.round(effectiveZoom * 100)}%</span>
-        <button className="icon-btn" aria-label="Zoom in" data-testid="viewer-zoom-in" disabled={effectiveZoom >= MAX_ZOOM} onClick={() => changeZoom(STEP)}>
-          <ZoomIn size={16} />
-        </button>
-        <button className="icon-btn" aria-label="Fit to width" data-testid="viewer-fit" onClick={() => setZoom(null)}>
-          <Maximize size={15} />
-        </button>
-        <button className="icon-btn" aria-label="Rotate page" data-testid="viewer-rotate" onClick={() => setRotation((r) => (r + 90) % 360)}>
-          <RotateCw size={15} />
-        </button>
-        <a className="icon-btn" aria-label="Open PDF in a new tab" href={url} target="_blank" rel="noopener" data-testid="viewer-open">
-          <ExternalLink size={15} />
-        </a>
+        <div className="flex flex-none items-center gap-0.5" role="group" aria-label="PDF pages">
+          <button className="icon-btn" aria-label="Previous page" data-testid="viewer-prev" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}>
+            <ChevronLeft size={16} />
+          </button>
+          <span className="min-w-11 text-center text-xs tabular-nums" data-testid="viewer-page">{currentPage} / {pageCount}</span>
+          <button className="icon-btn" aria-label="Next page" data-testid="viewer-next" disabled={currentPage >= pageCount} onClick={() => setPage(currentPage + 1)}>
+            <ChevronRight size={16} />
+          </button>
+        </div>
+        <div className="flex flex-none items-center gap-0.5" role="group" aria-label="PDF zoom">
+          <button className="icon-btn" aria-label="Zoom out" data-testid="viewer-zoom-out" disabled={effectiveZoom <= MIN_ZOOM} onClick={() => changeZoom(-STEP)}>
+            <ZoomOut size={16} />
+          </button>
+          <span className="min-w-11 text-center text-xs tabular-nums" data-testid="viewer-zoom">{Math.round(effectiveZoom * 100)}%</span>
+          <button className="icon-btn" aria-label="Zoom in" data-testid="viewer-zoom-in" disabled={effectiveZoom >= MAX_ZOOM} onClick={() => changeZoom(STEP)}>
+            <ZoomIn size={16} />
+          </button>
+        </div>
+        <div className="flex flex-none items-center gap-0.5" role="group" aria-label="PDF display">
+          <button className="icon-btn" aria-label="Fit to width" data-testid="viewer-fit" onClick={() => setZoom(null)}>
+            <Maximize size={15} />
+          </button>
+          <button className="icon-btn" aria-label="Rotate page" data-testid="viewer-rotate" onClick={() => setRotation((r) => (r + 90) % 360)}>
+            <RotateCw size={15} />
+          </button>
+          <a className="icon-btn" aria-label="Open PDF in a new tab" href={url} target="_blank" rel="noopener" data-testid="viewer-open">
+            <ExternalLink size={15} />
+          </a>
+        </div>
       </div>
       {!embedded && lesson.needs_check && (
         <div className="no-print flex flex-none flex-wrap items-center gap-2 border-b border-line bg-raised px-3 py-1.5 text-[13px]" role="status" data-testid="viewer-needs-check">
@@ -344,7 +302,7 @@ export function PdfViewer({ lesson, onBack, embedded, mark }: { lesson: Lesson; 
           )}
         </div>
       )}
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto p-4" data-testid="viewer-scroll" style={{ overscrollBehavior: 'contain', scrollbarGutter: 'stable' }}>
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto p-3 sm:p-4" data-testid="viewer-scroll" style={{ overscrollBehavior: 'contain', scrollbarGutter: 'stable' }}>
         {error ? (
           <p className="m-auto mt-10 max-w-xs text-center text-muted" data-testid="viewer-error">This PDF could not be opened. Try downloading it instead.</p>
         ) : (

@@ -557,7 +557,7 @@ test.describe('folder import', () => {
       await openLessonUpload(page);
       const [again] = await Promise.all([page.waitForEvent('filechooser'), page.getByTestId('upload-folder').click()]);
       await again.setFiles(empty);
-      await expect(page.getByTestId('toast').filter({ hasText: 'has no PDF files' })).toBeVisible();
+      await expect(page.getByTestId('toast').filter({ hasText: 'has no PDF or DOCX files' })).toBeVisible();
       await page.getByTestId('upload-done').click();
     });
   });

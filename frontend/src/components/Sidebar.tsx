@@ -1,9 +1,9 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { Archive, BookMarked, BookOpen, BookText, ChevronDown, ChevronRight, ClipboardCheck, FileSpreadsheet, Folder, FolderOpen, ListChecks, Lock, MapPin, Sparkles, type LucideIcon } from 'lucide-react';
-import type { Lesson } from '../api';
-import { libraryOf, navigate, openScope, selectLesson, setState, sortLessons, updateFilters, useRoute, useStore, type Scope } from '../store';
+import type { Language, Lesson } from '../api';
+import { libraryOf, navigate, openLesson, openScope, setState, sortLessons, updateFilters, useRoute, useStore, type Scope } from '../store';
 
-/** Each part of the library has its own colour, shared by its icon, its label and its count. */
+/** Section colors identify icons and counts while the labels follow the reading theme. */
 type Tone = 'archive' | 'lessons' | 'pv' | 'assist' | 'review' | 'warn';
 
 function Count({ n, testId, title }: { n: number; testId?: string; title?: string }) {
@@ -14,7 +14,7 @@ function Count({ n, testId, title }: { n: number; testId?: string; title?: strin
   );
 }
 
-/** A main entry: a tinted icon tile, the label and its count, all in the entry's colour. */
+/** A main entry: a tinted icon tile and count beside a readable neutral label. */
 function Entry({ tone, icon: Icon, label, active, count, testId, title, onClick }: { tone: Tone; icon: LucideIcon; label: string; active: boolean; count?: ReactNode; testId: string; title?: string; onClick: () => void }) {
   return (
     <button className={`nav-row tone-${tone} ${active ? 'is-active' : ''}`} aria-current={active ? 'page' : undefined} data-testid={testId} title={title} onClick={onClick}>
@@ -31,7 +31,7 @@ function Entry({ tone, icon: Icon, label, active, count, testId, title, onClick 
 function SubEntry({ tone, icon: Icon, label, active, count, testId, title, onClick }: { tone: Tone; icon: LucideIcon; label: string; active: boolean; count?: ReactNode; testId: string; title?: string; onClick: () => void }) {
   return (
     <button className={`nav-row nav-sub tone-${tone} ${active ? 'is-active' : ''}`} aria-current={active ? 'page' : undefined} data-testid={testId} title={title} onClick={onClick}>
-      <Icon size={14} className="flex-none" />
+      <Icon size={14} className="nav-section-icon flex-none" />
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {count}
     </button>
@@ -39,7 +39,7 @@ function SubEntry({ tone, icon: Icon, label, active, count, testId, title, onCli
 }
 
 function Heading({ children }: { children: ReactNode }) {
-  return <h2 className="m-0 px-2 pt-3 pb-1 text-[10.5px] font-semibold tracking-[0.08em] text-muted uppercase">{children}</h2>;
+  return <h2 className="sidebar-heading">{children}</h2>;
 }
 
 /**
@@ -50,10 +50,15 @@ function YearFolders({ scope, lessons, tone, prefix }: { scope: Exclude<Scope, '
   const route = useRoute();
   const f = useStore((s) => s.filters);
   const sort = useStore((s) => s.sort);
+  const selectedId = useStore((s) => s.selectedId);
   const [open, setOpen] = useState<Record<number, boolean>>({});
+  const [languageOpen, setLanguageOpen] = useState<Record<string, boolean>>({});
   const years = useMemo(() => {
     const m = new Map<number, Lesson[]>();
-    for (const l of lessons) if (l.year) m.set(l.year, [...(m.get(l.year) ?? []), l]);
+    for (const l of lessons) {
+      const year = l.year || 0;
+      m.set(year, [...(m.get(year) ?? []), l]);
+    }
     return [...m.entries()].sort((a, b) => b[0] - a[0]);
   }, [lessons]);
   if (years.length === 0)
@@ -63,47 +68,91 @@ function YearFolders({ scope, lessons, tone, prefix }: { scope: Exclude<Scope, '
       </p>
     );
 
-  const showYear = (year: number | null) => {
+  const showYear = (year: number | null, language: 'all' | Language = 'all') => {
     openScope(scope);
-    updateFilters({ year });
+    updateFilters({ year, language });
   };
   return (
     <ul className="m-0 list-none p-0" data-testid={`${prefix}folders`} aria-label={`${scope === 'lessons' ? 'Lesson Library' : 'Pastoral Visits'} by year`}>
       {years.map(([year, list]) => {
         const active = route === '/' && f.scope === scope && f.year === year;
         const expanded = !!open[year];
+        const label = year === 0 ? 'No date' : String(year);
+        const testYear = year === 0 ? 'none' : String(year);
         return (
           <li key={year}>
             <div className="flex items-center">
               <button
                 className={`nav-chevron tone-${tone}`}
-                aria-label={`${expanded ? 'Collapse' : 'Expand'} ${year}`}
+                aria-label={`${expanded ? 'Collapse' : 'Expand'} ${label}`}
                 aria-expanded={expanded}
-                data-testid={`${prefix}year-expand-${year}`}
+                data-testid={`${prefix}year-expand-${testYear}`}
                 onClick={() => setOpen((o) => ({ ...o, [year]: !expanded }))}
               >
                 {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
               </button>
-              <SubEntry tone={tone} icon={expanded || active ? FolderOpen : Folder} label={String(year)} active={active} count={<Count n={list.length} />} testId={`${prefix}year-${year}`} onClick={() => showYear(active ? null : year)} />
+              <SubEntry tone={tone} icon={expanded || active ? FolderOpen : Folder} label={label} active={active} count={<Count n={list.length} />} testId={`${prefix}year-${testYear}`} onClick={() => showYear(active && f.language === 'all' ? null : year)} />
             </div>
             {expanded && (
               <ul className={`nav-tree tone-${tone}`}>
-                {sortLessons(list, sort).map((l) => (
-                  <li key={l.id}>
-                    <button
-                      className="nav-row nav-leaf"
-                      data-testid="tree-lesson"
-                      title={l.title}
-                      onClick={() => {
-                        showYear(year);
-                        selectLesson(l.id);
-                        setState({ drawerOpen: false });
-                      }}
-                    >
-                      <span className="truncate">{l.title}</span>
-                    </button>
-                  </li>
-                ))}
+                {(['tl', 'en'] as const).map((language) => {
+                  const items = sortLessons(list.filter((l) => l.language === language), sort);
+                  if (items.length === 0) return null;
+                  const languageLabel = language === 'tl' ? 'Tagalog' : 'English';
+                  const key = `${year}:${language}`;
+                  const languageExpanded = languageOpen[key] !== false;
+                  const languageActive = active && f.language === language;
+                  return (
+                    <li key={language} data-language={language}>
+                      <div className="flex min-w-0 items-center">
+                        <button
+                          className="nav-chevron nav-language-chevron"
+                          aria-label={`${languageExpanded ? 'Collapse' : 'Expand'} ${languageLabel} in ${label}`}
+                          aria-expanded={languageExpanded}
+                          data-testid={`${prefix}year-${testYear}-language-${language}-expand`}
+                          onClick={() => setLanguageOpen((o) => ({ ...o, [key]: !languageExpanded }))}
+                        >
+                          {languageExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                        </button>
+                        <button
+                          className={`nav-row nav-language ${languageActive ? 'is-active' : ''}`}
+                          aria-current={languageActive ? 'page' : undefined}
+                          aria-label={`Show ${languageLabel} ${scope === 'lessons' ? 'lessons' : 'visits'} in ${label}`}
+                          data-testid={`${prefix}year-${testYear}-language-${language}`}
+                          onClick={() => showYear(year, language)}
+                        >
+                          <span className="min-w-0 flex-1 truncate">{languageLabel}</span>
+                          <Count n={items.length} title={`${items.length} ${languageLabel} ${items.length === 1 ? 'lesson' : 'lessons'}`} />
+                        </button>
+                      </div>
+                      {languageExpanded && (
+                        <ul className="nav-language-list" data-testid={`${prefix}year-${testYear}-${language}-lessons`}>
+                          {items.map((l) => {
+                            const selected = route === '/' && f.scope === scope && selectedId === l.id;
+                            return (
+                              <li key={l.id}>
+                                <button
+                                  className={`nav-row nav-leaf ${selected ? 'is-active' : ''}`}
+                                  aria-current={selected ? 'page' : undefined}
+                                  data-testid="tree-lesson"
+                                  data-lesson-id={l.id}
+                                  data-language={language}
+                                  title={l.title}
+                                  onClick={() => {
+                                    showYear(year, language);
+                                    openLesson(l.id);
+                                  }}
+                                >
+                                  <span className="min-w-0 flex-1 truncate">{l.title}</span>
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </li>
@@ -136,14 +185,14 @@ export function Sidebar() {
   const verified = verses.length - unverified;
   const toCheck = useMemo(() => lessons.filter((l) => l.needs_check).length, [lessons]);
 
-  const plain = route === '/' && f.category === 'all' && f.year === null && !f.verseKey && !f.query && !f.toCheck;
+  const plain = route === '/' && f.category === 'all' && f.year === null && f.language === 'all' && !f.verseKey && !f.query && !f.toCheck;
   const go = (path: string) => {
     navigate(path);
     setState({ drawerOpen: false });
   };
 
   return (
-    <nav className="flex h-full min-w-0 flex-col overflow-hidden bg-panel" aria-label="Library" data-testid="sidebar">
+    <nav className="sidebar-surface flex h-full min-w-0 flex-col overflow-hidden" aria-label="Library" data-testid="sidebar">
       <div className="scroll-stable min-h-0 flex-1 px-2 pb-3">
         <Heading>Library</Heading>
         <Entry tone="archive" icon={Archive} label="All Archives" active={plain && f.scope === 'all'} testId="side-all" title="Every lesson: worship service lessons and pastoral visits" onClick={() => openScope('all')} count={<Count n={lessons.length} testId="side-all-count" />} />
@@ -165,7 +214,7 @@ export function Sidebar() {
         )}
 
         <div className="mt-1">
-          <Entry tone="lessons" icon={BookOpen} label="Lesson Library" active={plain && f.scope === 'lessons'} testId="side-lessons" title="Worship service lessons uploaded as PDFs" onClick={() => openScope('lessons')} count={<Count n={worship.length} testId="side-lessons-count" />} />
+          <Entry tone="lessons" icon={BookOpen} label="Lesson Library" active={plain && f.scope === 'lessons'} testId="side-lessons" title="Worship service lessons uploaded as PDF or DOCX files" onClick={() => openScope('lessons')} count={<Count n={worship.length} testId="side-lessons-count" />} />
           <div className="nav-group tone-lessons">
             <YearFolders scope="lessons" lessons={worship} tone="lessons" prefix="" />
             <SubEntry
@@ -175,7 +224,7 @@ export function Sidebar() {
               active={route === '/lesson-verses'}
               testId="side-lesson-verses"
               onClick={() => go('/lesson-verses')}
-              count={<Count n={counts.lesson} testId="side-lesson-verses-count" title={`${counts.lesson} verses read from lesson PDFs: ${counts.lesson - counts.lessonToReview} verified, ${counts.lessonToReview} to review`} />}
+              count={<Count n={counts.lesson} testId="side-lesson-verses-count" title={`${counts.lesson} verses read from lesson documents: ${counts.lesson - counts.lessonToReview} verified, ${counts.lessonToReview} to review`} />}
             />
           </div>
         </div>
@@ -190,7 +239,7 @@ export function Sidebar() {
               label="Verse Library"
               active={route === '/bibles'}
               testId="side-bibles"
-              title="Verses read from pastoral visit PDFs and imported from Excel files"
+              title="Verses read from pastoral visit documents and imported from Excel files"
               onClick={() => go('/bibles')}
               count={<Count n={counts.verse} testId="side-bibles-count" title={`${counts.verse} verses: ${counts.verse - counts.verseToReview} verified, ${counts.verseToReview} to review`} />}
             />

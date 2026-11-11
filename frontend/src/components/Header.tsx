@@ -73,7 +73,10 @@ export function RestoreInput({ inputRef }: { inputRef: React.RefObject<HTMLInput
 function SearchBox() {
   const query = useStore((s) => s.filters.query);
   const route = useRoute();
-  const count = useStore((s) => (s.filters.query.trim() ? s.lessons.filter((l) => matchesFilters(l, { ...s.filters, scope: 'all', category: 'all', year: null, verseKey: null, toCheck: false }, s.contentMatches)).length : 0));
+  const count = useStore((s) => (s.filters.query.trim() ? s.lessons.filter((l) => matchesFilters(l, {
+    ...s.filters, scope: 'all', category: 'all', year: null, verseKey: null, toCheck: false,
+    language: 'all',
+  }, s.contentMatches)).length : 0));
   const total = useStore((s) => s.lessons.length);
   return (
     <div className="relative mx-4 hidden w-full max-w-md lg:block">
@@ -132,6 +135,9 @@ export function Header() {
       </button>
       <div className="flex min-w-0 flex-1 justify-center">
         <SearchBox />
+        <button className="btn max-lg:!h-11 max-lg:!w-11 max-lg:!px-0" data-testid="advanced-search-open" aria-label="Advanced search (Ctrl+K)" onClick={() => setState({ advancedSearchOpen: true })}>
+          <Search size={15} /> <span className="hidden xl:inline">Advanced search</span><kbd className="hidden text-[11px] text-muted lg:inline">Ctrl K</kbd>
+        </button>
       </div>
       <RestoreInput inputRef={restoreRef} />
       <div className="hidden items-center gap-1.5 xl:flex">

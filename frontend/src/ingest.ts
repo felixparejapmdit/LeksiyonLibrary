@@ -1,4 +1,5 @@
 import { api, ApiError, type Lesson, type UploadTarget } from './api';
+import { isDocxFileName, isLessonFile } from './documents';
 import { loadPdfjs, openPdf, renderToCanvas } from './pdf';
 import { getState, refreshAll, selectLesson, setState, toast, type UploadItem } from './store';
 
@@ -55,17 +56,18 @@ function patch(id: number, p: Partial<UploadItem>) {
   setState({ uploads: getState().uploads.map((u) => (u.id === id ? { ...u, ...p } : u)) });
 }
 
-/** A folder can hold anything, so only its PDFs are taken. */
+/** A folder can hold anything, so only supported lesson documents are taken. */
 export function enqueueFolder(files: Iterable<File>, target: UploadTarget = getState().uploadTarget) {
   const all = [...files];
-  const pdfs = all.filter((f) => /\.pdf$/i.test(f.name));
-  const others = all.length - pdfs.length;
-  if (pdfs.length === 0) {
-    toast('That folder has no PDF files.', 'error');
+  const documents = all.filter(isLessonFile);
+  const others = all.length - documents.length;
+  if (documents.length === 0) {
+    toast('That folder has no PDF or DOCX files.', 'error');
     return;
   }
-  toast(`Adding ${pdfs.length} PDF ${pdfs.length === 1 ? 'file' : 'files'}${others ? `, skipping ${others} other ${others === 1 ? 'file' : 'files'}` : ''}`);
-  enqueueFiles(pdfs, target);
+  const formats = documents.every((file) => !isDocxFileName(file.name)) ? 'PDF' : documents.every((file) => isDocxFileName(file.name)) ? 'DOCX' : 'PDF / DOCX';
+  toast(`Adding ${documents.length} ${formats} ${documents.length === 1 ? 'file' : 'files'}${others ? `, skipping ${others} other ${others === 1 ? 'file' : 'files'}` : ''}`);
+  enqueueFiles(documents, target);
 }
 
 /** What was missing after reading a lesson, so it can be checked by hand. */
@@ -151,35 +153,40 @@ export async function pageImageForOcr(doc: Awaited<ReturnType<typeof openPdf>>, 
 
 async function ingest(id: number, file: File, target: UploadTarget) {
   try {
-    if (!/\.pdf$/i.test(file.name) && file.type !== 'application/pdf') {
-      throw new ApiError('Only PDF files can be added.', 415);
-    }
-    patch(id, { status: 'working', message: 'Reading PDF', progress: 0.02 });
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    let doc;
-    try {
-      doc = await openPdf(bytes.slice());
-    } catch {
-      throw new ApiError('This file could not be opened as a PDF.', 415);
+    if (!isLessonFile(file)) {
+      throw new ApiError('Only PDF or DOCX files can be added.', 415);
     }
     const pages: string[] = [];
     let usedOcr = false;
-    for (let n = 1; n <= doc.numPages; n++) {
-      const page = await doc.getPage(n);
-      const content = await page.getTextContent();
-      let text = pageTextFromItems(content.items as never);
-      if (text.replace(/\s/g, '').length < MIN_TEXT_CHARS) {
-        usedOcr = true;
-        patch(id, { message: `Recognizing text: page ${n} of ${doc.numPages}`, progress: 0.05 + (0.85 * (n - 1)) / doc.numPages });
-        const blob = await pageImageForOcr(doc, n);
-        const engine = await ocrWorker();
-        text = (await engine.recognize(blob)).data.text;
+    if (isDocxFileName(file.name)) {
+      // The backend reads DOCX text from the original file. No OCR or PDF conversion is needed.
+      patch(id, { status: 'working', message: 'Reading DOCX', progress: 0.1 });
+    } else {
+      patch(id, { status: 'working', message: 'Reading PDF', progress: 0.02 });
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      let doc;
+      try {
+        doc = await openPdf(bytes.slice());
+      } catch {
+        throw new ApiError('This file could not be opened as a PDF.', 415);
       }
-      pages.push(text);
-      page.cleanup();
-      patch(id, { progress: 0.05 + (0.85 * n) / doc.numPages });
+      for (let n = 1; n <= doc.numPages; n++) {
+        const page = await doc.getPage(n);
+        const content = await page.getTextContent();
+        let text = pageTextFromItems(content.items as never);
+        if (text.replace(/\s/g, '').length < MIN_TEXT_CHARS) {
+          usedOcr = true;
+          patch(id, { message: `Recognizing text: page ${n} of ${doc.numPages}`, progress: 0.05 + (0.85 * (n - 1)) / doc.numPages });
+          const blob = await pageImageForOcr(doc, n);
+          const engine = await ocrWorker();
+          text = (await engine.recognize(blob)).data.text;
+        }
+        pages.push(text);
+        page.cleanup();
+        patch(id, { progress: 0.05 + (0.85 * n) / doc.numPages });
+      }
+      await doc.loadingTask.destroy();
     }
-    await doc.loadingTask.destroy();
 
     patch(id, { message: 'Saving to vault', progress: 0.94 });
     const firstLesson = getState().lessons.length === 0;
@@ -190,7 +197,9 @@ async function ingest(id: number, file: File, target: UploadTarget) {
     patch(id, { status: 'done', progress: 1, verseCount: verse_count, message: `Added "${lesson.title}" with ${found}`, attention: needsAttention(lesson, verse_count, unread), lessonId: lesson.id });
     toast(`Added "${lesson.title}" to ${target === 'pastoral' ? 'Pastoral Visits' : 'the Lesson Library'} (${found}). Check what was read before relying on it.`);
   } catch (e) {
-    const message = e instanceof ApiError ? e.message : 'This PDF could not be processed.';
+    const message = isDocxFileName(file.name) && e instanceof ApiError && e.status === 415 && e.message === 'That file is not a PDF.'
+      ? 'The running server has not loaded DOCX support. Stop it and run npm start again, then retry this file.'
+      : e instanceof ApiError ? e.message : 'This document could not be processed.';
     patch(id, { status: 'error', message, progress: 1 });
     toast(`${file.name}: ${message}`, 'error');
   }

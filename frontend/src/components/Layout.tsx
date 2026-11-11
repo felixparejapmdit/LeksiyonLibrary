@@ -98,7 +98,7 @@ export function DesktopFrame({ children }: { children: React.ReactNode }) {
   return (
     <div
       data-frame-root
-      className="flex h-full"
+      className="flex h-full min-w-0"
       style={{ '--sidebar-w': `${readWidth('lv.sidebarW', 260)}px`, '--viewer-w': `${readWidth('lv.viewerW', 560)}px` } as React.CSSProperties}
     >
       {desktop && sidebarOpen && (

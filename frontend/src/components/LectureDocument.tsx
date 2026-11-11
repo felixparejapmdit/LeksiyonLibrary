@@ -5,6 +5,7 @@ import type { Verse } from '../api';
 import { contextLines, letter, OUTLINE_WORDS, type Outline } from '../lectureOutline';
 import { setContextLanguage, useStore } from '../store';
 import { backgroundOf, ContextLanguageSwitch, useTagalog } from './VerseContext';
+import { VerseText } from './VerseText';
 
 /**
  * The lecture as a document, laid out like the lesson PDFs: the title, the issue and the
@@ -59,7 +60,7 @@ export function LectureDocument({ outline, byId, withContext, live }: { outline:
                   <span className="lecture-doc-letter">{letter(i)}.</span> {v.ref_printed}
                   {v.version && <span className="lecture-doc-version"> {v.version}</span>}
                 </p>
-                <p className="lecture-doc-text" data-testid="doc-text">{v.text || '—'}</p>
+                <p className="lecture-doc-text" data-testid="doc-text"><VerseText text={v.text || '—'} /></p>
                 {c && c.lines.length > 0 && (
                   <div className="lecture-doc-context" data-testid="doc-context">
                     {c.warning && <p className="lecture-doc-warning">{c.warning}</p>}
@@ -102,25 +103,27 @@ export function LecturePreview({ outline, byId, withContext, onContext, onClose,
   const verseCount = outline.parts.reduce((n, p) => n + p.ids.length, 0);
   return createPortal(
     <div className="no-print fade-in fixed inset-0 z-50 flex flex-col bg-bg/95 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Preview lecture" data-testid="preview-dialog">
-      <div className="flex flex-none flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-panel px-4 py-2.5">
-        <div className="min-w-0 flex-1">
+      <div className="grid flex-none grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-b border-line bg-panel px-4 py-3 sm:px-6 lg:flex lg:flex-wrap lg:items-center">
+        <div className="min-w-0 lg:flex-1 lg:basis-40">
           <h2 className="m-0 truncate text-[15px] font-semibold">Preview lecture</h2>
           <p className="m-0 text-xs text-muted" data-testid="preview-summary">
             {outline.objectives.length} {outline.objectives.length === 1 ? 'objective' : 'objectives'} · {verseCount} {verseCount === 1 ? 'verse' : 'verses'}
           </p>
         </div>
-        <ContextLanguageSwitch language={language} onChange={setContextLanguage} testId="preview-language" />
-        <button type="button" role="switch" aria-checked={withContext} className="btn" data-testid="preview-context" onClick={() => onContext(!withContext)}>
-          <span className={`switch ${withContext ? 'is-on' : ''}`} aria-hidden="true" />
-          <Sparkles size={14} /> AI context
-        </button>
-        <button className="btn" data-testid="preview-word" disabled={exporting} onClick={onWord}>
-          {exporting ? <Loader2 size={14} className="animate-spin" /> : <FileDown size={14} />} Word
-        </button>
-        <button className="btn btn-primary" data-testid="preview-print" onClick={() => window.print()}>
-          <Printer size={14} /> Print or save as PDF
-        </button>
-        <button className="icon-btn" aria-label="Close preview" data-testid="preview-close" onClick={onClose}>
+        <div className="col-span-2 row-start-2 flex min-w-0 flex-wrap items-center gap-2 lg:ml-auto">
+          <ContextLanguageSwitch language={language} onChange={setContextLanguage} testId="preview-language" />
+          <button type="button" role="switch" aria-checked={withContext} className="btn" data-testid="preview-context" onClick={() => onContext(!withContext)}>
+            <span className={`switch ${withContext ? 'is-on' : ''}`} aria-hidden="true" />
+            <Sparkles size={14} /> AI context
+          </button>
+          <button className="btn" data-testid="preview-word" disabled={exporting} onClick={onWord}>
+            {exporting ? <Loader2 size={14} className="animate-spin" /> : <FileDown size={14} />} Word
+          </button>
+          <button className="btn btn-primary" data-testid="preview-print" onClick={() => window.print()}>
+            <Printer size={14} /> Print or save as PDF
+          </button>
+        </div>
+        <button className="icon-btn col-start-2 row-start-1" aria-label="Close preview" data-testid="preview-close" onClick={onClose}>
           <X size={18} />
         </button>
       </div>

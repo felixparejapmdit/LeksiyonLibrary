@@ -7,7 +7,7 @@ frontend/dist/
 frontend/public/ocr/
 frontend/public/pdfjs/
 
-# Your vault: database, lesson PDFs, its key and backups. Never publish these,
+# Your vault: database, lesson documents, its key and backups. Never publish these,
 # even encrypted.
 backend/data/
 backend/data-backup-*/
@@ -23,6 +23,8 @@ backend/tests/
 
 # Lesson material and recordings that may be restricted or confidential.
 *.pdf
+*.docx
+*.doc
 *.xlsx
 *.xls
 *.csv

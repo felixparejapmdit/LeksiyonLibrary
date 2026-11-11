@@ -10,7 +10,7 @@ export function ImportPage() {
     if (location.hash === '#rows-to-fix') requestAnimationFrame(() => document.querySelector('[data-testid="rows-to-fix"]')?.scrollIntoView({ block: 'start' }));
   }, []);
   return (
-    <div className="scroll-stable h-full" data-testid="import-page">
+    <div className="scroll-stable h-full min-w-0" data-testid="import-page">
       <div className={PAGE}>
         <PageHeader
           icon={FileSpreadsheet}
@@ -24,7 +24,7 @@ export function ImportPage() {
             </button>
           }
         />
-        <div className="card">
+        <div className="card min-w-0 p-1 sm:p-2">
           <VerseImport />
         </div>
       </div>

@@ -3,9 +3,11 @@ import { BadgeCheck, BookMarked, BookText, Check, ChevronDown, ChevronLeft, Chev
 import { api, type Verse } from '../api';
 import { VerseCorrectionDialog } from '../components/Overlays';
 import { PAGE, PageHeader } from '../components/PageHeader';
-import { Highlight } from '../components/LessonList';
+import { VerseText } from '../components/VerseText';
 import { scopeNames } from '../components/VerseContext';
 import { openReview } from './ReviewPage';
+import { matchesSearch } from '../search';
+import { documentLabel } from '../documents';
 import { askConfirm, derived, errorText, getState, libraryOf, navigate, resetFilters, selectLesson, setState, toast, useStore, verseGroups, type Library } from '../store';
 
 function replaceVerse(v: Verse) {
@@ -22,11 +24,11 @@ export async function copyVerse(v: Verse) {
   }
 }
 
-/** Where a verse came from: an Excel file that was imported, or a PDF that was uploaded and read. */
+/** Where a verse came from: an imported Excel file or an uploaded lesson document. */
 type Origin = 'import' | 'pdf';
 const originOf = (v: Verse): Origin => (v.import_source ? 'import' : 'pdf');
 
-/** Says plainly whether a verse was imported or read from an uploaded PDF, and from which. */
+/** Says plainly whether a verse was imported or read from an uploaded document, and from which. */
 function OriginBadge({ verse, compact }: { verse: Verse; compact?: boolean }) {
   const source = verse.sources[0];
   const lesson = useStore((s) => (source ? s.lessons.find((l) => l.id === source.lesson_id) : undefined));
@@ -37,10 +39,11 @@ function OriginBadge({ verse, compact }: { verse: Verse; compact?: boolean }) {
       </span>
     );
   }
-  const kind = source?.pastoral ? 'Pastoral visit PDF' : 'Lesson PDF';
+  const format = lesson ? documentLabel(lesson) : 'document';
+  const kind = `${source?.pastoral ? 'Pastoral visit' : 'Lesson'} ${format}`;
   return (
-    <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-pv/50 bg-pv/10 px-1.5 font-medium text-pv" data-testid="verse-origin" data-origin="pdf" title={lesson ? `Read from the uploaded PDF ${lesson.title}, page ${source?.page}` : 'Read from an uploaded PDF'}>
-      <FileText size={12} className="flex-none" /> <span className="truncate">{compact ? 'PDF' : `From ${kind.charAt(0).toLowerCase()}${kind.slice(1)}`}</span>
+    <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-pv/50 bg-pv/10 px-1.5 font-medium text-pv" data-testid="verse-origin" data-origin="pdf" data-format={format.toLowerCase()} title={lesson ? `Read from the uploaded ${format} ${lesson.title}, page ${source?.page}` : 'Read from an uploaded document'}>
+      <FileText size={12} className="flex-none" /> <span className="truncate">{compact ? format : `From ${kind.charAt(0).toLowerCase()}${kind.slice(1)}`}</span>
     </span>
   );
 }
@@ -66,8 +69,15 @@ const VerseCard = memo(function VerseCard({ verse, query, alone }: { verse: Vers
       </div>
       {verse.ref_note && !verified && <p className="m-0 mb-1.5 text-xs text-warn" data-testid="verse-ref-note">{verse.ref_note}</p>}
       <p className="m-0 flex-1 text-[14px] leading-relaxed whitespace-pre-wrap" data-testid="verse-text">
-        {verse.text ? <Highlight text={verse.text} query={query} /> : <span className="text-muted">Reference only. No text was printed in this lesson.</span>}
+        {verse.text ? <VerseText text={verse.text} query={query} /> : <span className="text-muted">Reference only. No text was printed in this lesson.</span>}
       </p>
+      {verse.sources.some((s) => s.pastoral) && (
+        <div className="mt-2 space-y-0.5 text-xs text-muted" data-testid="verse-usage">
+          {verse.sources.filter((s) => s.pastoral).map((s) => (
+            <p className="m-0" key={s.lesson_id} data-testid="verse-usage-date">Used in pastoral visit: {s.lesson_date ?? 'No date'} · page {s.page}</p>
+          ))}
+        </div>
+      )}
       <div className="mt-1.5 flex flex-wrap items-center gap-1">
         {verse.import_source && <span className="mr-auto min-w-0 truncate text-xs text-muted" data-testid="verse-import-source">From {verse.import_source}</span>}
         {!verse.import_source && lessonTitle && <span className="mr-auto min-w-0 truncate text-xs text-muted" data-testid="verse-pdf-source" title={lessonTitle}>From {lessonTitle}</span>}
@@ -203,11 +213,12 @@ function pageList(page: number, pages: number): (number | 'gap')[] {
   return sorted.flatMap((n, i) => (i > 0 && n - sorted[i - 1] > 1 ? (['gap', n] as const) : [n]));
 }
 
-function Pagination({ page, pages, onPage }: { page: number; pages: number; onPage: (n: number) => void }) {
+function Pagination({ page, pages, onPage, position = 'bottom' }: { page: number; pages: number; onPage: (n: number) => void; position?: 'top' | 'bottom' }) {
   if (pages <= 1) return null;
+  const prefix = position === 'top' ? 'bibles-top-page' : 'bibles-page';
   return (
-    <nav className="flex flex-wrap items-center justify-center gap-1" aria-label="Pages" data-testid="bibles-pagination">
-      <button className="btn !min-h-8 max-lg:!min-h-11" aria-label="Previous page" data-testid="bibles-page-prev" disabled={page <= 1} onClick={() => onPage(page - 1)}>
+    <nav className="flex flex-wrap items-center justify-center gap-1" aria-label={`Pages at ${position}`} data-testid={position === 'top' ? 'bibles-pagination-top' : 'bibles-pagination'}>
+      <button className="btn !min-h-8 max-lg:!min-h-11" aria-label="Previous page" data-testid={`${prefix}-prev`} disabled={page <= 1} onClick={() => onPage(page - 1)}>
         <ChevronLeft size={14} /> Previous
       </button>
       {pageList(page, pages).map((n, i) =>
@@ -219,14 +230,14 @@ function Pagination({ page, pages, onPage }: { page: number; pages: number; onPa
             className={`btn !min-h-8 min-w-8 justify-center tabular-nums max-lg:!min-h-11 max-lg:min-w-11 ${n === page ? 'border-accent2! font-semibold' : ''}`}
             aria-label={`Page ${n}`}
             aria-current={n === page ? 'page' : undefined}
-            data-testid="bibles-page-number"
+            data-testid={`${prefix}-number`}
             onClick={() => onPage(n)}
           >
             {n}
           </button>
         ),
       )}
-      <button className="btn !min-h-8 max-lg:!min-h-11" aria-label="Next page" data-testid="bibles-page-next" disabled={page >= pages} onClick={() => onPage(page + 1)}>
+      <button className="btn !min-h-8 max-lg:!min-h-11" aria-label="Next page" data-testid={`${prefix}-next`} disabled={page >= pages} onClick={() => onPage(page + 1)}>
         Next <ChevronRight size={14} />
       </button>
     </nav>
@@ -307,7 +318,7 @@ const TableRow = memo(function TableRow({ verse, query }: { verse: Verse; query:
         <td className={`${cell} tabular-nums`} data-testid="table-chapter">{chapter}</td>
         <td className={`${cell} tabular-nums`} data-testid="table-verse">{number}</td>
         <td className={`${cell} w-full max-w-0 truncate`} data-testid="table-text" title={verse.text}>
-          {verse.text ? <Highlight text={verse.text} query={query} /> : <span className="text-muted">Reference only</span>}
+          {verse.text ? <VerseText text={verse.text} query={query} /> : <span className="text-muted">Reference only</span>}
         </td>
         <td className={cell} data-testid="table-language">{verse.language === 'tl' ? 'Tagalog' : 'English'}</td>
         <td className={cell}><StatusMark verse={verse} /></td>
@@ -366,7 +377,7 @@ function ParallelSide({ verses, side, query, testId }: { verses: Verse[]; side: 
             <button className="icon-btn ml-auto !h-6 !w-6 max-lg:!h-11 max-lg:!w-11" aria-label={`Copy ${v.ref_printed} ${v.version}`} data-testid="parallel-copy" disabled={!v.text} onClick={() => copyVerse(v)}><Copy size={12} /></button>
           </div>
           <p className="m-0 text-[14px] leading-relaxed whitespace-pre-wrap" data-testid="parallel-text">
-            {v.text ? <Highlight text={v.text} query={query} /> : <span className="text-muted">Reference only.</span>}
+            {v.text ? <VerseText text={v.text} query={query} /> : <span className="text-muted">Reference only.</span>}
           </p>
         </div>
       ))}
@@ -406,6 +417,15 @@ export function BiblesPage({ library }: { library: Library }) {
   const [meaningKeys, setMeaningKeys] = useState<string[] | null>(null);
   const [meaningBusy, setMeaningBusy] = useState(false);
   const top = useRef<HTMLDivElement>(null);
+  const targetId = useStore((s) => s.verseTargetId);
+  useEffect(() => {
+    const verse = verses.find((v) => v.id === targetId);
+    if (!verse) return;
+    setMeaningKeys(null);
+    setViewState((current) => ({ ...current, ...NO_FILTERS, layout: 'cards', query: verse.ref_en, language: verse.language, translation: verse.version || 'all', page: 1 }));
+    setState({ verseTargetId: null });
+    top.current?.scrollIntoView({ block: 'start' });
+  }, [targetId, verses]);
 
   const findByMeaning = async () => {
     setMeaningBusy(true);
@@ -441,7 +461,7 @@ export function BiblesPage({ library }: { library: Library }) {
       (origin === 'all' || originOf(v) === origin) &&
       (parallel || translation === 'all' || v.version === translation) &&
       (book === 'all' || v.book_id === book) &&
-      (meaningKeys !== null || !q || searchTextOf(v).includes(q));
+      (meaningKeys !== null || !q || matchesSearch(searchTextOf(v), q));
     const matching = (meaningKeys ? sorted.filter((g) => meaningKeys.includes(g.key)) : sorted)
       .map((g) => {
         const items = g.items.filter(keep);
@@ -484,7 +504,7 @@ export function BiblesPage({ library }: { library: Library }) {
   };
 
   return (
-    <div className="scroll-stable h-full" data-testid="bibles-page">
+    <div className="scroll-stable h-full min-w-0" data-testid="bibles-page">
       <div ref={top} />
       <div className={PAGE}>
         <PageHeader
@@ -496,14 +516,14 @@ export function BiblesPage({ library }: { library: Library }) {
           description={
             <>
               {library === 'verse'
-                ? 'Verses read from your pastoral visit PDFs and imported from your Excel files. Verses read from worship service lessons are kept apart, in the Lesson Library.'
-                : 'Verses read from your worship service lesson PDFs, exactly as printed or scanned. Verses from pastoral visits and Excel files are kept apart, in the Verse Library.'}{' '}
+                ? 'Verses read from your pastoral visit documents and imported from your Excel files. Verses read from worship service lessons are kept apart, in the Lesson Library.'
+                : 'Verses read from your worship service lesson documents, exactly as printed or scanned. Verses from pastoral visits and Excel files are kept apart, in the Verse Library.'}{' '}
               Verified text is locked permanently, and the AI can never change it.
               <span className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
                 <span className="inline-flex items-center gap-1"><BadgeCheck size={13} className="text-ok" /> {stats.verified} of {stats.total} verified</span>
                 {library === 'verse' && stats.total > 0 && (
                   <span className="inline-flex flex-wrap items-center gap-x-4 gap-y-1" data-testid="bibles-origin-counts">
-            <span className="inline-flex items-center gap-1"><FileText size={12} className="text-pv" /> {stats.total - stats.imported} read from uploaded PDFs</span>
+            <span className="inline-flex items-center gap-1"><FileText size={12} className="text-pv" /> {stats.total - stats.imported} read from uploaded documents</span>
             <span className="inline-flex items-center gap-1"><FileSpreadsheet size={12} className="text-ok" /> {stats.imported} imported from Excel</span>
                   </span>
                 )}
@@ -524,9 +544,9 @@ export function BiblesPage({ library }: { library: Library }) {
             <button className="btn !min-h-8 max-lg:!min-h-11" data-testid="bibles-rows-to-fix-open" onClick={() => navigate('/import#rows-to-fix')}>Fix them</button>
           </p>
         )}
-        <div className="z-10 -mx-4 mb-4 border-b border-line bg-bg px-4 pt-1 pb-3 lg:sticky lg:-top-6 lg:-mx-8 lg:px-8 lg:pt-3" data-testid="bibles-toolbar">
+        <div className="page-toolbar z-10 mb-5 border-b border-line bg-bg pt-2 pb-4 lg:pt-3" data-testid="bibles-toolbar">
           <div className="flex flex-wrap items-center gap-2">
-            <div className="relative min-w-52 flex-1">
+            <div className="relative min-w-0 basis-52 flex-1">
               <Search size={15} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted" />
               <input className="field !pl-9" placeholder="Search references or wording" aria-label="Search verses" data-testid="bibles-search" value={query} onChange={(e) => { setView({ query: e.target.value }); setMeaningKeys(null); }} />
             </div>
@@ -574,7 +594,7 @@ export function BiblesPage({ library }: { library: Library }) {
             {library === 'verse' && (
               <select className="field !min-h-[34px] !w-auto !py-1 !text-xs max-lg:!min-h-11" aria-label="Filter by source" data-testid="bibles-origin" value={origin} onChange={(e) => setView({ origin: e.target.value as View['origin'] })}>
                 <option value="all">All sources</option>
-                <option value="pdf">Read from uploaded PDFs</option>
+                <option value="pdf">Read from uploaded documents</option>
                 <option value="import">Imported from Excel</option>
               </select>
             )}
@@ -610,6 +630,11 @@ export function BiblesPage({ library }: { library: Library }) {
               </label>
             </div>
           )}
+          {pages > 1 && (
+            <div className="mt-3">
+              <Pagination page={page} pages={pages} onPage={goToPage} position="top" />
+            </div>
+          )}
         </div>
         {meaningKeys && (
           <p className="m-0 mb-3 flex items-center gap-2 text-[13px] text-muted" data-testid="bibles-meaning-note">
@@ -619,7 +644,7 @@ export function BiblesPage({ library }: { library: Library }) {
         )}
         {total === 0 ? (
           <p className="py-14 text-center text-[13px] text-muted" data-testid="bibles-empty">
-            {verses.length === 0 ? (library === 'verse' ? 'No verses yet. Upload a pastoral visit PDF, or import an Excel file, and its verses will appear here.' : 'No verses yet. Upload a lesson PDF, and the verses read from it will appear here.') : meaningKeys ? 'No verses are close in meaning.' : parallel && groups.length > 0 ? 'No verses match these two sides. Choose another side, or turn off "Only verses on both sides".' : 'No verses match these filters.'}
+            {verses.length === 0 ? (library === 'verse' ? 'No verses yet. Upload a pastoral visit PDF or DOCX, or import an Excel file, and its verses will appear here.' : 'No verses yet. Upload a lesson PDF or DOCX, and the verses read from it will appear here.') : meaningKeys ? 'No verses are close in meaning.' : parallel && groups.length > 0 ? 'No verses match these two sides. Choose another side, or turn off "Only verses on both sides".' : 'No verses match these filters.'}
           </p>
         ) : (
           <>

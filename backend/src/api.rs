@@ -1,4 +1,4 @@
-use crate::{ai, backup, export, models, outline, parser, semantic, verse_import, AppState};
+use crate::{ai, backup, docx, export, models, outline, parser, semantic, verse_import, AppState};
 use axum::{
     body::Body,
     extract::{DefaultBodyLimit, FromRequestParts, Multipart, Path, Query, State},
@@ -125,18 +125,20 @@ async fn only_this_app(req: axum::extract::Request, next: axum::middleware::Next
 
 // ---------- Lessons ----------
 
-const LESSON_COLS: &str = "l.id, l.title, l.category, l.language, l.lesson_date, l.date_label, l.year, l.location, l.author, l.code, l.file_name, l.byte_size, l.page_count, l.source_kind, l.issue, l.objectives, l.created_at, l.folder_id, l.needs_check";
+const LESSON_COLS: &str = "l.id, l.title, l.category, l.language, l.lesson_date, l.date_label, l.year, l.location, l.author, l.code, l.file_name, l.byte_size, l.page_count, l.source_kind, l.issue, l.objectives, l.created_at, l.folder_id, l.needs_check, l.local_congregation, l.district";
 
 fn lesson_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
     let objectives: String = r.get(15)?;
+    let file_name: String = r.get(10)?;
     Ok(json!({
         "id": r.get::<_, String>(0)?, "title": r.get::<_, String>(1)?, "category": r.get::<_, String>(2)?,
         "language": r.get::<_, String>(3)?, "lesson_date": r.get::<_, Option<String>>(4)?, "date_label": r.get::<_, String>(5)?,
         "year": r.get::<_, Option<i64>>(6)?, "location": r.get::<_, String>(7)?, "author": r.get::<_, String>(8)?,
-        "code": r.get::<_, String>(9)?, "file_name": r.get::<_, String>(10)?, "byte_size": r.get::<_, i64>(11)?,
+        "code": r.get::<_, String>(9)?, "file_name": file_name, "document_format": docx::format_from_name(&file_name), "byte_size": r.get::<_, i64>(11)?,
         "page_count": r.get::<_, i64>(12)?, "source_kind": r.get::<_, String>(13)?, "issue": r.get::<_, String>(14)?,
         "objectives": serde_json::from_str::<Value>(&objectives).unwrap_or(json!([])), "created_at": r.get::<_, String>(16)?,
         "folder_id": r.get::<_, Option<String>>(17)?, "needs_check": r.get::<_, i64>(18)? != 0,
+        "local_congregation": r.get::<_, String>(19)?, "district": r.get::<_, String>(20)?,
     }))
 }
 
@@ -172,38 +174,52 @@ async fn list_lessons(State(s): State<S>, u: User) -> ApiResult<Json<Value>> {
 const MAX_PDF: usize = 64 * 1024 * 1024;
 
 async fn upload_lesson(State(s): State<S>, u: User, mut mp: Multipart) -> ApiResult<Json<Value>> {
-    let (mut file, mut file_name, mut pages, mut source_kind) = (None::<Vec<u8>>, String::new(), Vec::<String>::new(), "text".to_string());
+    let (mut file, mut file_name, mut raw_pages, mut source_kind) = (None::<Vec<u8>>, String::new(), None::<String>, "text".to_string());
+    let mut docx_mime = false;
     // Pastoral visits have their own upload: everything added there is one.
     let mut pastoral = false;
     while let Some(field) = mp.next_field().await.map_err(|_| ApiError::bad("The upload could not be read."))? {
         match field.name().unwrap_or_default() {
             "file" => {
                 file_name = field.file_name().unwrap_or("lesson.pdf").to_string();
+                docx_mime = field.content_type() == Some(docx::content_type("document.docx"));
                 file = Some(field.bytes().await.map_err(|_| ApiError::bad("The upload could not be read; the file may be too large."))?.to_vec());
             }
             "pages" => {
-                let raw = field.text().await.map_err(|_| ApiError::bad("Extracted text could not be read."))?;
-                pages = serde_json::from_str(&raw).map_err(|_| ApiError::bad("Extracted text is malformed."))?;
+                raw_pages = Some(field.text().await.map_err(|_| ApiError::bad("Extracted text could not be read."))?);
             }
             "source_kind" => source_kind = field.text().await.unwrap_or_default(),
             "category" => pastoral = field.text().await.unwrap_or_default() == "pastoral",
             _ => {}
         }
     }
-    let file = file.ok_or_else(|| ApiError::bad("No PDF was provided."))?;
+    let file = file.ok_or_else(|| ApiError::bad("No PDF or DOCX document was provided."))?;
     if file.len() > MAX_PDF {
-        return Err(ApiError(StatusCode::PAYLOAD_TOO_LARGE, "PDFs are limited to 64 MB.".into()));
+        return Err(ApiError(StatusCode::PAYLOAD_TOO_LARGE, "PDF and DOCX files are limited to 64 MB.".into()));
     }
-    if !file.starts_with(b"%PDF-") {
-        return Err(ApiError(StatusCode::UNSUPPORTED_MEDIA_TYPE, "That file is not a PDF.".into()));
-    }
-    if source_kind != "ocr" {
-        source_kind = "text".into();
-    }
-    let safe_name: String = std::path::Path::new(&file_name.replace('\\', "/"))
+    let mut safe_name: String = std::path::Path::new(&file_name.replace('\\', "/"))
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "lesson.pdf".into());
+    // A MIME-identified Word file still needs its format on the saved filename,
+    // since the reader and older backup manifests determine format from it.
+    if docx_mime && docx::format_from_name(&safe_name) != "docx" { safe_name.push_str(".docx"); }
+    let pages;
+    if docx::format_from_name(&safe_name) == "docx" {
+        let input = file.clone();
+        pages = tokio::task::spawn_blocking(move || docx::extract(&input))
+            .await
+            .map_err(|_| ApiError::bad("This DOCX could not be read."))?
+            .map_err(|message| ApiError(StatusCode::UNSUPPORTED_MEDIA_TYPE, message))?;
+        source_kind = "text".into();
+    } else if safe_name.to_ascii_lowercase().ends_with(".doc") {
+        return Err(ApiError(StatusCode::UNSUPPORTED_MEDIA_TYPE, "Legacy .doc files are not supported. Save the document as .docx or PDF first.".into()));
+    } else if !file.starts_with(b"%PDF-") {
+        return Err(ApiError(StatusCode::UNSUPPORTED_MEDIA_TYPE, "That file is not a PDF or DOCX document.".into()));
+    } else {
+        pages = serde_json::from_str(raw_pages.as_deref().unwrap_or("[]")).map_err(|_| ApiError::bad("Extracted text is malformed."))?;
+        if source_kind != "ocr" { source_kind = "text".into(); }
+    }
     let sha = sha_hex(&file);
     let mut parsed = parser::parse(&pages, &safe_name);
     if pastoral {
@@ -216,45 +232,55 @@ async fn upload_lesson(State(s): State<S>, u: User, mut mp: Multipart) -> ApiRes
         .await
         .ok()
         .and_then(|written| written.ok())
-        .ok_or_else(|| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Could not store the PDF.".into()))?;
+        .ok_or_else(|| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Could not store the document.".into()))?;
 
     let (id2, uid, page_count) = (id.clone(), u.id.clone(), pages.len() as i64);
     let result = with_db(&s, move |c| {
         let dup: Option<String> = c.query_row("SELECT title FROM lessons WHERE user_id = ?1 AND sha256 = ?2", params![uid, sha], |r| r.get(0)).optional()?;
         if let Some(title) = dup {
-            return Err(ApiError(StatusCode::CONFLICT, format!("This PDF is already in your vault as \"{title}\".")));
+            return Err(ApiError(StatusCode::CONFLICT, format!("This {} is already in your vault as \"{title}\".", if docx::format_from_name(&safe_name) == "docx" { "DOCX" } else { "PDF" })));
         }
         let tx = c.transaction()?;
         let ts = now();
         tx.execute(
-            "INSERT INTO lessons (id,user_id,title,category,language,lesson_date,date_label,year,location,author,code,file_name,sha256,byte_size,page_count,source_kind,content,issue,objectives,created_at,needs_check,outline)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,1,?21)",
-            params![id2, uid, parsed.title, parsed.category, parsed.language, parsed.lesson_date, parsed.date_label, parsed.year, parsed.location, parsed.author, parsed.code, safe_name, sha, byte_size, page_count, source_kind, parsed.content, parsed.issue, json!(parsed.objectives).to_string(), ts, json!(parsed.outline).to_string()],
+            "INSERT INTO lessons (id,user_id,title,category,language,lesson_date,date_label,year,location,author,code,file_name,sha256,byte_size,page_count,source_kind,content,issue,objectives,created_at,needs_check,outline,local_congregation,district)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,1,?21,?22,?23)",
+            params![id2, uid, parsed.title, parsed.category, parsed.language, parsed.lesson_date, parsed.date_label, parsed.year, parsed.location, parsed.author, parsed.code, safe_name, sha, byte_size, page_count, source_kind, parsed.content, parsed.issue, json!(parsed.objectives).to_string(), ts, json!(parsed.outline).to_string(), parsed.local_congregation, parsed.district],
         )?;
         for (ordinal, v) in parsed.verses.iter().enumerate() {
+            // Compare only with records that existed before this PDF. Different
+            // translations are shown too, labelled so the user can decide.
+            let candidates = if parsed.category == "pastoral" {
+                matching_library_verses(&tx, &uid, &id2, &v.canonical_key, &v.language)?
+            } else { Vec::new() };
             let existing: Option<String> = tx
                 .query_row(
-                    "SELECT id FROM verses WHERE user_id=?1 AND canonical_key=?2 AND version=?3 AND language=?4 AND ocr_raw=?5",
+                    "SELECT id FROM verses WHERE user_id=?1 AND canonical_key=?2 AND (version=?3 OR (?3='T4T' AND upper(trim(version)) IN ('TAT','T4T'))) AND language=?4 AND ocr_raw=?5",
                     params![uid, v.canonical_key, v.version, v.language, v.raw],
                     |r| r.get(0),
                 )
                 .optional()?;
-            let verse_id = match existing {
+            let verse_id = match existing.filter(|_| candidates.is_empty()) {
                 Some(e) => e,
                 None => {
                     let vid = new_id();
                     tx.execute(
-                        "INSERT INTO verses (id,user_id,canonical_key,book_id,ref_printed,ref_en,ref_tl,version,language,text,text_sha256,ocr_raw,status,created_at)
-                         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,'unverified',?13)",
-                        params![vid, uid, v.canonical_key, v.book_id, v.ref_printed, v.ref_en, v.ref_tl, v.version, v.language, v.text, sha_hex(v.text.as_bytes()), v.raw, ts],
+                        "INSERT INTO verses (id,user_id,canonical_key,book_id,ref_printed,ref_en,ref_tl,version,language,text,text_sha256,ocr_raw,status,created_at,extraction_id)
+                         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,'unverified',?13,?14)",
+                        params![vid, uid, v.canonical_key, v.book_id, v.ref_printed, v.ref_en, v.ref_tl, v.version, v.language, v.text, sha_hex(v.text.as_bytes()), v.raw, ts, if candidates.is_empty() { String::new() } else { new_id() }],
                     )?;
                     vid
                 }
             };
+            let link_id = new_id();
             tx.execute(
                 "INSERT INTO lesson_verses (id,user_id,lesson_id,verse_id,page,ordinal,section,question) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
-                params![new_id(), uid, id2, verse_id, v.page, ordinal as i64, v.section, v.question],
+                params![link_id, uid, id2, verse_id, v.page, ordinal as i64, v.section, v.question],
             )?;
+            if !candidates.is_empty() {
+                tx.execute("INSERT INTO lesson_verse_comparisons (id,user_id,lesson_verse_id,candidates,pdf_reading) VALUES (?1,?2,?3,?4,?5)",
+                    params![new_id(), uid, link_id, json!(candidates).to_string(), json!({"text":v.text,"ocr_raw":v.raw,"reference":v.ref_printed,"version":v.version,"language":v.language}).to_string()])?;
+            }
         }
         reconcile_with_pair(&tx, &uid, &id2)?;
         tx.commit()?;
@@ -328,6 +354,8 @@ struct LessonPatch {
     language: Option<String>,
     lesson_date: Option<String>,
     location: Option<String>,
+    local_congregation: Option<String>,
+    district: Option<String>,
     author: Option<String>,
     folder_id: Option<String>,
     issue: Option<String>,
@@ -336,7 +364,97 @@ struct LessonPatch {
     checked: Option<bool>,
 }
 
+/// Refile a PDF without changing the PDF, its metadata, or any scripture wording.
+/// A shared verse gets a separate source record when the destination library needs one;
+/// imported originals and references from other lessons or saved lectures stay intact.
+fn move_lesson_category(c: &Connection, user_id: &str, lesson_id: &str, category: &str) -> ApiResult<()> {
+    if !["midweek", "weekend", "pastoral"].contains(&category) {
+        return Err(ApiError::bad("Choose Midweek, Weekend, or Pastoral Visits."));
+    }
+    let previous: Option<String> = c.query_row(
+        "SELECT category FROM lessons WHERE id=?1 AND user_id=?2",
+        params![lesson_id, user_id], |r| r.get(0),
+    ).optional()?;
+    let previous = previous.ok_or_else(ApiError::not_found)?;
+    if previous == category {
+        return Ok(());
+    }
+    let pastoral = category == "pastoral";
+    let crosses_library = (previous == "pastoral") != pastoral;
+    if crosses_library {
+        let records: Vec<(String, bool)> = {
+            let mut st = c.prepare(
+                "SELECT DISTINCT v.id, CASE WHEN ?3 THEN
+                   v.import_source='' AND EXISTS (
+                     SELECT 1 FROM lesson_verses other JOIN lessons l ON l.id=other.lesson_id
+                     WHERE other.verse_id=v.id AND other.user_id=?1 AND other.lesson_id<>?2 AND l.category<>'pastoral')
+                 ELSE v.import_source<>'' OR (
+                   EXISTS (SELECT 1 FROM lesson_verses other JOIN lessons l ON l.id=other.lesson_id
+                     WHERE other.verse_id=v.id AND other.user_id=?1 AND other.lesson_id<>?2 AND l.category='pastoral')
+                   AND NOT EXISTS (SELECT 1 FROM lesson_verses other JOIN lessons l ON l.id=other.lesson_id
+                     WHERE other.verse_id=v.id AND other.user_id=?1 AND other.lesson_id<>?2 AND l.category<>'pastoral')) END
+                 FROM lesson_verses lv JOIN verses v ON v.id=lv.verse_id
+                 WHERE lv.user_id=?1 AND lv.lesson_id=?2 AND v.user_id=?1",
+            )?;
+            let rows = st.query_map(params![user_id, lesson_id, pastoral], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        for (original, needs_own_record) in records {
+            if !needs_own_record { continue; }
+            let copied = new_id();
+            c.execute(
+                "INSERT INTO verses (id,user_id,canonical_key,book_id,ref_printed,ref_en,ref_tl,version,language,text,text_sha256,ocr_raw,status,ref_note,verified_at,created_at,import_source,extraction_id)
+                 SELECT ?1,user_id,canonical_key,book_id,ref_printed,ref_en,ref_tl,version,language,text,text_sha256,ocr_raw,status,ref_note,verified_at,created_at,'',?1
+                 FROM verses WHERE id=?2 AND user_id=?3",
+                params![copied, original, user_id],
+            )?;
+            c.execute("UPDATE lesson_verses SET verse_id=?1 WHERE user_id=?2 AND lesson_id=?3 AND verse_id=?4",
+                params![copied, user_id, lesson_id, original])?;
+        }
+        // A decision belongs to the library in which the PDF was checked. It cannot
+        // silently carry over after reclassification; candidates are read again below.
+        c.execute("DELETE FROM lesson_verse_comparisons WHERE user_id=?1 AND lesson_verse_id IN
+            (SELECT id FROM lesson_verses WHERE lesson_id=?2 AND user_id=?1)", params![user_id, lesson_id])?;
+    }
+    c.execute("UPDATE lessons SET category=?1, needs_check=CASE WHEN ?2 THEN 1 ELSE needs_check END WHERE id=?3 AND user_id=?4",
+        params![category, crosses_library, lesson_id, user_id])?;
+    if crosses_library && pastoral {
+        let links: Vec<(String, String, String, String, String, String, String)> = {
+            let mut st = c.prepare("SELECT lv.id,v.canonical_key,v.language,v.text,v.ocr_raw,v.ref_printed,v.version
+                FROM lesson_verses lv JOIN verses v ON v.id=lv.verse_id
+                WHERE lv.user_id=?1 AND lv.lesson_id=?2 ORDER BY lv.ordinal")?;
+            let rows = st.query_map(params![user_id, lesson_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?)))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        for (link, key, language, text, raw, reference, version) in links {
+            let candidates = matching_library_verses(c, user_id, lesson_id, &key, &language)?;
+            if !candidates.is_empty() {
+                c.execute("INSERT INTO lesson_verse_comparisons (id,user_id,lesson_verse_id,candidates,pdf_reading) VALUES (?1,?2,?3,?4,?5)",
+                    params![new_id(), user_id, link, json!(candidates).to_string(), json!({"text":text,"ocr_raw":raw,"reference":reference,"version":version,"language":language}).to_string()])?;
+            }
+        }
+    }
+    Ok(())
+}
+
+#[derive(Deserialize)]
+struct MoveLessonBody {
+    category: String,
+}
+
+async fn move_lesson(State(s): State<S>, u: User, Path(id): Path<String>, Json(b): Json<MoveLessonBody>) -> ApiResult<Json<Value>> {
+    let row = with_db(&s, move |c| {
+        let tx = c.transaction()?;
+        move_lesson_category(&tx, &u.id, &id, &b.category)?;
+        tx.commit()?;
+        Ok(lessons_for(c, &u.id)?.into_iter().find(|l| l["id"] == id).ok_or_else(ApiError::not_found)?)
+    }).await?;
+    semantic::kick(s.clone());
+    Ok(Json(row))
+}
+
 async fn patch_lesson(State(s): State<S>, u: User, Path(id): Path<String>, Json(b): Json<LessonPatch>) -> ApiResult<Json<Value>> {
+    let category_changed = b.category.is_some();
     if let Some(t) = &b.title {
         if t.trim().is_empty() {
             return Err(ApiError::bad("Title cannot be empty."));
@@ -365,9 +483,15 @@ async fn patch_lesson(State(s): State<S>, u: User, Path(id): Path<String>, Json(
         }
         let tx = c.transaction()?;
         if let Some(v) = b.title { tx.execute("UPDATE lessons SET title=?1 WHERE id=?2", params![v.trim(), id])?; }
-        if let Some(v) = b.category { tx.execute("UPDATE lessons SET category=?1 WHERE id=?2", params![v, id])?; }
+        if let Some(v) = b.category { move_lesson_category(&tx, &u.id, &id, &v)?; }
         if let Some(v) = b.language { tx.execute("UPDATE lessons SET language=?1 WHERE id=?2", params![v, id])?; }
         if let Some(v) = b.location { tx.execute("UPDATE lessons SET location=?1 WHERE id=?2", params![v.trim(), id])?; }
+        let location_changed = b.local_congregation.is_some() || b.district.is_some();
+        if let Some(v) = b.local_congregation { tx.execute("UPDATE lessons SET local_congregation=?1 WHERE id=?2", params![v.trim(), id])?; }
+        if let Some(v) = b.district { tx.execute("UPDATE lessons SET district=?1 WHERE id=?2", params![v.trim(), id])?; }
+        if location_changed {
+            tx.execute("UPDATE lessons SET location=trim(local_congregation || CASE WHEN local_congregation<>'' AND district<>'' THEN ', ' ELSE '' END || district) WHERE id=?1 AND category='pastoral'", [&id])?;
+        }
         if let Some(v) = b.author { tx.execute("UPDATE lessons SET author=?1 WHERE id=?2", params![v.trim(), id])?; }
         if let Some(v) = b.issue { tx.execute("UPDATE lessons SET issue=?1 WHERE id=?2", params![v.trim(), id])?; }
         if let Some(v) = b.objectives {
@@ -390,12 +514,16 @@ async fn patch_lesson(State(s): State<S>, u: User, Path(id): Path<String>, Json(
             tx.execute("UPDATE lessons SET folder_id=?1 WHERE id=?2", params![f, id])?;
         }
         if let Some(v) = b.checked {
+            if v && pending_comparisons(&tx, &u.id, &id)? > 0 {
+                return Err(ApiError::new(StatusCode::CONFLICT, "Compare the matching verses and choose whether to use the existing verse or keep both before confirming."));
+            }
             tx.execute("UPDATE lessons SET needs_check=?1 WHERE id=?2", params![!v as i64, id])?;
         }
         tx.commit()?;
         Ok(c.query_row(&format!("SELECT {LESSON_COLS} FROM lessons l WHERE l.id = ?1"), [&id], lesson_row)?)
     })
     .await?;
+    if category_changed { semantic::kick(s.clone()); }
     Ok(Json(row))
 }
 
@@ -438,6 +566,78 @@ async fn remove_lesson_verse(State(s): State<S>, u: User, Path((id, verse_id)): 
     .await
 }
 
+fn matching_library_verses(c: &Connection, user_id: &str, lesson_id: &str, key: &str, language: &str) -> rusqlite::Result<Vec<String>> {
+    let mut st = c.prepare(
+        "SELECT v.id FROM verses v WHERE v.user_id=?1 AND v.canonical_key=?2 AND v.language=?3
+         AND (v.import_source<>'' OR NOT EXISTS (
+           SELECT 1 FROM lesson_verses lv JOIN lessons l ON l.id=lv.lesson_id WHERE lv.verse_id=v.id AND l.category<>'pastoral'))
+         AND NOT EXISTS (SELECT 1 FROM lesson_verses lv WHERE lv.verse_id=v.id AND lv.lesson_id=?4)
+         ORDER BY v.status='verified' DESC, v.seq")?;
+    let rows = st.query_map(params![user_id, key, language, lesson_id], |r| r.get(0))?;
+    rows.collect()
+}
+
+fn pending_comparisons(c: &Connection, user_id: &str, lesson_id: &str) -> rusqlite::Result<i64> {
+    c.query_row("SELECT count(*) FROM lesson_verse_comparisons cp JOIN lesson_verses lv ON lv.id=cp.lesson_verse_id
+        WHERE cp.user_id=?1 AND lv.lesson_id=?2 AND cp.decision=''", params![user_id, lesson_id], |r| r.get(0))
+}
+
+fn comparisons_for(c: &Connection, user_id: &str, lesson_id: &str) -> ApiResult<Value> {
+    let exists: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM lessons WHERE id=?1 AND user_id=?2)", params![lesson_id,user_id], |r| r.get(0))?;
+    if !exists { return Err(ApiError::not_found()) }
+    let verses = verses_for(c, user_id)?;
+    let mut st = c.prepare("SELECT cp.id,lv.verse_id,lv.page,cp.candidates,cp.decision,cp.resolved_at,cp.pdf_reading
+        FROM lesson_verse_comparisons cp JOIN lesson_verses lv ON lv.id=cp.lesson_verse_id
+        WHERE cp.user_id=?1 AND lv.lesson_id=?2 ORDER BY lv.ordinal")?;
+    let rows = st.query_map(params![user_id,lesson_id], |r| {
+        let ids: Vec<String> = serde_json::from_str(&r.get::<_,String>(3)?).unwrap_or_default();
+        let candidates: Vec<&Value> = verses.iter().filter(|v| ids.iter().any(|id| v["id"]==id.as_str())).collect();
+        Ok(json!({"id":r.get::<_,String>(0)?,"verse_id":r.get::<_,String>(1)?,"page":r.get::<_,i64>(2)?,
+            "candidates":candidates,"decision":r.get::<_,String>(4)?,"resolved_at":r.get::<_,Option<String>>(5)?,
+            "pdf_reading":serde_json::from_str::<Value>(&r.get::<_,String>(6)?).unwrap_or(json!({}))}))
+    })?;
+    Ok(json!(rows.collect::<Result<Vec<_>,_>>()?))
+}
+
+async fn list_verse_comparisons(State(s): State<S>, u: User, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    with_db(&s, move |c| comparisons_for(c, &u.id, &id)).await.map(Json)
+}
+
+#[derive(Deserialize)]
+struct ComparisonDecision {
+    decision: String,
+    verse_id: Option<String>,
+}
+
+async fn resolve_verse_comparison(State(s): State<S>, u: User, Path((lesson_id,id)): Path<(String,String)>, Json(b): Json<ComparisonDecision>) -> ApiResult<Json<Value>> {
+    if !["existing","both"].contains(&b.decision.as_str()) { return Err(ApiError::bad("Choose the existing verse or keep both.")) }
+    let row = with_db(&s, move |c| {
+        let tx = c.transaction()?;
+        let comparison: Option<(String,String,String,String)> = tx.query_row(
+            "SELECT cp.lesson_verse_id,lv.verse_id,cp.candidates,cp.decision FROM lesson_verse_comparisons cp
+             JOIN lesson_verses lv ON lv.id=cp.lesson_verse_id WHERE cp.id=?1 AND cp.user_id=?2 AND lv.lesson_id=?3",
+             params![id,u.id,lesson_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?;
+        let (link_id,pdf_verse,candidate_ids,decision) = comparison.ok_or_else(ApiError::not_found)?;
+        if !decision.is_empty() { return Err(ApiError::new(StatusCode::CONFLICT,"This comparison has already been completed.")) }
+        if b.decision == "existing" {
+            let candidate = b.verse_id.ok_or_else(||ApiError::bad("Choose the existing verse to use."))?;
+            let ids: Vec<String> = serde_json::from_str(&candidate_ids).unwrap_or_default();
+            if !ids.contains(&candidate) { return Err(ApiError::bad("That verse is not a match for this reading.")) }
+            let matches: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM verses a JOIN verses b
+                ON a.user_id=b.user_id AND a.canonical_key=b.canonical_key AND a.language=b.language
+                WHERE a.id=?1 AND b.id=?2 AND a.user_id=?3)",params![pdf_verse,candidate,u.id],|r|r.get(0))?;
+            if !matches { return Err(ApiError::bad("The reference or language has changed. Keep both and check the corrected reading.")) }
+            tx.execute("UPDATE lesson_verses SET verse_id=?1 WHERE id=?2",params![candidate,link_id])?;
+        }
+        tx.execute("UPDATE lesson_verse_comparisons SET decision=?1,resolved_at=?2 WHERE id=?3",params![b.decision,now(),id])?;
+        remove_uncited_scans(&tx,&u.id)?;
+        tx.commit()?;
+        comparisons_for(c,&u.id,&lesson_id)
+    }).await?;
+    semantic::kick(s.clone());
+    Ok(Json(row))
+}
+
 #[derive(Deserialize)]
 struct FileQuery {
     download: Option<u8>,
@@ -460,7 +660,7 @@ async fn lesson_file(State(s): State<S>, u: User, Path(id): Path<String>, Query(
     let ascii: String = name.chars().map(|c| if c.is_ascii_alphanumeric() || "._- ".contains(c) { c } else { '_' }).collect();
     let disposition = format!("{}; filename=\"{ascii}\"", if q.download == Some(1) { "attachment" } else { "inline" });
     Response::builder()
-        .header(header::CONTENT_TYPE, "application/pdf")
+        .header(header::CONTENT_TYPE, docx::content_type(&name))
         .header(header::CONTENT_DISPOSITION, disposition)
         .body(Body::from(bytes))
         .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Could not send file.".into()))
@@ -472,20 +672,7 @@ struct SearchQuery {
 }
 
 async fn search(State(s): State<S>, u: User, Query(q): Query<SearchQuery>) -> ApiResult<Json<Value>> {
-    let terms: Vec<String> = q.q.split(|c: char| !c.is_alphanumeric() && c != '-').map(|w| w.trim_matches('-').to_lowercase()).filter(|w| !w.is_empty()).take(16).collect();
-    if terms.is_empty() {
-        return Ok(Json(json!({ "lesson_ids": [] })));
-    }
-    let query = ai::fts_query(&terms, "AND");
-    let ids = with_db(&s, move |c| {
-        let mut st = c.prepare(
-            "SELECT l.id FROM lessons_fts JOIN lessons l ON l.seq = lessons_fts.rowid
-             WHERE lessons_fts MATCH ?1 AND l.user_id = ?2 ORDER BY bm25(lessons_fts) LIMIT 200",
-        )?;
-        let rows = st.query_map(params![query, u.id], |r| r.get::<_, String>(0))?;
-        Ok(rows.collect::<Result<Vec<_>, _>>()?)
-    })
-    .await?;
+    let ids = with_db(&s, move |c| Ok(crate::search::lesson_ids(c, &u.id, &q.q)?)).await?;
     Ok(Json(json!({ "lesson_ids": ids })))
 }
 
@@ -540,13 +727,13 @@ async fn delete_folder(State(s): State<S>, u: User, Path(id): Path<String>) -> A
 fn verses_for(c: &Connection, user_id: &str) -> rusqlite::Result<Vec<Value>> {
     let mut sources: HashMap<String, Vec<Value>> = HashMap::new();
     {
-        let mut st = c.prepare("SELECT lv.verse_id, lv.lesson_id, lv.page, lv.section, lv.question, l.category = 'pastoral' FROM lesson_verses lv JOIN lessons l ON l.id = lv.lesson_id WHERE lv.user_id=?1 ORDER BY lv.ordinal")?;
-        for row in st.query_map([user_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, i64>(3)?, r.get::<_, String>(4)?, r.get::<_, bool>(5)?)))? {
-            let (v, l, p, section, question, pastoral) = row?;
+        let mut st = c.prepare("SELECT lv.verse_id, lv.lesson_id, lv.page, lv.section, lv.question, l.category = 'pastoral', l.lesson_date FROM lesson_verses lv JOIN lessons l ON l.id = lv.lesson_id WHERE lv.user_id=?1 ORDER BY lv.ordinal")?;
+        for row in st.query_map([user_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, i64>(3)?, r.get::<_, String>(4)?, r.get::<_, bool>(5)?, r.get::<_, Option<String>>(6)?)))? {
+            let (v, l, p, section, question, pastoral, lesson_date) = row?;
             let list = sources.entry(v).or_default();
             // Printed twice in one lesson, it is listed once, where it first appears.
             if !list.iter().any(|x| x["lesson_id"] == l.as_str()) {
-                list.push(json!({ "lesson_id": l, "page": p, "section": section, "question": question, "pastoral": pastoral }));
+                list.push(json!({ "lesson_id": l, "page": p, "section": section, "question": question, "pastoral": pastoral, "lesson_date": lesson_date }));
             }
         }
     }
@@ -558,7 +745,7 @@ fn verses_for(c: &Connection, user_id: &str) -> rusqlite::Result<Vec<Value>> {
         Ok(json!({
             "id": r.get::<_, String>(0)?, "canonical_key": r.get::<_, String>(1)?, "book_id": r.get::<_, i64>(2)?,
             "ref_printed": r.get::<_, String>(3)?, "ref_en": r.get::<_, String>(4)?, "ref_tl": r.get::<_, String>(5)?,
-            "version": r.get::<_, String>(6)?, "language": r.get::<_, String>(7)?, "text": r.get::<_, String>(8)?,
+            "version": parser::correct_version_code(&r.get::<_, String>(6)?), "language": r.get::<_, String>(7)?, "text": r.get::<_, String>(8)?,
             "ocr_raw": r.get::<_, String>(9)?, "status": r.get::<_, String>(10)?, "verified_at": r.get::<_, Option<String>>(11)?,
             "ref_note": r.get::<_, String>(12)?, "import_source": r.get::<_, String>(13)?,
         }))
@@ -663,7 +850,7 @@ fn import_verse(c: &Connection, user_id: &str, v: &verse_import::ImportVerse, so
 
 fn verse_in_vault(c: &Connection, user_id: &str, v: &verse_import::ImportVerse) -> rusqlite::Result<bool> {
     c.query_row(
-        "SELECT EXISTS(SELECT 1 FROM verses WHERE user_id=?1 AND canonical_key=?2 AND version=?3 AND language=?4 AND (ocr_raw=?5 OR text=?6))",
+        "SELECT EXISTS(SELECT 1 FROM verses WHERE user_id=?1 AND canonical_key=?2 AND (version=?3 OR (?3='T4T' AND upper(trim(version)) IN ('TAT','T4T'))) AND language=?4 AND (ocr_raw=?5 OR text=?6))",
         params![user_id, v.canonical_key, v.version, v.language, v.raw, v.text],
         |r| r.get(0),
     )
@@ -677,8 +864,8 @@ fn row_in_vault(c: &Connection, user_id: &str, translation: &str, chapter: &str,
         None => (String::new(), String::new()),
     };
     c.query_row(
-        "SELECT EXISTS(SELECT 1 FROM verses WHERE user_id=?1 AND version=?2 AND (ocr_raw=?3 OR (text=?4 AND canonical_key LIKE ?5)))",
-        params![user_id, translation, content, text, reference],
+        "SELECT EXISTS(SELECT 1 FROM verses WHERE user_id=?1 AND (version=?2 OR (?2='T4T' AND upper(trim(version)) IN ('TAT','T4T'))) AND (ocr_raw=?3 OR (text=?4 AND canonical_key LIKE ?5)))",
+        params![user_id, parser::correct_version_code(translation), content, text, reference],
         |r| r.get(0),
     )
 }
@@ -763,7 +950,7 @@ fn rows_to_fix(c: &Connection, user_id: &str) -> rusqlite::Result<Vec<Value>> {
         let book: String = r.get(4)?;
         Ok(json!({
             "id": r.get::<_, String>(0)?, "source": r.get::<_, String>(1)?, "row": r.get::<_, i64>(2)?,
-            "translation": r.get::<_, String>(3)?, "chapter": r.get::<_, String>(5)?, "verse": r.get::<_, String>(6)?,
+            "translation": parser::correct_version_code(&r.get::<_, String>(3)?), "chapter": r.get::<_, String>(5)?, "verse": r.get::<_, String>(6)?,
             "content": r.get::<_, String>(7)?, "message": r.get::<_, String>(8)?,
             "choices": verse_import::book_choices(&book), "book": book,
         }))
@@ -1037,9 +1224,16 @@ fn valid_scope(scope: &str) -> bool {
 fn tagalog_for(c: &Connection, user_id: &str) -> rusqlite::Result<serde_json::Map<String, Value>> {
     let mut st = c.prepare("SELECT item, text, reviewed_at FROM context_tagalog WHERE user_id=?1")?;
     let rows = st.query_map([user_id], |r| {
-        Ok((r.get::<_, String>(0)?, json!({ "text": r.get::<_, String>(1)?, "reviewed": r.get::<_, Option<String>>(2)?.is_some() })))
+        let reviewed = r.get::<_, Option<String>>(2)?.is_some();
+        let text = shown_tagalog(r.get(1)?, reviewed);
+        Ok((r.get::<_, String>(0)?, json!({ "text": text, "reviewed": reviewed })))
     })?;
     rows.collect()
+}
+
+/// Old AI translations also use the current book names, without overwriting a review.
+fn shown_tagalog(text: String, reviewed: bool) -> String {
+    if reviewed { text } else { ai::canonical_tagalog_book_names(&text) }
 }
 
 /// The English this item's Tagalog translates. Empty when there is none yet.
@@ -1427,7 +1621,10 @@ async fn export_lecture(State(s): State<S>, u: User, Json(b): Json<ExportBody>) 
                 c.query_row(
                     "SELECT text, reviewed_at IS NOT NULL FROM context_tagalog WHERE user_id=?1 AND item=?2",
                     params![u.id, item],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
+                    |r| {
+                        let reviewed = r.get(1)?;
+                        Ok((shown_tagalog(r.get(0)?, reviewed), reviewed))
+                    },
                 )
                 .optional()?
             } else {
@@ -1469,7 +1666,7 @@ async fn export_lecture(State(s): State<S>, u: User, Json(b): Json<ExportBody>) 
             items.push(export::Item {
                 objective: b.verse_objectives.get(i).map_or(String::new(), |o| o.trim().to_string()),
                 reference,
-                version,
+                version: parser::correct_version_code(&version),
                 text,
                 speaker: speaker.0,
                 verse_note: verse_note.0,
@@ -1613,8 +1810,11 @@ pub fn router(state: S) -> Router {
         .route("/health", get(health))
         .route("/lessons", get(list_lessons).post(upload_lesson).layer(DefaultBodyLimit::max(MAX_PDF + 32 * 1024 * 1024)))
         .route("/lessons/{id}", axum::routing::patch(patch_lesson).delete(delete_lesson))
+        .route("/lessons/{id}/move", post(move_lesson))
         .route("/lessons/{id}/file", get(lesson_file))
         .route("/lessons/{id}/verses/{verse_id}", axum::routing::delete(remove_lesson_verse))
+        .route("/lessons/{id}/verse-comparisons", get(list_verse_comparisons))
+        .route("/lessons/{id}/verse-comparisons/{comparison_id}", post(resolve_verse_comparison))
         .route("/search", get(search))
         .route("/search/meaning", get(search_meaning))
         .route("/status", get(status))
@@ -1651,6 +1851,168 @@ pub fn router(state: S) -> Router {
 #[cfg(test)]
 mod tests {
     use super::request_is_from_this_app as allowed;
+
+    fn move_fixture() -> rusqlite::Connection {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::init(&c).unwrap();
+        c.execute_batch(
+            "INSERT INTO users VALUES ('u','a@b.c','','now'),('other','c@d.e','','now');
+             INSERT INTO lessons (id,user_id,title,category,language,lesson_date,year,location,local_congregation,district,file_name,sha256,byte_size,page_count,source_kind,content,issue,objectives,created_at)
+             VALUES ('p','u','Sample Watchmen','pastoral','tl','2026-11-08',2026,'Sample Local, Sample District','Sample Local','Sample District','visit.pdf','p-hash',123,2,'text','Original PDF content','Sample issue','[\"Sample objective\"]','now'),
+                    ('p2','u','Another Visit','pastoral','tl','2026-11-09',2026,'','','','visit2.pdf','p2-hash',124,1,'text','Other PDF content','','[]','now'),
+                    ('w','u','Sample Worship','weekend','en','2026-11-08',2026,'','','','lesson.pdf','w-hash',125,1,'text','Worship PDF content','','[]','now');
+             INSERT INTO lectures VALUES ('lecture','u','Saved outline','','','now','now');",
+        ).unwrap();
+        c
+    }
+
+    #[test]
+    fn moving_an_imported_pastoral_usage_preserves_its_original_and_saved_lecture() {
+        let mut c = move_fixture();
+        c.execute_batch(
+            "INSERT INTO verses (id,user_id,canonical_key,book_id,ref_printed,ref_en,ref_tl,version,language,text,text_sha256,ocr_raw,status,verified_at,created_at,import_source)
+             VALUES ('sheet','u','1.6:8',1,'Genesis 6:8','Genesis 6:8','Genesis 6:8','T4T','tl','Ang mga bantay ay handa.','text-hash','8Ang mga bantay ay handa.','verified','checked','now','Sample.xlsx, row 2');
+             INSERT INTO lesson_verses (id,user_id,lesson_id,verse_id,page,ordinal,section,question) VALUES
+             ('link-p','u','p','sheet',2,0,1,'A sample question'),('link-p2','u','p2','sheet',1,0,-1,'');
+             INSERT INTO lecture_verses VALUES ('saved-link','u','lecture','sheet',0,'');
+             INSERT INTO lesson_verse_comparisons (id,user_id,lesson_verse_id,candidates,pdf_reading,decision) VALUES ('old-choice','u','link-p','[]','{}','existing');",
+        ).unwrap();
+        let tx = c.transaction().unwrap();
+        super::move_lesson_category(&tx, "u", "p", "weekend").map_err(|e| e.message().to_string()).unwrap();
+        tx.commit().unwrap();
+        let copied: String = c.query_row("SELECT verse_id FROM lesson_verses WHERE id='link-p'", [], |r| r.get(0)).unwrap();
+        assert_ne!(copied, "sheet");
+        let original = super::verses_for(&c, "u").unwrap().into_iter().find(|v| v["id"] == "sheet").unwrap();
+        let source = super::verses_for(&c, "u").unwrap().into_iter().find(|v| v["id"] == copied).unwrap();
+        for field in ["canonical_key", "text", "ocr_raw", "version", "status", "verified_at", "language"] {
+            assert_eq!(source[field], original[field], "moving never rewrites {field}");
+        }
+        assert_eq!(source["import_source"], "");
+        assert_eq!(original["import_source"], "Sample.xlsx, row 2");
+        assert_eq!(source["sources"][0]["pastoral"], false);
+        assert_eq!(original["sources"].as_array().unwrap().len(), 1);
+        assert_eq!(original["sources"][0]["lesson_id"], "p2");
+        assert_eq!(source["sources"][0]["page"], 2);
+        assert_eq!(source["sources"][0]["section"], 1);
+        assert_eq!(source["sources"][0]["question"], "A sample question");
+        assert_eq!(source["sources"][0]["lesson_date"], "2026-11-08");
+        let saved: String = c.query_row("SELECT verse_id FROM lecture_verses WHERE id='saved-link'", [], |r| r.get(0)).unwrap();
+        assert_eq!(saved, "sheet");
+        let metadata: (String, String, String, String, String, bool) = c.query_row(
+            "SELECT category,file_name,content,local_congregation,district,needs_check FROM lessons WHERE id='p'", [],
+            |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?)),
+        ).unwrap();
+        assert_eq!(metadata, ("weekend".into(),"visit.pdf".into(),"Original PDF content".into(),"Sample Local".into(),"Sample District".into(),true));
+        assert_eq!(super::pending_comparisons(&c, "u", "p").unwrap(), 0);
+        assert!(c.execute("UPDATE verses SET text='changed' WHERE id=?1", [&copied]).is_err(), "verified copies remain locked");
+
+        let tx = c.transaction().unwrap();
+        super::move_lesson_category(&tx, "u", "p", "pastoral").map_err(|e| e.message().to_string()).unwrap();
+        tx.commit().unwrap();
+        assert_eq!(super::pending_comparisons(&c, "u", "p").unwrap(), 1, "the returned visit compares again with the existing imported record");
+        let linked: String = c.query_row("SELECT verse_id FROM lesson_verses WHERE id='link-p'", [], |r| r.get(0)).unwrap();
+        assert_eq!(linked, copied, "moving an unshared PDF reading keeps its identity");
+    }
+
+    #[test]
+    fn moving_a_shared_worship_verse_to_pastoral_keeps_the_other_lessons_record() {
+        let mut c = move_fixture();
+        c.execute_batch(
+            "UPDATE lessons SET category='midweek' WHERE id='p';
+             INSERT INTO verses (id,user_id,canonical_key,book_id,ref_printed,ref_en,ref_tl,version,language,text,text_sha256,ocr_raw,status,created_at)
+             VALUES ('shared','u','1.6:9',1,'Genesis 6:9','Genesis 6:9','Genesis 6:9','T4T','tl','Sample watchmen remain ready.','h','Sample watchmen remain ready.','verified','now');
+             INSERT INTO lesson_verses (id,user_id,lesson_id,verse_id,page,ordinal) VALUES
+             ('moving-link','u','p','shared',1,0),('staying-link','u','w','shared',1,0);
+             INSERT INTO lecture_verses VALUES ('saved-link','u','lecture','shared',0,'');",
+        ).unwrap();
+        let tx = c.transaction().unwrap();
+        super::move_lesson_category(&tx, "u", "p", "pastoral").map_err(|e| e.message().to_string()).unwrap();
+        tx.commit().unwrap();
+        let moving: String = c.query_row("SELECT verse_id FROM lesson_verses WHERE id='moving-link'", [], |r| r.get(0)).unwrap();
+        let staying: String = c.query_row("SELECT verse_id FROM lesson_verses WHERE id='staying-link'", [], |r| r.get(0)).unwrap();
+        assert_ne!(moving, staying);
+        assert_eq!(staying, "shared");
+        let verses = super::verses_for(&c, "u").unwrap();
+        let target = verses.iter().find(|v| v["id"] == moving).unwrap();
+        let original = verses.iter().find(|v| v["id"] == staying).unwrap();
+        assert_eq!(target["text"], original["text"]);
+        assert_eq!(target["sources"][0]["pastoral"], true);
+        assert_eq!(original["sources"][0]["pastoral"], false);
+        assert_eq!(target["status"], "verified");
+        let saved: String = c.query_row("SELECT verse_id FROM lecture_verses WHERE id='saved-link'", [], |r| r.get(0)).unwrap();
+        assert_eq!(saved, "shared");
+    }
+
+    #[test]
+    fn moving_an_unshared_lesson_keeps_verse_ids_and_checks_access_and_destination() {
+        let mut c = move_fixture();
+        c.execute_batch(
+            "INSERT INTO verses (id,user_id,canonical_key,book_id,ref_printed,ref_en,ref_tl,language,text,text_sha256,ocr_raw,status,created_at)
+             VALUES ('own','u','1.6:9',1,'r','r','r','tl','Sample wording','h','Sample original','unverified','now');
+             INSERT INTO lesson_verses (id,user_id,lesson_id,verse_id,page,ordinal) VALUES ('own-link','u','w','own',1,0);",
+        ).unwrap();
+        assert!(super::move_lesson_category(&c, "other", "w", "pastoral").is_err());
+        assert!(super::move_lesson_category(&c, "u", "w", "unknown").is_err());
+        for category in ["midweek", "pastoral", "weekend"] {
+            let tx = c.transaction().unwrap();
+            super::move_lesson_category(&tx, "u", "w", category).map_err(|e| e.message().to_string()).unwrap();
+            tx.commit().unwrap();
+            let linked: String = c.query_row("SELECT verse_id FROM lesson_verses WHERE id='own-link'", [], |r| r.get(0)).unwrap();
+            assert_eq!(linked, "own");
+        }
+        let count: i64 = c.query_row("SELECT count(*) FROM verses", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 1, "a simple move never creates unnecessary verse records");
+    }
+
+    #[test]
+    fn moving_to_a_library_that_already_owns_a_shared_record_does_not_duplicate_it() {
+        let mut c = move_fixture();
+        c.execute_batch(
+            "INSERT INTO verses (id,user_id,canonical_key,book_id,ref_printed,ref_en,ref_tl,language,text,text_sha256,ocr_raw,status,created_at)
+             VALUES ('shared','u','1.6:9',1,'r','r','r','tl','Sample shared wording','h','Sample original','verified','now');
+             INSERT INTO lesson_verses (id,user_id,lesson_id,verse_id,page,ordinal) VALUES
+               ('moving','u','p','shared',1,0),('other-visit','u','p2','shared',1,0),('other-worship','u','w','shared',1,0);",
+        ).unwrap();
+        let tx = c.transaction().unwrap();
+        super::move_lesson_category(&tx, "u", "p", "weekend").map_err(|e| e.message().to_string()).unwrap();
+        tx.commit().unwrap();
+        let linked: String = c.query_row("SELECT verse_id FROM lesson_verses WHERE id='moving'", [], |r| r.get(0)).unwrap();
+        assert_eq!(linked, "shared", "another worship lesson already owns this non-imported record");
+        let count: i64 = c.query_row("SELECT count(*) FROM verses", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 1);
+
+        // Imported wording already belongs to the Verse Library, even if an older
+        // upload also attached a worship lesson. Moving a usage there needs no copy.
+        c.execute("UPDATE verses SET import_source='Original.xlsx, row 2' WHERE id='shared'", []).unwrap();
+        let tx = c.transaction().unwrap();
+        super::move_lesson_category(&tx, "u", "p", "pastoral").map_err(|e| e.message().to_string()).unwrap();
+        tx.commit().unwrap();
+        let linked: String = c.query_row("SELECT verse_id FROM lesson_verses WHERE id='moving'", [], |r| r.get(0)).unwrap();
+        assert_eq!(linked, "shared", "an imported record is already in the destination Verse Library");
+        let count: i64 = c.query_row("SELECT count(*) FROM verses", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn cached_ai_tagalog_uses_canonical_book_names_and_keeps_reviews() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        c.execute_batch(crate::db::SCHEMA).unwrap();
+        c.execute_batch(
+            "INSERT INTO users VALUES ('u','a@b.c','','now');
+             INSERT INTO context_tagalog (user_id,item,text,updated_at,reviewed_at) VALUES
+             ('u','chapter:12.5','Ang kabanata sa II Reyes ay tungkol sa pananampalataya.','now',NULL),
+             ('u','book:12','Aking tala tungkol sa II Hari.','now','now');",
+        ).unwrap();
+        let shown = super::tagalog_for(&c, "u").unwrap();
+        assert_eq!(shown["chapter:12.5"]["text"], "Ang kabanata sa II Hari ay tungkol sa pananampalataya.");
+        assert_eq!(shown["chapter:12.5"]["reviewed"], false);
+        assert_eq!(shown["book:12"]["text"], "Aking tala tungkol sa II Hari.");
+        assert_eq!(shown["book:12"]["reviewed"], true);
+        assert_eq!(super::shown_tagalog("Sinabi ni Reyes sa kaniyang tala sa II Reyes.".into(), true), "Sinabi ni Reyes sa kaniyang tala sa II Reyes.");
+        let stored: String = c.query_row("SELECT text FROM context_tagalog WHERE user_id='u' AND item='chapter:12.5'", [], |r| r.get(0)).unwrap();
+        assert_eq!(stored, "Ang kabanata sa II Reyes ay tungkol sa pananampalataya.", "display correction does not rewrite stored wording");
+        assert!(super::tagalog_for(&c, "another-user").unwrap().is_empty());
+    }
 
     #[test]
     fn the_apps_own_requests_are_allowed() {
@@ -1693,6 +2055,35 @@ mod tests {
         assert_eq!(super::remove_uncited_scans(&c, "u").unwrap(), 1);
         let left: Vec<String> = c.prepare("SELECT id FROM verses ORDER BY id").unwrap().query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
         assert_eq!(left, ["kept", "sheet"], "only the scan no lesson cites goes");
+    }
+
+    #[test]
+    fn stored_tat_labels_are_shown_as_t4t_without_changing_verified_scripture() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::init(&c).unwrap();
+        c.execute_batch(
+            "INSERT INTO users VALUES ('u','a@b.c','x','now');
+             INSERT INTO verses (id,user_id,canonical_key,book_id,ref_printed,ref_en,ref_tl,version,language,text,text_sha256,ocr_raw,status,created_at)
+             VALUES ('v','u','47.4:18',47,'II Cor. 4:18','II Corinthians 4:18','II Corinto 4:18','TAT','tl','Ang mga bagay na hindi nakikita ay walang hanggan.','h','Original TAT extraction','verified','now');",
+        ).unwrap();
+        let rows = super::verses_for(&c, "u").unwrap();
+        assert_eq!(rows[0]["version"], "T4T");
+        assert_eq!(rows[0]["text"], "Ang mga bagay na hindi nakikita ay walang hanggan.");
+        assert_eq!(rows[0]["ocr_raw"], "Original TAT extraction");
+        assert_eq!(rows[0]["status"], "verified");
+        let stored: String = c.query_row("SELECT version FROM verses WHERE id='v'", [], |r| r.get(0)).unwrap();
+        assert_eq!(stored, "TAT", "the display correction leaves the immutable stored record alone");
+        let planned = crate::verse_import::plan(&[crate::verse_import::SheetRow {
+            row: 2, translation: "T4T".into(), book: "II Corinthians".into(), chapter: "4".into(), verse: "18".into(),
+            content: "Ang mga bagay na hindi nakikita ay walang hanggan.".into(),
+        }]);
+        assert!(super::verse_in_vault(&c, "u", &planned.verses[0]).unwrap(), "a corrected code must still match the original saved verse on reimport");
+        for code in ["T4T", "TAT"] {
+            assert!(super::row_in_vault(&c, "u", code, "4", "18", "Ang mga bagay na hindi nakikita ay walang hanggan.").unwrap(), "a row to fix uses the same canonical code: {code}");
+        }
+        let mut other_translation = planned;
+        other_translation.verses[0].version = "TATI".into();
+        assert!(!super::verse_in_vault(&c, "u", &other_translation.verses[0]).unwrap(), "other translation codes are not conflated");
     }
 }
 

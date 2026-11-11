@@ -40,6 +40,8 @@ CREATE TABLE IF NOT EXISTS lessons (
   date_label TEXT NOT NULL DEFAULT '',
   year INTEGER,
   location TEXT NOT NULL DEFAULT '',
+  local_congregation TEXT NOT NULL DEFAULT '',
+  district TEXT NOT NULL DEFAULT '',
   author TEXT NOT NULL DEFAULT '',
   code TEXT NOT NULL DEFAULT '',
   file_name TEXT NOT NULL,
@@ -76,7 +78,8 @@ CREATE TABLE IF NOT EXISTS verses (
   verified_at TEXT,
   created_at TEXT NOT NULL,
   import_source TEXT NOT NULL DEFAULT '',
-  UNIQUE (user_id, canonical_key, version, language, ocr_raw)
+  extraction_id TEXT NOT NULL DEFAULT '',
+  UNIQUE (user_id, canonical_key, version, language, ocr_raw, extraction_id)
 );
 CREATE INDEX IF NOT EXISTS verses_user ON verses(user_id, canonical_key);
 
@@ -92,6 +95,17 @@ CREATE TABLE IF NOT EXISTS lesson_verses (
 );
 CREATE INDEX IF NOT EXISTS lesson_verses_lesson ON lesson_verses(lesson_id);
 CREATE INDEX IF NOT EXISTS lesson_verses_verse ON lesson_verses(verse_id);
+
+-- A PDF verse and its existing library candidates stay separate until manually compared.
+CREATE TABLE IF NOT EXISTS lesson_verse_comparisons (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  lesson_verse_id TEXT NOT NULL UNIQUE REFERENCES lesson_verses(id) ON DELETE CASCADE,
+  candidates TEXT NOT NULL DEFAULT '[]',
+  pdf_reading TEXT NOT NULL DEFAULT '{}',
+  resolved_at TEXT,
+  decision TEXT NOT NULL DEFAULT ''
+);
 
 CREATE TABLE IF NOT EXISTS lectures (
   id TEXT PRIMARY KEY,
@@ -233,10 +247,14 @@ END;
 /// Creates missing tables, and adds columns that older vaults do not have yet.
 pub fn init(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(SCHEMA)?;
+    let mut pastoral_metadata_added = false;
     for (table, column, definition) in [
         ("lecture_verses", "objective", "TEXT NOT NULL DEFAULT ''"),
         ("verse_context", "reviewed_at", "TEXT"),
         ("verses", "import_source", "TEXT NOT NULL DEFAULT ''"),
+        ("verses", "extraction_id", "TEXT NOT NULL DEFAULT ''"),
+        ("lessons", "local_congregation", "TEXT NOT NULL DEFAULT ''"),
+        ("lessons", "district", "TEXT NOT NULL DEFAULT ''"),
         // Lessons already in a vault were added before this check existed, so they start as checked.
         ("lessons", "needs_check", "INTEGER NOT NULL DEFAULT 0"),
         // Empty until the lesson's parts are read; see outline::backfill.
@@ -247,7 +265,12 @@ pub fn init(conn: &Connection) -> rusqlite::Result<()> {
         let present: bool = conn.query_row(&format!("SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1)"), [column], |r| r.get(0))?;
         if !present {
             conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {definition};"))?;
+            pastoral_metadata_added |= table == "lessons" && ["local_congregation", "district"].contains(&column);
         }
+    }
+    migrate_verse_extractions(conn)?;
+    if pastoral_metadata_added {
+        backfill_pastoral_metadata(conn)?;
     }
     // Verse-level context from the AI gave way to chapter and book context. Anything the
     // user reviewed or wrote is theirs, and stays.
@@ -258,6 +281,80 @@ pub fn init(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute("DELETE FROM app_settings WHERE key='import_sheet_id'", [])?;
     crate::verse_import::repair_leading_numbers(conn)?;
     crate::outline::backfill(conn)?;
+    Ok(())
+}
+
+/// Keep the PDF's extraction intact even when it has exactly the same raw wording as a
+/// library verse. Existing imports retain their deduplication key (an empty extraction id).
+fn migrate_verse_extractions(conn: &Connection) -> rusqlite::Result<()> {
+    let sql: String = conn.query_row("SELECT sql FROM sqlite_master WHERE type='table' AND name='verses'", [], |r| r.get(0))?;
+    let legacy = regex::Regex::new(r"(?is)UNIQUE\s*\(\s*user_id\s*,\s*canonical_key\s*,\s*version\s*,\s*language\s*,\s*ocr_raw\s*\)").unwrap();
+    if !legacy.is_match(&sql) {
+        return Ok(());
+    }
+    let new_sql = legacy.replace(&sql, "UNIQUE (user_id, canonical_key, version, language, ocr_raw, extraction_id)");
+    let table_definition = new_sql.find('(').ok_or(rusqlite::Error::InvalidQuery)?;
+    let columns: Vec<String> = {
+        let mut st = conn.prepare("SELECT name FROM pragma_table_info('verses') ORDER BY cid")?;
+        let rows = st.query_map([], |r| r.get::<_, String>(0))?;
+        rows.collect::<Result<_, _>>()?
+    };
+    let attached_schema: Vec<String> = {
+        let mut st = conn.prepare("SELECT sql FROM sqlite_master WHERE tbl_name='verses' AND type IN ('index','trigger') AND sql IS NOT NULL")?;
+        let rows = st.query_map([], |r| r.get(0))?;
+        rows.collect::<Result<_, _>>()?
+    };
+    let last_sequence: Option<i64> = conn.query_row("SELECT seq FROM sqlite_sequence WHERE name='verses'", [], |r| r.get(0)).optional()?;
+    // SQLite cannot change an inline UNIQUE constraint. Rebuild inside a transaction with
+    // foreign keys temporarily off, so dropping the old table cannot cascade into its uses.
+    let foreign_keys: bool = conn.pragma_query_value(None, "foreign_keys", |r| r.get(0))?;
+    conn.pragma_update(None, "foreign_keys", false)?;
+    let result = (|| {
+        let tx = conn.unchecked_transaction()?;
+        tx.execute_batch(&format!("CREATE TABLE verses_migration {}", &new_sql[table_definition..]))?;
+        let quoted_columns = columns.iter().map(|c| format!("\"{}\"", c.replace('"', "\"\""))).collect::<Vec<_>>().join(",");
+        tx.execute_batch(&format!("INSERT INTO verses_migration ({quoted_columns}) SELECT {quoted_columns} FROM verses; DROP TABLE verses; ALTER TABLE verses_migration RENAME TO verses;"))?;
+        for statement in attached_schema {
+            tx.execute_batch(&statement)?;
+        }
+        if let Some(sequence) = last_sequence {
+            tx.execute("UPDATE sqlite_sequence SET seq=max(seq, ?1) WHERE name='verses'", [sequence])?;
+        }
+        let broken: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM pragma_foreign_key_check)", [], |r| r.get(0))?;
+        if broken {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        tx.commit()
+    })();
+    let restored = conn.pragma_update(None, "foreign_keys", foreign_keys);
+    result.and(restored)
+}
+
+/// Called on schema upgrade, and after restoring an older backup. Existing user corrections
+/// and dates are preserved; only missing metadata is filled from the PDF or old location.
+pub fn backfill_pastoral_metadata(conn: &Connection) -> rusqlite::Result<()> {
+    let pending: Vec<(String, String, String, String)> = {
+        let mut st = conn.prepare("SELECT id, content, file_name, location FROM lessons WHERE category='pastoral' AND (local_congregation='' OR district='' OR lesson_date IS NULL)")?;
+        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+        rows.collect::<Result<_, _>>()?
+    };
+    for (id, content, file_name, location) in pending {
+        let parsed = crate::parser::parse(&[content], &file_name);
+        let pair = if !parsed.local_congregation.is_empty() && !parsed.district.is_empty() {
+            Some((parsed.local_congregation, parsed.district))
+        } else {
+            crate::parser::split_location(&location)
+        };
+        let (local, district) = pair.unwrap_or_default();
+        conn.execute(
+            "UPDATE lessons SET local_congregation=CASE WHEN local_congregation='' THEN ?1 ELSE local_congregation END,
+             district=CASE WHEN district='' THEN ?2 ELSE district END,
+             location=CASE WHEN location='' AND ?1<>'' AND ?2<>'' THEN ?1 || ', ' || ?2 ELSE location END,
+             lesson_date=coalesce(lesson_date, ?3), year=coalesce(year, ?4),
+             date_label=CASE WHEN date_label='' THEN ?5 ELSE date_label END WHERE id=?6",
+            rusqlite::params![local, district, parsed.lesson_date, parsed.year, parsed.date_label, id],
+        )?;
+    }
     Ok(())
 }
 
@@ -336,6 +433,79 @@ mod tests {
         init(&c).unwrap();
         let (text, source): (String, String) = c.query_row("SELECT text, import_source FROM verses", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
         assert_eq!((text.as_str(), source.as_str()), ("kept", ""));
+    }
+
+    #[test]
+    fn pastoral_metadata_is_backfilled_once_without_overwriting_corrections() {
+        let c = Connection::open_in_memory().unwrap();
+        let old = SCHEMA.replace("\r\n", "\n")
+            .replace("  local_congregation TEXT NOT NULL DEFAULT '',\n", "")
+            .replace("  district TEXT NOT NULL DEFAULT '',\n", "");
+        c.execute_batch(&old).unwrap();
+        c.execute_batch("INSERT INTO users VALUES ('u','a@b.c','x','now');
+            INSERT INTO lessons (id,user_id,title,category,language,file_name,sha256,byte_size,page_count,source_kind,content,created_at)
+            VALUES ('l','u','T','pastoral','tl','visit.pdf','s',1,2,'text','Paksa: Halimbawa
+SABADO: ABRIL 4, 2026
+DEPARO, CALOOCAN NORTH','now');
+            INSERT INTO lessons (id,user_id,title,category,language,file_name,sha256,byte_size,page_count,source_kind,content,location,created_at)
+            VALUES ('fallback','u','T','pastoral','en','visit.pdf','s2',1,1,'text','Body','Sampleville, Testland','now');
+            INSERT INTO lessons (id,user_id,title,category,language,file_name,sha256,byte_size,page_count,source_kind,content,location,created_at)
+            VALUES ('worship','u','T','weekend','en','w.pdf','s3',1,1,'text','Body','Leave, Alone','now');").unwrap();
+        init(&c).unwrap();
+        let read = |id: &str| -> (String, String, Option<String>, Option<i64>) {
+            c.query_row("SELECT local_congregation,district,lesson_date,year FROM lessons WHERE id=?1", [id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).unwrap()
+        };
+        assert_eq!(read("l"), ("Deparo".into(), "Caloocan North".into(), Some("2026-04-04".into()), Some(2026)));
+        assert_eq!(read("fallback").0, "Sampleville");
+        assert_eq!(read("fallback").1, "Testland");
+        assert_eq!(read("worship").0, "");
+        c.execute("UPDATE lessons SET local_congregation='Corrected',district='New District',lesson_date='2026-05-01',year=2026 WHERE id='l'", []).unwrap();
+        backfill_pastoral_metadata(&c).unwrap();
+        init(&c).unwrap();
+        assert_eq!(read("l"), ("Corrected".into(), "New District".into(), Some("2026-05-01".into()), Some(2026)));
+        c.execute("UPDATE lessons SET local_congregation='',district='' WHERE id='l'", []).unwrap();
+        init(&c).unwrap();
+        assert_eq!(read("l").0, "", "clearing a field by hand is preserved on subsequent starts");
+    }
+
+    #[test]
+    fn legacy_verse_uniqueness_migration_preserves_uses_fts_and_verified_locks() {
+        let c = Connection::open_in_memory().unwrap();
+        let old = SCHEMA.replace("\r\n", "\n")
+            .replace("  extraction_id TEXT NOT NULL DEFAULT '',\n", "")
+            .replace("UNIQUE (user_id, canonical_key, version, language, ocr_raw, extraction_id)", "UNIQUE (user_id, canonical_key, version, language, ocr_raw)");
+        c.execute_batch(&old).unwrap();
+        c.execute_batch("INSERT INTO users VALUES ('u','a@b.c','x','now');
+            INSERT INTO lessons (id,user_id,title,category,language,file_name,sha256,byte_size,page_count,source_kind,content,created_at)
+            VALUES ('l','u','T','pastoral','en','f','s',1,1,'text','body','now');
+            INSERT INTO verses (seq,id,user_id,canonical_key,book_id,ref_printed,ref_en,ref_tl,version,language,text,text_sha256,ocr_raw,status,created_at,import_source)
+            VALUES (42,'v','u','43.3:5',43,'John 3:5','John 3:5','Juan 3:5','NIRV','en','watchtower','h','original','verified','now','Translation.xlsx');
+            INSERT INTO lesson_verses (id,user_id,lesson_id,verse_id,page,ordinal) VALUES ('lv','u','l','v',1,0);
+            INSERT INTO lesson_verse_comparisons (id,user_id,lesson_verse_id,candidates) VALUES ('cmp','u','lv','[\"v\"]');
+            INSERT INTO lectures (id,user_id,title,created_at,updated_at) VALUES ('lecture','u','Lecture','now','now');
+            INSERT INTO lecture_verses (id,user_id,lecture_id,verse_id,ordinal) VALUES ('lecture-verse','u','lecture','v',0);
+            UPDATE sqlite_sequence SET seq=100 WHERE name='verses';").unwrap();
+        init(&c).unwrap();
+        init(&c).unwrap();
+        let record: (i64, String, String, String) = c.query_row("SELECT seq,text,ocr_raw,import_source FROM verses WHERE id='v'", [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).unwrap();
+        assert_eq!(record, (42, "watchtower".into(), "original".into(), "Translation.xlsx".into()));
+        let foreign_keys: bool = c.pragma_query_value(None, "foreign_keys", |r| r.get(0)).unwrap();
+        assert!(foreign_keys);
+        let uses: i64 = c.query_row("SELECT (SELECT count(*) FROM lesson_verses) + (SELECT count(*) FROM lecture_verses) + (SELECT count(*) FROM lesson_verse_comparisons)", [], |r| r.get(0)).unwrap();
+        assert_eq!(uses, 3);
+        let fts: i64 = c.query_row("SELECT count(*) FROM verses_fts WHERE verses_fts MATCH 'watchtower'", [], |r| r.get(0)).unwrap();
+        assert_eq!(fts, 1);
+        assert!(c.execute("UPDATE verses SET text='changed' WHERE id='v'", []).unwrap_err().to_string().contains("immutable"));
+        assert!(c.execute("UPDATE verses SET ocr_raw='changed' WHERE id='v'", []).is_err());
+        let insert = "INSERT INTO verses (id,user_id,canonical_key,book_id,ref_printed,ref_en,ref_tl,version,language,text,text_sha256,ocr_raw,status,created_at,extraction_id)
+            VALUES (?1,'u','43.3:5',43,'John 3:5','John 3:5','Juan 3:5','NIRV','en','watchtower','h','original','unverified','now',?2)";
+        c.execute(insert, ["pdf-copy", "distinct-extraction"]).unwrap();
+        let seq: i64 = c.query_row("SELECT seq FROM verses WHERE id='pdf-copy'", [], |r| r.get(0)).unwrap();
+        assert_eq!(seq, 101, "the AUTOINCREMENT sequence is preserved even after deletions");
+        assert!(c.execute(insert, ["duplicate-import", ""]).is_err(), "imports still deduplicate their original raw text");
+        assert!(c.execute("DELETE FROM verses WHERE id='v'", []).is_ok());
+        let remaining: i64 = c.query_row("SELECT (SELECT count(*) FROM lesson_verses) + (SELECT count(*) FROM lecture_verses) + (SELECT count(*) FROM lesson_verse_comparisons)", [], |r| r.get(0)).unwrap();
+        assert_eq!(remaining, 0, "foreign key cascades still apply");
     }
 
     #[test]

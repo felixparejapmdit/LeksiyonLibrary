@@ -60,7 +60,7 @@ export function Welcome() {
   ];
 
   return (
-    <div className={`welcome fixed inset-0 z-[70] flex flex-col overflow-y-auto ${leaving ? 'is-leaving' : ''}`} role="dialog" aria-modal="true" aria-labelledby="welcome-title" data-testid="welcome">
+    <div className={`welcome workspace-surface fixed inset-0 z-[70] flex flex-col overflow-y-auto ${leaving ? 'is-leaving' : ''}`} role="dialog" aria-modal="true" aria-labelledby="welcome-title" data-testid="welcome">
       <div className="flex flex-none justify-end p-3">
         <button className="btn welcome-skip" data-testid="welcome-skip" onClick={() => close()}>
           Skip <ChevronsRight size={15} />

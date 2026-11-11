@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ArrowDownUp, FolderSearch, FolderTree, MapPin, PanelRight, UploadCloud } from 'lucide-react';
 import { ResizeHandle, useIsDesktop } from '../components/Layout';
-import { CategoryTabs, FilterChips, LessonRows, useVisibleLessons, YearFolderTabs } from '../components/LessonList';
+import { CategoryTabs, FilterChips, LibraryFilters, LessonRows, useVisibleLessons, YearFolderTabs } from '../components/LessonList';
 import { PdfViewer } from '../components/PdfViewer';
 import { Sidebar } from '../components/Sidebar';
-import { addPastoralVisits, PastoralDrop } from '../components/PastoralDrop';
-import { categoryLabel, getState, openUpload, resetFilters, scopeTitle, selectLesson, setPanelPref, setState, updateFilters, useStore, type SortMode } from '../store';
-
-const DESKTOP = '(min-width: 1024px)';
+import { PdfDrop } from '../components/PastoralDrop';
+import { enqueueFolder } from '../ingest';
+import { categoryLabel, getState, openLesson, openUpload, resetFilters, scopeTitle, selectLesson, setPanelPref, setState, updateFilters, useStore, type SortMode } from '../store';
 
 export function VaultPage() {
   const desktop = useIsDesktop();
@@ -16,6 +15,7 @@ export function VaultPage() {
   const category = useStore((s) => s.filters.category);
   const scope = useStore((s) => s.filters.scope);
   const total = useStore((s) => s.lessons.length);
+  const hasPastoralVisits = useStore((s) => s.lessons.some((l) => l.category === 'pastoral'));
   const selectedId = useStore((s) => s.selectedId);
   const chosen = useStore((s) => s.lessons.find((l) => l.id === s.selectedId) ?? null);
   // Pastoral Visits shows only pastoral visits, and the Lesson Library none: a lesson open from another list is not shown.
@@ -24,17 +24,17 @@ export function VaultPage() {
   const viewerOpen = useStore((s) => s.viewerOpen);
   const sidebarOpen = useStore((s) => s.sidebarOpen);
   const drawerOpen = useStore((s) => s.drawerOpen);
-  const [mobileViewer, setMobileViewer] = useState(false);
-  // PDFs dragged anywhere over the Pastoral Visits list are taken as pastoral visits.
+  const mobileViewer = useStore((s) => s.mobileViewerOpen);
+  // Lesson documents dropped anywhere over a library go into that library.
   const [dragging, setDragging] = useState(false);
   const pastoralPage = scope === 'pastoral';
+  const libraryPage = scope !== 'all';
 
   const onOpen = useCallback((id: string) => {
-    selectLesson(id);
-    if (!matchMedia(DESKTOP).matches) setMobileViewer(true);
+    openLesson(id);
   }, []);
   useEffect(() => {
-    if (desktop) setMobileViewer(false);
+    if (desktop) setState({ mobileViewerOpen: false });
   }, [desktop]);
 
   // Keep the viewer on a lesson the current filters still show.
@@ -50,14 +50,14 @@ export function VaultPage() {
       <div className="flex flex-col items-center px-4 py-16 text-center" data-testid="empty-vault">
         <UploadCloud size={32} className="text-accent2" />
         <h2 className="m-0 mt-3 text-base font-semibold">Your vault is empty</h2>
-        <p className="m-0 mt-1 mb-4 max-w-xs text-[13px] text-muted">{scope === 'pastoral' ? 'Upload a pastoral visit PDF to collect its verses in the Verse Library.' : 'Upload a lesson PDF to index the lesson and collect its verses.'}</p>
-        <button className="btn btn-primary" data-testid="empty-upload" onClick={() => openUpload(target)}>Upload PDF</button>
+        <p className="m-0 mt-1 mb-4 max-w-xs text-[13px] text-muted">{scope === 'pastoral' ? 'Upload a pastoral visit PDF or DOCX to collect its verses in the Verse Library.' : 'Upload a lesson PDF or DOCX to index the lesson and collect its verses.'}</p>
+        <button className="btn btn-primary" data-testid="empty-upload" onClick={() => openUpload(target)}>Upload files</button>
       </div>
-    ) : pool.length === 0 && scope === 'pastoral' && category === 'all' ? (
+    ) : !hasPastoralVisits && scope === 'pastoral' && category === 'all' ? (
       <div className="flex flex-col items-center px-4 py-16 text-center" data-testid="empty-pastoral">
         <MapPin size={30} className="text-pv" />
         <h2 className="m-0 mt-3 text-base font-semibold">No pastoral visits yet</h2>
-        <p className="m-0 mt-1 mb-4 max-w-xs text-[13px] text-muted">Drop pastoral visit PDFs above, as many as you like. Their verses go to the Verse Library.</p>
+        <p className="m-0 mt-1 mb-4 max-w-xs text-[13px] text-muted">Drop pastoral visit PDF or DOCX files above, as many as you like. Their verses go to the Verse Library.</p>
       </div>
     ) : (
       <div className="flex flex-col items-center px-4 py-16 text-center" data-testid="empty-filter">
@@ -79,11 +79,11 @@ export function VaultPage() {
 
   const listPane = (
     <section
-      className="flex h-full min-w-0 flex-1 flex-col bg-bg"
+      className={`flex h-full min-w-0 flex-1 flex-col ${desktop ? '' : 'scroll-stable'}`}
       aria-label="Lessons"
       data-testid="list-pane"
       onDragOver={(e) => {
-        if (!pastoralPage || !e.dataTransfer.types.includes('Files')) return;
+        if (!libraryPage || !e.dataTransfer.types.includes('Files')) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = 'copy';
         if (!dragging) setDragging(true);
@@ -92,23 +92,23 @@ export function VaultPage() {
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
       }}
       onDrop={(e) => {
-        if (!pastoralPage) return;
+        if (!libraryPage) return;
         e.preventDefault();
         setDragging(false);
-        addPastoralVisits(e.dataTransfer.files);
+        enqueueFolder(e.dataTransfer.files, target);
       }}
     >
-      <div className="flex-none px-3 pt-3 pb-2">
-        <div className="flex items-center gap-2">
+      <div className="flex-none px-4 pt-4 pb-3 lg:px-6 lg:pt-5">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           {!desktop && (
             <button className="icon-btn" aria-label="Open the library menu" data-testid="open-drawer" onClick={() => setState({ drawerOpen: true })}>
               <FolderTree size={18} />
             </button>
           )}
-          <h1 className="m-0 min-w-0 truncate text-lg font-semibold" data-testid="list-title">{title}</h1>
+          <h1 className="m-0 min-w-0 flex-1 basis-40 text-lg leading-snug font-semibold" data-testid="list-title">{title}</h1>
           {scope === 'lessons' && (
-            <button className="btn btn-primary !min-h-[34px] max-lg:!min-h-11" data-testid="lesson-upload" aria-label="Upload PDF" onClick={() => openUpload('lesson')}>
-              <UploadCloud size={14} /> <span className="max-sm:sr-only">Upload PDF</span>
+            <button className="btn btn-primary !min-h-[34px] max-lg:!min-h-11" data-testid="lesson-upload" aria-label="Upload PDF or DOCX" onClick={() => openUpload('lesson')}>
+              <UploadCloud size={14} /> <span className="max-sm:sr-only">Upload files</span>
             </button>
           )}
           <label className="ml-auto flex items-center gap-1 text-muted">
@@ -126,20 +126,24 @@ export function VaultPage() {
             </select>
           </label>
           {desktop && (
-            <button className="icon-btn" aria-label={viewerOpen ? 'Hide PDF viewer' : 'Show PDF viewer'} data-testid="toggle-viewer" aria-pressed={viewerOpen} onClick={() => setPanelPref('viewerOpen', !viewerOpen)}>
+            <button className="icon-btn" aria-label={viewerOpen ? 'Hide document viewer' : 'Show document viewer'} data-testid="toggle-viewer" aria-pressed={viewerOpen} onClick={() => setPanelPref('viewerOpen', !viewerOpen)}>
               <PanelRight size={16} />
             </button>
           )}
         </div>
-        {pastoralPage && <PastoralDrop dragging={dragging} />}
-        <div className="mt-2">{pastoralPage ? <YearFolderTabs /> : <CategoryTabs pool={pool} />}</div>
+        {libraryPage && <PdfDrop key={target} dragging={dragging} target={target} />}
+        <div className="mt-2">
+          {!pastoralPage && <CategoryTabs pool={pool} />}
+          {libraryPage && <YearFolderTabs />}
+        </div>
+        <LibraryFilters />
         <FilterChips />
         <div className="mt-1.5 flex justify-between border-b border-line pb-1 text-xs text-muted">
           <span>Name</span>
           <span data-testid="item-count">{visible.length} {visible.length === 1 ? 'item' : 'items'}</span>
         </div>
       </div>
-      <div className="scroll-stable min-h-0 flex-1 px-2 pb-3" data-testid="list-scroll">
+      <div className={`${desktop ? 'scroll-stable min-h-0 flex-1' : 'flex-none'} px-3 pb-4 lg:px-5`} data-testid="list-scroll">
         <LessonRows visible={visible} onOpen={onOpen} empty={emptyState} />
       </div>
     </section>
@@ -159,7 +163,7 @@ export function VaultPage() {
         )}
         {mobileViewer && selected && (
           <div className="absolute inset-0 z-30 bg-bg" data-testid="mobile-viewer">
-            <PdfViewer lesson={selected} onBack={() => setMobileViewer(false)} />
+            <PdfViewer lesson={selected} onBack={() => setState({ mobileViewerOpen: false })} />
           </div>
         )}
       </div>
@@ -171,7 +175,7 @@ export function VaultPage() {
       {listPane}
       {viewerOpen && (
         <>
-          <ResizeHandle variable="--viewer-w" storageKey="lv.viewerW" edge="right" min={320} max={1100} label="Resize PDF viewer" testId="resize-viewer" />
+          <ResizeHandle variable="--viewer-w" storageKey="lv.viewerW" edge="right" min={320} max={1100} label="Resize document viewer" testId="resize-viewer" />
           <div className="min-w-0 flex-none" style={{ width: 'var(--viewer-w)', maxWidth: `calc(100vw - ${sidebarOpen ? 'var(--sidebar-w)' : '0px'} - 472px)` }}>
             {selected && selectedId ? (
               <PdfViewer lesson={selected} />

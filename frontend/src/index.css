@@ -34,6 +34,9 @@ html[data-theme='dark'] {
   --danger: #f87171;
   --on-accent: #ffffff;
   --mark-bg: rgba(59, 130, 246, 0.42);
+  --workspace-grid: rgb(148 163 184 / 0.045);
+  --workspace-glow: rgb(37 99 235 / 0.13);
+  --workspace-glow-soft: rgb(56 189 248 / 0.055);
   /* The sidebar's colours: light enough to read as text on the dark panel. */
   --tone-archive: #bfdbfe;
   --tone-lessons: #93c5fd;
@@ -60,6 +63,9 @@ html[data-theme='light'] {
   --danger: #b91c1c;
   --on-accent: #ffffff;
   --mark-bg: rgba(37, 99, 235, 0.2);
+  --workspace-grid: rgb(71 85 105 / 0.045);
+  --workspace-glow: rgb(59 130 246 / 0.075);
+  --workspace-glow-soft: rgb(14 165 233 / 0.035);
   --tone-archive: #1e40af;
   --tone-lessons: #1d4ed8;
   --tone-pv: #0369a1;
@@ -84,6 +90,63 @@ body {
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior: none;
+}
+
+/* One quiet canvas behind every page. Reading surfaces stay opaque above it. */
+.workspace-surface {
+  background-color: var(--bg);
+  background-image:
+    linear-gradient(to right, var(--workspace-grid) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--workspace-grid) 1px, transparent 1px),
+    radial-gradient(ellipse at 0% 0%, var(--workspace-glow), transparent 68%),
+    radial-gradient(ellipse at 100% 100%, var(--workspace-glow-soft), transparent 65%);
+  background-size: 36px 36px, 36px 36px, 100% 100%, 100% 100%;
+  background-repeat: repeat, repeat, no-repeat, no-repeat;
+}
+
+/* Shared gutters also position the verse toolbar, so their edges always line up. */
+.page-frame {
+  --page-gutter: 1rem;
+  --page-block: 1.25rem;
+  padding: var(--page-block) var(--page-gutter);
+}
+
+.page-toolbar {
+  margin-inline: calc(0px - var(--page-gutter));
+  padding-inline: var(--page-gutter);
+}
+
+@media (min-width: 640px) {
+  .page-frame {
+    --page-gutter: 1.5rem;
+    --page-block: 1.5rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .page-frame {
+    --page-gutter: 2rem;
+  }
+
+  .page-toolbar {
+    position: sticky;
+    top: calc(0px - var(--page-block));
+  }
+}
+
+@media (forced-colors: active) {
+  .workspace-surface {
+    background-image: none;
+  }
+}
+
+/* Explicit styling keeps verse markers raised in every view and when printing. */
+sup.verse-number {
+  position: relative;
+  top: -0.5em;
+  font-size: 0.75em;
+  line-height: 0;
+  vertical-align: baseline;
 }
 
 button,
@@ -206,6 +269,11 @@ html[data-theme='light'] .btn-danger {
 
 select.field {
   appearance: auto;
+}
+
+/* Search fields provide one consistent clear button in both themes. */
+.field[type='search']::-webkit-search-cancel-button {
+  appearance: none;
 }
 
 mark {
@@ -603,19 +671,43 @@ mark {
 .tone-review { --tone: var(--tone-review); }
 .tone-warn { --tone: var(--tone-warn); }
 
-/* An entry's icon, label and count share its colour. */
+/* Neutral labels are easier to scan; section colors remain on icons and counts. */
+.sidebar-surface {
+  background-color: var(--panel);
+  border-inline-end: 1px solid var(--line);
+}
+
+html[data-theme='dark'] .sidebar-surface {
+  background-image: linear-gradient(
+    165deg,
+    color-mix(in srgb, var(--accent) 10%, transparent),
+    transparent 48%,
+    color-mix(in srgb, var(--pv) 4%, transparent)
+  );
+}
+
+.sidebar-heading {
+  margin: 0;
+  padding: 18px 10px 7px;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
 .nav-row {
   display: flex;
   align-items: center;
   gap: 9px;
   width: 100%;
   min-width: 0;
-  min-height: 36px;
-  padding: 0 6px;
+  min-height: 40px;
+  padding: 0 8px;
   border: 0;
   border-radius: 9px;
   background: transparent;
-  color: var(--tone, var(--fg));
+  color: var(--fg);
   font-size: 13px;
   font-weight: 500;
   text-align: left;
@@ -623,12 +715,13 @@ mark {
 }
 
 .nav-row:hover {
-  background: color-mix(in srgb, var(--tone, var(--fg)) 9%, transparent);
+  background: color-mix(in srgb, var(--tone, var(--fg)) 8%, transparent);
 }
 
 .nav-row.is-active {
-  background: color-mix(in srgb, var(--tone, var(--fg)) 16%, transparent);
-  box-shadow: inset 3px 0 0 var(--tone, var(--fg));
+  background: color-mix(in srgb, var(--tone, var(--fg)) 12%, transparent);
+  box-shadow: inset 2px 0 0 var(--tone, var(--fg));
+  color: var(--fg);
   font-weight: 650;
 }
 
@@ -656,7 +749,7 @@ mark {
   margin-left: auto;
   padding: 0 6px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--tone, var(--muted)) 14%, transparent);
+  background: color-mix(in srgb, var(--tone, var(--muted)) 10%, transparent);
   color: var(--tone, var(--muted));
   font-size: 11px;
   font-weight: 600;
@@ -665,20 +758,25 @@ mark {
   font-variant-numeric: tabular-nums;
 }
 
-/* What belongs to an entry hangs from it on a thin line in its colour. */
+/* A quiet connecting line keeps nested folders distinct without competing with text. */
 .nav-group {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  margin: 2px 0 4px 18px;
+  margin: 3px 0 6px 14px;
   padding-left: 6px;
-  border-left: 1px solid color-mix(in srgb, var(--tone) 32%, transparent);
+  border-left: 1px solid color-mix(in srgb, var(--tone) 20%, var(--line));
 }
 
 .nav-sub {
-  min-height: 30px;
+  min-height: 34px;
   gap: 7px;
+  color: color-mix(in srgb, var(--fg) 88%, var(--muted));
   font-size: 12.5px;
+}
+
+.nav-section-icon {
+  color: var(--tone, var(--muted));
 }
 
 .nav-chevron {
@@ -686,30 +784,56 @@ mark {
   flex: none;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 30px;
+  width: 24px;
+  height: 34px;
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: var(--tone);
-  opacity: 0.75;
+  color: var(--muted);
 }
 
 .nav-chevron:hover {
-  opacity: 1;
+  color: var(--fg);
   background: color-mix(in srgb, var(--tone) 9%, transparent);
 }
 
 .nav-tree {
-  margin: 0 0 3px 26px;
+  margin: 2px 0 8px 14px;
   padding: 0 0 0 6px;
   list-style: none;
-  border-left: 1px dashed color-mix(in srgb, var(--tone) 35%, transparent);
+  border-left: 1px solid color-mix(in srgb, var(--tone) 18%, var(--line));
+}
+
+.nav-language {
+  min-height: 32px;
+  gap: 6px;
+  color: color-mix(in srgb, var(--fg) 88%, var(--muted));
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.nav-language-chevron {
+  width: 20px;
+  height: 32px;
+}
+
+.nav-language .nav-count {
+  min-width: 20px;
+  padding-inline: 5px;
+  font-size: 10.5px;
+  line-height: 17px;
+}
+
+.nav-language-list {
+  margin: 2px 0 6px 8px;
+  padding: 0 0 0 8px;
+  list-style: none;
+  border-left: 1px dashed color-mix(in srgb, var(--tone) 18%, var(--line));
 }
 
 .nav-leaf {
-  min-height: 28px;
-  color: var(--muted);
+  min-height: 32px;
+  color: color-mix(in srgb, var(--fg) 78%, var(--muted));
   font-size: 12px;
   font-weight: 400;
 }
@@ -727,6 +851,7 @@ mark {
 @media (pointer: coarse), (max-width: 1023px) {
   .nav-row,
   .nav-sub,
+  .nav-language,
   .nav-leaf {
     min-height: 44px;
   }
@@ -749,6 +874,12 @@ mark {
 .space-y-4 > :not(:last-child) { margin-block-end: 1rem; }
 .space-y-5 > :not(:last-child) { margin-block-end: 1.25rem; }
 .space-y-6 > :not(:last-child) { margin-block-end: 1.5rem; }
+
+/* A hidden objective panel must not leave a gap after the last visible block. */
+:is(.space-y-0\.5, .space-y-1, .space-y-1\.5, .space-y-2, .space-y-3, .space-y-4, .space-y-5, .space-y-6)
+  > :not(:last-child):not([hidden]):not(.hidden):not(:has(~ :not([hidden]):not(.hidden))) {
+  margin-block-end: 0;
+}
 
 /* ---------- Lecture document: laid out like the lesson PDFs ---------- */
 .lecture-paper {
@@ -878,6 +1009,13 @@ mark {
 }
 
 @media print {
+  body {
+    background: #ffffff;
+  }
+  .workspace-surface {
+    background-image: none !important;
+    background-color: #ffffff;
+  }
   .no-print {
     display: none !important;
   }

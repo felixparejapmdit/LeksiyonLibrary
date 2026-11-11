@@ -88,9 +88,9 @@ function AiCard() {
   const ready = !!ai && ai.available && ai.meaning;
   const missing = ai ? [...(ai.available ? [] : [ai.model]), ...(ai.meaning ? [] : [ai.embed_model])] : [];
   return (
-    <section className="card p-4" data-testid="settings-ai-card">
+    <section className="card min-w-0 p-4 sm:p-5" data-testid="settings-ai-card">
       <div className="flex flex-wrap items-start gap-3">
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 basis-72">
           <h2 className="card-head"><Bot size={15} className="text-muted" /> AI assistant</h2>
           <p className="m-0 min-h-5 text-[13px] text-muted" data-testid="settings-ai">
             {ai === null ? 'Checking' : ai.available ? `Connected to local model ${ai.model}.` : ai.reachable ? `Local AI is running, but model ${ai.model} is not installed.` : 'Local AI is offline. Verse matching still works without it.'}
@@ -103,7 +103,7 @@ function AiCard() {
           )}
         </div>
         {/* On the right: one button does the download and the install. */}
-        <div className="flex flex-none flex-wrap items-center gap-1.5">
+        <div className="flex max-w-full flex-none flex-wrap items-center gap-2">
           {ai && !ai.reachable && (
             <>
               <a className="btn" data-testid="settings-get-ollama" href="https://ollama.com/download" target="_blank" rel="noreferrer noopener">
@@ -149,13 +149,13 @@ export function SettingsPage() {
   const lastBackup = useStore((s) => s.lastBackupAt);
 
   return (
-    <div className="scroll-stable h-full" data-testid="settings-page">
+    <div className="scroll-stable h-full min-w-0" data-testid="settings-page">
       <div className={PAGE}>
         <PageHeader icon={Settings} tone="archive" title="Settings" description="How the app looks, your encrypted data and backups, and the local AI." />
         <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
-        <section className="card p-4">
+        <section className="card min-w-0 p-4 sm:p-5">
           <h2 className="card-head mb-3"><Palette size={15} className="text-muted" /> Appearance</h2>
-          <div className="flex gap-1.5" role="group" aria-label="Theme">
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Theme">
             <button className={`btn ${theme === 'dark' ? 'border-accent2!' : ''}`} aria-pressed={theme === 'dark'} data-testid="settings-dark" onClick={() => setTheme('dark')}>
               <Moon size={14} /> Dark
             </button>
@@ -164,7 +164,7 @@ export function SettingsPage() {
             </button>
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-line pt-3">
-            <span className="min-w-0 flex-1 text-[13px]" id="settings-welcome-label">Show the welcome screen when the app opens</span>
+            <span className="min-w-0 flex-1 basis-full text-[13px] sm:basis-40" id="settings-welcome-label">Show the welcome screen when the app opens</span>
             <button type="button" role="switch" aria-checked={welcome} aria-labelledby="settings-welcome-label" className="btn" data-testid="settings-welcome" onClick={() => setWelcomePref(!welcome)}>
               <span className={`switch ${welcome ? 'is-on' : ''}`} aria-hidden="true" /> {welcome ? 'On' : 'Off'}
             </button>
@@ -173,7 +173,7 @@ export function SettingsPage() {
             </button>
           </div>
         </section>
-        <section className="card p-4">
+        <section className="card min-w-0 p-4 sm:p-5">
           <h2 className="card-head"><Database size={15} className="text-muted" /> Your data</h2>
           <p className="m-0 mb-2 text-[13px] text-muted" data-testid="settings-stats">
             {lessons} {lessons === 1 ? 'lesson' : 'lessons'}, {verses.length} verse {verses.length === 1 ? 'record' : 'records'}, {verses.filter((v) => v.status === 'verified').length} verified.
@@ -185,7 +185,7 @@ export function SettingsPage() {
             {lastBackup ? `Last backup: ${new Date(lastBackup).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}.` : 'No backup made yet.'}
           </p>
           <RestoreInput inputRef={restoreRef} />
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap gap-2">
             <button className="btn" data-testid="settings-backup" onClick={() => setState({ backupOpen: true })}><Download size={14} /> Download encrypted backup</button>
             <button className="btn" data-testid="settings-restore" onClick={() => restoreRef.current?.click()}><Upload size={14} /> Restore</button>
             <button className="btn" data-testid="settings-reset" onClick={askReset}><RotateCcw size={14} /> Reset vault</button>

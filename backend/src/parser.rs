@@ -47,6 +47,8 @@ pub struct ParsedLesson {
     pub date_label: String,
     pub year: Option<i32>,
     pub location: String,
+    pub local_congregation: String,
+    pub district: String,
     pub author: String,
     pub code: String,
     pub issue: String,
@@ -115,12 +117,14 @@ re!(
     r"(?i)^(?:\(?(?:the\s+)?holy bible\b|\((?:the|holy)\b.*\b(?:bible|testament)\b)"
 );
 re!(VERSION_HINT, r"(?i)\b(?:version|bible|translation|edition|bersiyon|biblia)\b");
-re!(VERSION_CODE, r"^[A-Z]{2,6}\d{0,4}$");
+re!(VERSION_CODE, r"^[A-Z][A-Z0-9]{1,5}\d{0,4}$");
 // A version printed alone after a reference standing on its own line, such as "Lamsa".
-re!(VERSION_WORD, r"^[A-Z][A-Za-z]{1,6}\d{0,4}$");
+re!(VERSION_WORD, r"^[A-Z][A-Za-z0-9]{1,6}\d{0,4}$");
 // A citation whose book is unreadable: a word ending in a stop, then chapter:verse and a version.
 re!(UNREAD_CITATION, r"(\S+[.:,])\s*(\d{1,3})\s*:\s*(\d{1,3}[a-z]?(?:\s*-\s*\d{1,3})?)\s+([A-Z][A-Z0-9]{1,7})\s*$");
 re!(DATE_PREFIX, r"^(\d{4})(\d{2})(\d{2})_");
+re!(FOOTER_DATE, r"(?i)^(?:lunes|martes|miyerkules|huwebes|biyernes|sabado|linggo|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s*:\s*([a-z]+)\s+(\d{1,2})(?:\s*/\s*\d{1,2})?,\s*(\d{4})(?:\s+(by\s*:.*))?\s*$");
+re!(LOCATION_PART, r"^[\p{L}\p{N}][\p{L}\p{N}\s.'’()&/\-]*$");
 re!(ISSUE_MARK, r"(?i)^(?:isyu|issu[ea]|lssue)\s*:?$");
 re!(OBJECTIVE_MARK, r"(?i)^(?:mga\s+layunin|objectives?)\s*:?$");
 re!(INTRO_MARK, r"(?i)^(?:panimula|exordium)\s*:?$");
@@ -210,8 +214,19 @@ static VERSIONS: &[(&str, &[&str])] = &[
     ("ISV", &["isv", "international standard version"]),
 ];
 
+/// The printed code T4T is sometimes read as TAT. Apply only this known OCR slip
+/// when displaying older records, including verified ones whose stored metadata is locked.
+/// Other user-supplied translation codes keep their own spelling.
+pub fn correct_version_code(raw: &str) -> String {
+    if raw.trim().eq_ignore_ascii_case("TAT") || raw.trim().eq_ignore_ascii_case("T4T") {
+        "T4T".to_string()
+    } else {
+        raw.to_string()
+    }
+}
+
 pub fn normalize_version(raw: &str) -> String {
-    let cleaned = raw.trim().trim_matches(|c: char| ",.;:".contains(c)).replace('’', "'");
+    let cleaned = correct_version_code(&raw.trim().trim_matches(|c: char| ",.;:".contains(c)).replace('’', "'"));
     let lower = cleaned.to_lowercase();
     if lower.is_empty() {
         return String::new();
@@ -432,6 +447,54 @@ fn month_number(name: &str) -> Option<u32> {
     MONTHS.iter().find(|(names, _)| names.contains(&lower.as_str())).map(|(_, n)| *n)
 }
 
+/// The two names are kept separately, while the original location remains useful for older
+/// filenames and screens. Only an unambiguous pair is accepted; prose and dates are not places.
+pub fn split_location(location: &str) -> Option<(String, String)> {
+    let (local, district) = location.split_once(',')?;
+    let clean = |part: &str| part.split_whitespace().collect::<Vec<_>>().join(" ");
+    let (local, district) = (clean(local), clean(district));
+    if [&local, &district].iter().any(|part| {
+        part.chars().count() > 120 || part.chars().filter(|c| c.is_alphabetic()).count() < 2 || !LOCATION_PART.is_match(part)
+    }) {
+        return None;
+    }
+    Some((title_name(&local), title_name(&district)))
+}
+
+#[derive(Default)]
+struct FooterMetadata {
+    date: Option<String>,
+    year: Option<i32>,
+    date_label: String,
+    location: Option<(String, String)>,
+}
+
+/// Pastoral visit footers print the local and district immediately after the date on the
+/// last written page. Do not pick up comma-separated prose elsewhere in the lesson.
+fn footer_metadata(pages: &[String]) -> FooterMetadata {
+    let Some(page) = pages.iter().rev().find(|p| p.chars().any(char::is_alphanumeric)) else { return FooterMetadata::default() };
+    let lines: Vec<String> = page.lines().map(clean_line).filter(|l| !l.is_empty() && !is_noise(l)).collect();
+    for i in (lines.len().saturating_sub(20)..lines.len()).rev() {
+        let Some(c) = FOOTER_DATE.captures(&lines[i]) else { continue };
+        let (Some(month), Ok(day), Ok(year)) = (month_number(&c[1]), c[2].parse::<u32>(), c[3].parse::<i32>()) else { continue };
+        if !(1900..=2200).contains(&year) || chrono::NaiveDate::from_ymd_opt(year, month, day).is_none() {
+            continue;
+        }
+        // A comma in an author's name after "BY:" is not a congregation/district pair.
+        let location = c.get(4).is_none().then(|| lines.get(i + 1)).flatten().and_then(|next| {
+            split_location(next).or_else(|| {
+                if next.trim_end().ends_with(',') {
+                    lines.get(i + 2).and_then(|district| split_location(&format!("{next} {district}")))
+                } else {
+                    None
+                }
+            })
+        });
+        return FooterMetadata { date: Some(format!("{year:04}-{month:02}-{day:02}")), year: Some(year), date_label: lines[i].clone(), location };
+    }
+    FooterMetadata::default()
+}
+
 /// Small words that only one of the two languages uses, counted to tell them apart.
 const EN_WORDS: &[&str] = &[
     "the", "of", "and", "to", "that", "is", "we", "god", "for", "with", "you", "your", "will", "be", "are", "they", "in",
@@ -507,7 +570,8 @@ fn detect_language(text: &str) -> String {
 
 pub fn parse(pages: &[String], file_name: &str) -> ParsedLesson {
     let mut lesson = ParsedLesson { category: String::new(), ..Default::default() };
-    let stem = file_name.strip_suffix(".pdf").or(file_name.strip_suffix(".PDF")).unwrap_or(file_name);
+    let without_docx = if file_name.to_ascii_lowercase().ends_with(".docx") { &file_name[..file_name.len() - 5] } else { file_name };
+    let stem = if without_docx.to_ascii_lowercase().ends_with(".pdf") { &without_docx[..without_docx.len() - 4] } else { without_docx };
 
     let mut lines: Vec<(u32, String)> = Vec::new();
     for (idx, page) in pages.iter().enumerate() {
@@ -539,6 +603,13 @@ pub fn parse(pages: &[String], file_name: &str) -> ParsedLesson {
 
     lesson.content = pages.join("\n\n");
     lesson.language = detect_language(&lesson.content);
+
+    let footer = footer_metadata(pages);
+    if lesson.date_label.is_empty() {
+        lesson.date_label = footer.date_label.clone();
+        lesson.lesson_date = footer.date;
+        lesson.year = footer.year;
+    }
 
     // Date.
     if let Some(c) = DATE_PARTS.captures(&lesson.date_label) {
@@ -576,6 +647,12 @@ pub fn parse(pages: &[String], file_name: &str) -> ParsedLesson {
             lesson.lesson_date = Some(format!("{}-{}-{}", &c[1], &c[2], &c[3]));
             lesson.year = c[1].parse().ok();
         }
+    }
+    if let Some((local, district)) = footer.location.or_else(|| split_location(&lesson.location)) {
+        lesson.location = format!("{local}, {district}");
+        lesson.local_congregation = local;
+        lesson.district = district;
+        lesson.category = "pastoral".into();
     }
     // A file named from its date, such as 20210110_Sample Visit.
     if let (None, Some(c)) = (&lesson.lesson_date, DATE_PREFIX.captures(stem)) {
@@ -799,6 +876,24 @@ mod tests {
     fn prose_ending_in_a_reference_is_not_a_citation() {
         let page = "The Bible says so plainly in the book of Juan 15:16\nMore prose follows here".to_string();
         assert!(parse(&[page], "x.pdf").verses.is_empty());
+    }
+
+    #[test]
+    fn t4t_is_recognized_in_citations_and_its_known_ocr_alias_is_corrected() {
+        for code in ["T4T", "TAT"] {
+            for citation in [format!("II Cor. 4:18 {code}"), format!("II Cor. 4:18\n{code}"), format!("1. Ang hindi nakikita ........ II Cor. 4:18 {code}")] {
+                let page = format!("ANG HALIMBAWA\nPASIMULA:\n{citation}\nAng mga bagay na hindi nakikita ay walang hanggan.");
+                let lesson = parse(&[page], "20210213_Sample.pdf");
+                assert_eq!(lesson.verses.len(), 1, "{citation}");
+                let verse = &lesson.verses[0];
+                assert_eq!(verse.canonical_key, "47.4:18", "{citation}");
+                assert_eq!(verse.version, "T4T", "{citation}");
+                assert_eq!(verse.text, "Ang mga bagay na hindi nakikita ay walang hanggan.", "the code must not enter scripture text: {citation}");
+            }
+        }
+        assert_eq!(normalize_version(" t4t. "), "T4T");
+        assert_eq!(correct_version_code("TATI"), "TATI", "only the exact OCR alias is corrected");
+        assert_eq!(correct_version_code("GNB"), "GNB", "other translations keep their own code");
     }
 
     #[test]
@@ -1042,6 +1137,50 @@ mod tests {
         assert_eq!(l.location, "Sampleville, Testland");
         assert_eq!(l.lesson_date.as_deref(), Some("2015-04-25"));
         assert_eq!(l.title, "Ang Halimbawa ng Tungkulin");
+    }
+
+    #[test]
+    fn pastoral_footer_supplies_separate_places_and_a_valid_date() {
+        let lesson = parse(&[
+            "Paksa: Ang Halimbawa\nPASIMULA:\nJuan 3:5 NIRV\nAng bantay ay gising.".into(),
+            "Juan 3:6 NIRV\nAng bantay ay handa.\nSABADO: ABRIL 4, 2026\nDEPARO, CALOOCAN NORTH".into(),
+        ], "sample-visit.pdf");
+        assert_eq!(lesson.local_congregation, "Deparo");
+        assert_eq!(lesson.district, "Caloocan North");
+        assert_eq!(lesson.location, "Deparo, Caloocan North");
+        assert_eq!(lesson.lesson_date.as_deref(), Some("2026-04-04"));
+        assert_eq!(lesson.year, Some(2026));
+        assert_eq!(lesson.category, "pastoral");
+        assert_eq!(lesson.verses.len(), 2);
+        assert_eq!(lesson.verses[1].text, "Ang bantay ay handa.");
+    }
+
+    #[test]
+    fn pastoral_footer_accepts_wrapped_names_and_ignores_trailing_blank_pages() {
+        let lesson = parse(&[
+            "Paksa: Halimbawa\nSATURDAY: APRIL 4, 2026\nDEPARO,\nCALOOCAN NORTH".into(),
+            " \n\n".into(),
+        ], "20250101_Sample.pdf");
+        assert_eq!(lesson.local_congregation, "Deparo");
+        assert_eq!(lesson.district, "Caloocan North");
+        assert_eq!(lesson.lesson_date.as_deref(), Some("2026-04-04"), "the printed date takes precedence over a filename date");
+    }
+
+    #[test]
+    fn a_location_is_not_guessed_from_body_prose_or_an_invalid_footer() {
+        for pages in [
+            vec!["SABADO: ABRIL 4, 2026\nDEPARO, CALOOCAN NORTH".into(), "The actual last page.".into()],
+            vec!["Paksa: Halimbawa\nDEPARO, CALOOCAN NORTH\nThere is no date footer here.".into()],
+            vec!["Paksa: Halimbawa\nSABADO: PEBRERO 31, 2026\nDEPARO, CALOOCAN NORTH".into()],
+            vec!["Paksa: Halimbawa\nSABADO: ABRIL 4, 2026\nBY: AN AUTHOR\nDEPARO, CALOOCAN NORTH".into()],
+            vec!["Paksa: Halimbawa\nSABADO: ABRIL 4, 2026 BY:\nAN AUTHOR, JR.".into()],
+        ] {
+            let lesson = parse(&pages, "sample.pdf");
+            assert!(lesson.local_congregation.is_empty(), "{:?}", pages);
+            assert!(lesson.district.is_empty(), "{:?}", pages);
+        }
+        assert!(split_location("Local, District, Country").is_none());
+        assert!(split_location("Local, April 4: 2026").is_none());
     }
 }
 

@@ -9,14 +9,14 @@ export type Tone = 'archive' | 'lessons' | 'pv' | 'assist' | 'review' | 'warn';
  */
 export function PageHeader({ icon: Icon, tone, title, subtitle, description, actions, titleTestId, descriptionTestId }: { icon: LucideIcon; tone: Tone; title: string; subtitle?: string; description?: ReactNode; actions?: ReactNode; titleTestId?: string; descriptionTestId?: string }) {
   return (
-    <header className="mb-5 flex flex-wrap items-start gap-x-3.5 gap-y-3">
+    <header className="mb-6 grid min-w-0 grid-cols-[2.5rem_minmax(0,1fr)] items-start gap-x-3 gap-y-3 sm:grid-cols-[2.5rem_minmax(0,1fr)_auto] sm:gap-x-4">
       <span className={`page-tile tone-${tone}`} aria-hidden="true">
         <Icon size={19} />
       </span>
-      <div className="min-w-0 flex-1 basis-64">
-        <h1 className="m-0 text-xl leading-tight font-semibold tracking-tight" data-testid={titleTestId}>
+      <div className="min-w-0">
+        <h1 className="m-0 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xl leading-tight font-semibold tracking-tight break-words" data-testid={titleTestId}>
           {title}
-          {subtitle && <span className="ml-2 text-[13px] font-normal tracking-normal text-muted">{subtitle}</span>}
+          {subtitle && <span className="text-[13px] font-normal tracking-normal text-muted">{subtitle}</span>}
         </h1>
         {description && (
           <div className="m-0 mt-1 max-w-3xl text-[13px] leading-relaxed text-muted" data-testid={descriptionTestId}>
@@ -24,10 +24,10 @@ export function PageHeader({ icon: Icon, tone, title, subtitle, description, act
           </div>
         )}
       </div>
-      {actions && <div className="flex flex-none flex-wrap items-center gap-2">{actions}</div>}
+      {actions && <div className="col-start-2 flex min-w-0 max-w-full flex-wrap items-center gap-2 sm:col-start-auto sm:justify-end">{actions}</div>}
     </header>
   );
 }
 
 /** The same frame on every page: one width, and the same space around the content. */
-export const PAGE = 'mx-auto w-full max-w-[1680px] px-4 py-5 lg:px-8 lg:py-6';
+export const PAGE = 'page-frame mx-auto w-full max-w-[1680px]';

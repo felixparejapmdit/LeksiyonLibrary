@@ -360,14 +360,31 @@ pub async fn request_scope(client: &reqwest::Client, base_url: &str, model: &str
 
 const TRANSLATE_SYSTEM: &str = "Translate the user's text into Tagalog (Filipino). Reply with JSON only, shaped as {\"tagalog\":\"<translation>\"}. \
     Translate everything, keep the meaning exactly, and add nothing. Use the Tagalog Bible names of people and books, \
-    such as Pablo for Paul, Pedro for Peter and Colosas for Colossians.";
+    such as Pablo for Paul, Pedro for Peter and Colosas for Colossians. \
+    Use this library's exact book names: I Kings is I Hari, and II Kings is II Hari. \
+    Never call these books I Reyes or II Reyes. Keep I Hari and II Hari unchanged if already present.";
 
 const MAX_TRANSLATION_CHARS: usize = 8000;
+
+static REYES_BOOK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\b(II|I|2|1)\.?\s+(?:Mga\s+)?Reyes\b").unwrap());
+
+/// The model sometimes substitutes Spanish book names for the library's Tagalog names.
+/// Apply this only to AI context, never scripture or the user's reviewed wording.
+pub fn canonical_tagalog_book_names(text: &str) -> String {
+    REYES_BOOK.replace_all(text, |captures: &regex::Captures<'_>| {
+        let id = match captures[1].to_ascii_uppercase().as_str() {
+            "I" | "1" => 11,
+            "II" | "2" => 12,
+            _ => unreachable!(),
+        };
+        crate::books::by_id(id).unwrap().tl
+    }).into_owned()
+}
 
 /// A translation is kept only if it reads as Tagalog: small models often answer in English.
 /// Names are too short to tell, so they pass.
 fn clean_translation(reply: &str, source: &str) -> Option<String> {
-    let text = clean_text(reply, MAX_TRANSLATION_CHARS)?;
+    let text = clean_text(&canonical_tagalog_book_names(reply), MAX_TRANSLATION_CHARS)?;
     let short = text.split_whitespace().count() <= 3;
     (short || (crate::language::is_tagalog(&text) && text != source.trim())).then_some(text)
 }
@@ -466,6 +483,18 @@ mod tests {
         assert_eq!(clean_translation("Pablo", "Paul").as_deref(), Some("Pablo"), "names are too short to judge");
         assert_eq!(clean_translation("Ayon sa Juan 3:16 ang aklat ay para sa mga tao.", source), None);
         assert_eq!(clean_translation("", source), None);
+    }
+
+    #[test]
+    fn ai_tagalog_uses_the_librarys_kings_book_names() {
+        let source = "The book of II Kings continues the history in I Kings.";
+        assert_eq!(
+            clean_translation("Ang aklat ng II Reyes ay nagpapatuloy sa kasaysayan ng I Reyes.", source).as_deref(),
+            Some("Ang aklat ng II Hari ay nagpapatuloy sa kasaysayan ng I Hari."),
+        );
+        assert_eq!(canonical_tagalog_book_names("1 Reyes; 2 Reyes; ii. reyes; I Mga Reyes."), "I Hari; II Hari; II Hari; I Hari.");
+        assert_eq!(canonical_tagalog_book_names("I Hari at II Hari; sinabi ni Reyes; II Reyeson."), "I Hari at II Hari; sinabi ni Reyes; II Reyeson.");
+        assert_eq!(clean_translation("Ayon sa II Reyes 5:15 ay nagturo ang aklat.", source), None, "normalizing the name must not let citations through");
     }
 
     #[test]
